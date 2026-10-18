@@ -49,3 +49,7 @@ Thumbs.db
 .vscode/
 .idea/
 *.swp
+
+# Salman's checkpoints
+salman/checkpoints/*.pt
+salman/checkpoints/*.ckpt

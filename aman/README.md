@@ -1,61 +1,109 @@
 # aman/ — Your Work
-**Branch**: `aman/infra-api` | **Role**: Infrastructure, API, Visualization, Business
+**Branch**: `aman/infra-api` | **Role**: Infrastructure + API + UI + Business
 
-You own four things simultaneously: cloud infrastructure, the Sovereign Core API (the mock airspace authority), the simulation visualizer/UI, and all business outputs (white paper, pitch deck, demo video, outreach). The team cannot deploy without you and cannot pitch without you.
+You make the whole thing deployable, visible, and sellable. Without you the simulation has no server to run on, no airspace rules to read, no visual to show investors, and no paper to submit. You are also the only person talking to the outside world — outreach, white paper, pitch deck.
 
 ---
 
-## Your 14 tickets
+## Your 13 tickets
 
-| ID | Week | File to create | What it is |
-|----|------|----------------|------------|
-| M-01 | 1 | `infra/setup.sh` | Server provisioning script (AWS/GCP, Python 3.11, Docker) |
-| M-02 | 1 | `infra/install_sim.sh` | Install BlueSky + Flightmare on the server |
-| M-03 | 1 | `docs/technical_abstract.md` | 1-page: what we're building and why it's different |
-| M-04 | 1 | `docs/competitors.md` | 5 companies, named contacts, outreach email template |
-| M-05 | 2 | `api/sovereign_core.py` | FastAPI airspace authority — rules, NOTAMs, drone registration |
-| M-06 | 2 | `api/sim_client.py` | Python client the simulation calls to fetch airspace rules |
+| ID | Week | Deliverable | What it is |
+|----|------|-------------|------------|
+| M-01 | 1 | `infra/setup.sh` + `infra/server.md` | Provision AWS/GCP server, document access |
+| M-02 | 1 | `infra/install_sim.sh` | Install BlueSky + Flightmare on server |
+| M-03 | 1 | `docs/technical_abstract.md` | 1-page: what we're building and why |
+| M-04 | 1 | `docs/competitors.md` | 5 companies, named contacts, outreach template |
+| M-05 | 2 | `api/sovereign_core.py` | FastAPI airspace authority server |
+| M-06 | 2 | `api/sim_client.py` | Python client sim uses to fetch airspace rules |
 | M-07 | 2 | `docs/white_paper_draft.md` | Sections 1–3: Intro, Problem, Architecture |
-| UI-01 | 2–3 | `ui/visualizer.py` + `ui/demo_app.py` | Rerun.io live 3D viewer + Gradio control panel |
-| M-08 | 3 | `analysis/plot_results.py` | 4 publication-quality charts from stress test CSV |
+| UI-01 | 2–3 | `ui/visualizer.py` + `ui/demo_app.py` | Rerun.io 3D viewer + Gradio control panel |
+| M-08 | 3 | `analysis/plot_results.py` → 4 PNGs | Charts from stress test CSV |
 | M-09 | 3 | `docs/pitch_deck_outline.md` | 10-slide outline for Gamma.app |
 | M-10 | 4 | `docs/white_paper_final.md` → PDF | Final white paper, 10–15 pages |
-| M-11 | 4 | `docs/demo_script.md` + video | 3-minute demo recording via OBS |
-| M-12 | 4 | `docs/outreach_log.md` | Send 5 emails, log replies |
-| M-13 | 4 | (PR into dev) | Repo cleanup: every dir has a README, no secrets committed |
+| M-11 | 4 | `docs/demo_script.md` + video | 3-minute demo recording |
+| M-12 | 4 | `docs/outreach_log.md` | 5 outreach emails sent, replies logged |
+| M-13 | 4 | PR into dev | Full repo cleanup |
 
 ---
 
-## Sovereign Core API spec (M-05)
+## Directory layout
 
-FastAPI server on port 8000. Three endpoints (see `INTERFACES.md § API-AIRSPACE` for exact JSON schemas):
-
-| Endpoint | Purpose |
-|----------|---------|
-| `GET /airspace/rules` | Returns geofences, altitude limits, separation minimum — called once per episode |
-| `GET /airspace/notam` | Returns active temporary restrictions |
-| `POST /drone/register` | Registers a drone at episode start, returns transponder code |
-
-The rules JSON is read by Salman's `rulebook.py` — do not rename fields without updating `INTERFACES.md` and coordinating with Salman.
+```
+aman/
+├── infra/
+│   ├── setup.sh              ← M-01
+│   ├── install_sim.sh        ← M-02
+│   └── server.md             ← M-01: IP + SSH docs (no keys in git)
+├── api/
+│   ├── sovereign_core.py     ← M-05
+│   └── sim_client.py         ← M-06
+├── ui/
+│   ├── visualizer.py         ← UI-01: RerunLogger class
+│   └── demo_app.py           ← UI-01: Gradio control panel
+├── analysis/
+│   └── plot_results.py       ← M-08
+└── docs/
+    ├── technical_abstract.md ← M-03
+    ├── competitors.md        ← M-04
+    ├── white_paper_draft.md  ← M-07
+    ├── pitch_deck_outline.md ← M-09
+    ├── white_paper_final.md  ← M-10
+    ├── demo_script.md        ← M-11
+    └── outreach_log.md       ← M-12
+```
 
 ---
 
-## Visualization / UI spec (UI-01)
+## Sovereign Core API (M-05)
 
-Full spec is in `VISUALIZATION.md`. Summary:
+FastAPI server on port 8000. Three endpoints — full JSON schemas in `INTERFACES.md § API-AIRSPACE`:
 
-**Tool**: Rerun.io (`pip install rerun-sdk`)  
-**Why**: Python-native, 3D, browser-viewable, built for robotics. No Unity, no C#.  
-**Control panel**: Gradio (`pip install gradio`) — sliders for drone count, toggles for chaos injectors, embedded Rerun viewer.
+| Endpoint | Called by | Purpose |
+|----------|-----------|---------|
+| `GET /airspace/rules` | Simulation (via sim_client.py) once per episode | Geofences, altitude limits, separation minimum |
+| `GET /airspace/notam` | Simulation at episode start | Temporary restrictions |
+| `POST /drone/register` | Simulation per drone at episode start | Returns transponder code |
 
-What the viewer must show:
-- Live 3D drone positions
-- Drone color: **green** = normal, **red** = shield currently active
-- Goal markers
-- Geofence cylinder
-- Real-time metrics: intervention count, min separation, throughput
+Salman's `rulebook.py` reads the JSON from `GET /airspace/rules` — do not rename fields without updating `INTERFACES.md` and telling Salman.
 
-You write `aman/ui/visualizer.py` with a `RerunLogger` class. Anas calls `log_step()` from inside the simulation loop. See `INTERFACES.md § RERUN-LOG` for the method signature — agree it with Anas before building.
+---
+
+## Visualization UI (UI-01)
+
+Full spec in `VISUALIZATION.md`. The short version:
+
+**Tools**: Rerun.io (3D live stream) + Gradio (browser control panel). Install: `pip install rerun-sdk gradio`. No Unity, no C#, no JavaScript.
+
+**You write** `aman/ui/visualizer.py` — a `RerunLogger` class with one public method:
+```
+log_step(states, safe_actions, step_metrics)
+```
+Anas calls this at the end of every `ShieldedEnv.step()`. The method signature is in `INTERFACES.md § RERUN-LOG` — agree it with Anas before Week 3.
+
+**You write** `aman/ui/demo_app.py` — a Gradio app with:
+- Slider: number of drones (1–50)
+- Toggles: CommDelay on/off, ByzantineDrone on/off, WindGust on/off
+- Embedded Rerun viewer (or link to it)
+- Live metrics panel: interventions, min separation, throughput
+
+**Anas adds** one `self.rerun_logger.log_step(...)` call at the end of `ShieldedEnv.step()`.
+
+Drone color rule: green by default, red when `shield_active == True` in the `SafeAction` for that drone.
+
+---
+
+## Charts to produce (M-08)
+
+From `results/stress_test_50drones.csv` (Anas produces this, Week 3):
+
+| Chart | X axis | Y axis |
+|-------|--------|--------|
+| Throughput vs density | N (10, 25, 50) | % reaching goal |
+| Shield interventions over time | Timestep | Cumulative interventions |
+| Min separation CDF | Separation (m) | Probability |
+| Fallback rate vs latency | delay_ms | Fallbacks per episode |
+
+Use matplotlib or seaborn. Save as PNG at 300 DPI to `results/figures/`. These go directly into the white paper and pitch deck.
 
 ---
 
@@ -63,70 +111,57 @@ You write `aman/ui/visualizer.py` with a `RerunLogger` class. Anas calls `log_st
 
 ```
 1. Abstract (150 words)
-2. Introduction — why UTM needs formal safety
-3. Architecture — MARL + CBF + fallback (use the mermaid diagram from README)
-4. CBF Safety Shield — pull math from salman/docs/cbf_derivation.ipynb
-5. MARL Policy — pull from anas/docs
-6. Evaluation — stress test results, charts from M-08
-7. Edge Deployment — ONNX benchmark from A-09
+2. Introduction — UTM problem, why RL alone isn't enough
+3. Architecture — MARL + CBF + fallback (use mermaid diagram from README)
+4. RL Policy — pull from Salman's training spec + W&B results
+5. CBF Safety Shield — pull math from salman/docs/cbf_derivation.ipynb
+6. Evaluation — stress test results + charts from M-08
+7. Edge Deployment — ONNX benchmark from A-07
 8. Conclusion & Future Work
-9. References — the 32 from the PDF report
+9. References (32 from the PDF report)
 ```
 
 LLM prompt for Section 2:
 ```
-Draft the Introduction section of a technical white paper titled
+Draft the Introduction of a white paper titled
 "Runtime Assurance for Autonomous Drone Traffic: A Hybrid MARL + CBF Architecture."
 Audience: FAA regulators and deep-tech VCs.
-Use these terms correctly: HOCBF, runtime assurance, reachability, control-affine system.
-400 words max. Cite the FAA UTM ConOps v2.0 and NASA MARL papers.
+Use: HOCBF, runtime assurance, reachability, control-affine system.
+Under 400 words. Reference FAA UTM ConOps v2.0 and NASA MARL papers.
 ```
 
 ---
 
-## Charts required (M-08)
+## Competitor research (M-04)
 
-From `results/stress_test_50drones.csv` (Anas produces this):
+Use Perplexity to research these five and find one named contact (LinkedIn, Head of Autonomy or Engineering) per company:
 
-1. **Throughput vs drone density** — bar chart, x-axis = N (10, 25, 50), y-axis = % reaching goal
-2. **Shield interventions over time** — line chart, x = timestep, y = cumulative interventions
-3. **Min separation CDF** — x = separation in meters, y = probability — show safety margin clearly
-4. **Fallback rate vs communication latency** — x = delay_ms, y = fallback triggers per episode
-
-CSV column names are fixed — see `INTERFACES.md § SHIELD-LOG`.
-
----
-
-## Competitor research targets (M-04)
-
-Research these five companies using Perplexity:
-- **Zipline** — medical drone delivery, fixed-wing
-- **Wing (Alphabet)** — package delivery, DAA systems
-- **Skypuzzler** — UTM software platform
-- **Joby Aviation** — eVTOL, autonomy stack
-- **Shield AI** — autonomous military/civil drones (relevant for CBF/formal methods angle)
-
-For each: what problem they solve, their tech approach (public info only), and the name + LinkedIn of their Head of Autonomy or Engineering.
+| Company | Angle |
+|---------|-------|
+| Zipline | Medical delivery, formal safety angle |
+| Wing (Alphabet) | Package delivery, DAA systems |
+| Skypuzzler | UTM software platform |
+| Joby Aviation | eVTOL, autonomy stack |
+| Shield AI | Autonomous platforms, CBF/formal methods audience |
 
 ---
 
 ## Demo video timeline (M-11)
 
-Record from the Rerun/Gradio viewer using OBS:
+3 minutes, record from Rerun/Gradio with OBS:
 ```
-0:00–0:40  50 drones flying normally, green, reaching goals
-0:40–1:20  Byzantine drone injected — one drone erratic, others start reacting
-1:20–2:00  CBF shield fires — affected drones go red — separation holds
-2:00–2:40  Comm delay injected — MARL performance drops, shield compensates
-2:40–3:00  Metrics summary: Throughput 90%, Collisions 0, Interventions 45
+0:00–0:40  50 drones flying, green, reaching goals normally
+0:40–1:20  Byzantine drone injected → erratic movement, MARL starts failing
+1:20–2:00  CBF shield fires → affected drones turn red → separation holds
+2:00–2:40  Comm delay added → MARL degrades further, shield compensates
+2:40–3:00  Summary screen: Throughput 90%, Collisions 0, Interventions 45
 ```
 
 ---
 
 ## Week 1 done means
 
-- [ ] Server accessible by all three teammates via SSH
-- [ ] `setup.sh` executed successfully, Python + Docker confirmed
-- [ ] `technical_abstract.md` reviewed and approved by Salman + Anas
-- [ ] `competitors.md` complete with 5 companies + contacts
-- [ ] PR opened into `dev`
+- [ ] Server running, all three can SSH in
+- [ ] `technical_abstract.md` reviewed by Salman + Anas
+- [ ] `competitors.md` with 5 companies + contacts
+- [ ] PR into `dev`

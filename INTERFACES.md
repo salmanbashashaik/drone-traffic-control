@@ -45,7 +45,7 @@ Defined in ticket A-03. Lives in `shared/schemas.py`.
 | `proposed_accel` | float[3] | Unconstrained MARL acceleration output in m/s² |
 | `timestamp_ms` | int | Must match the state timestamp it was computed from |
 
-**Producer**: Anas (`anas/marl-policy`)  
+**Producer**: Salman's RL training scripts output the raw policy actions; Anas's `ShieldedEnv` packages them into `MARLAction` structs  
 **Consumer**: Salman (`salman/cbf-safety`, `qp_solver.py`)  
 **Rule**: The CBF solver must not modify `agent_id` or `timestamp_ms`. It only replaces `proposed_accel` with `safe_accel` in its output.
 

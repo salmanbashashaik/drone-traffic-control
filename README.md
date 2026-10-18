@@ -149,20 +149,20 @@ High average reward and zero failures in a finite simulation campaign do not est
 
 ## Team & workload
 
-| Person | Branch | What they own |
-|--------|--------|---------------|
-| **Salman** | `salman/cbf-safety` | **Formal safety math.** Control Barrier Functions, the QP solver that filters unsafe MARL actions, HOCBF construction, latency analysis, white paper math sections. |
-| **Anas** | `anas/marl-policy` | **ML + simulation engine.** MARL training environment, PPO policy, chaos injection (comm delay, Byzantine drones, wind), stress testing, ONNX edge export. |
-| **Aman** | `aman/infra-api` | **Infrastructure + UI + business.** Cloud server, Sovereign Core API, simulation visualizer, white paper, pitch deck, demo video, outreach. |
+| Person | Branch | Role | What they own |
+|--------|--------|------|---------------|
+| **Salman** | `salman/cbf-safety` | RL + Formal Safety Math | Trains the PPO policy, builds the CBF-QP shield that filters unsafe actions, HOCBF, fallback logic, latency analysis, white paper math sections. |
+| **Anas** | `anas/marl-policy` | ML + Edge AI + Simulation | Builds the drone simulation environment, integrates the CBF shield wrapper, chaos injection (comm delay, Byzantine drones, wind), 50-drone stress testing, ONNX edge export. |
+| **Aman** | `aman/infra-api` | Infrastructure + UI + Business | Cloud server, Sovereign Core API, Rerun.io live visualizer, Gradio control panel, white paper, pitch deck, demo video, outreach. |
 
 The dependency flow:
 ```
-Anas trains a policy → proposes actions
-Salman's CBF filters those actions → makes them provably safe
-Aman's UI visualizes the result → Aman writes the paper and pitches it
+Anas builds the env → Salman trains the RL policy against it
+Salman's CBF shield filters unsafe actions → Anas wraps this into the sim loop
+Aman's UI visualizes everything live → Aman writes the paper and pitches it
 ```
 
-All three can work independently in Week 1. They first converge in Week 2 when Anas integrates Salman's QP solver into the simulation loop.
+All three work independently in Week 1. First convergence is Week 2 when Anas integrates Salman's QP solver into `ShieldedEnv`.
 
 ## Simulation visualizer (no Unity)
 
