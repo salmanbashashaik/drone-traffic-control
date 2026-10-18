@@ -1,121 +1,117 @@
-# Interface Contracts
-> This file is the single source of truth for what each branch exposes to the others.
-> **Do not change an interface without opening a PR and getting sign-off from all affected owners.**
-> Breaking changes require a version bump (v1 → v2).
+# INTERFACES.md — Cross-Branch Contracts v1.0
+> The single source of truth for what each branch exposes to the others.
+> **Do not change an interface without a PR and sign-off from all affected owners.**
+> Breaking changes require a version bump.
 
 ---
 
 ## § STATE-SCHEMA · Drone State Vector
 
-All modules use this shared state representation. Agreed on Day 1.
+Used by all three workstreams. Agreed Day 1, do not change unilaterally.
 
-```python
-from dataclasses import dataclass
-import numpy as np
+**Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent_id` | string | Unique drone ID, e.g. `"drone_003"` |
+| `position` | float[3] | [x, y, z] in meters. z = altitude. |
+| `velocity` | float[3] | [vx, vy, vz] in m/s |
+| `goal` | float[3] | Current mission waypoint in meters |
+| `timestamp_ms` | int | Simulation time in milliseconds |
 
-@dataclass
-class DroneState:
-    agent_id:     str           # unique string, e.g. "drone_003"
-    position:     np.ndarray    # shape (3,), meters, [x, y, z], z = altitude
-    velocity:     np.ndarray    # shape (3,), m/s
-    goal:         np.ndarray    # shape (3,), meters — current mission waypoint
-    timestamp_ms: int           # simulation time in milliseconds
-
-# Safe serialization to dict (for API / logging)
-def state_to_dict(s: DroneState) -> dict:
-    return {
-        "agent_id":     s.agent_id,
-        "position":     s.position.tolist(),
-        "velocity":     s.velocity.tolist(),
-        "goal":         s.goal.tolist(),
-        "timestamp_ms": s.timestamp_ms,
-    }
+**JSON serialization** (for API / logging):
+```json
+{
+  "agent_id": "drone_003",
+  "position": [120.4, 340.1, 85.0],
+  "velocity": [3.2, -1.1, 0.0],
+  "goal": [500.0, 500.0, 100.0],
+  "timestamp_ms": 4200
+}
 ```
 
-**Owner**: Jointly owned — any change requires all three owners to approve.
-**Used by**: `A-01` (env), `S-01` (CBF), `M-05` (API telemetry endpoint).
+**Owner**: Jointly owned. Any change requires all three to approve.  
+**Used by**: A-01 (env), S-01 (CBF), M-05 (API telemetry), UI-01 (visualizer).
 
 ---
 
-## § MARL-ACTION · Action Output from Policy to Shield
+## § MARL-ACTION · Action from Policy to Shield
 
-Defined in `anas/env/action_schema.py` (ticket `A-03`).
+Defined in ticket A-03. Lives in `shared/schemas.py`.
 
-```python
-@dataclass
-class MARLAction:
-    agent_id:        str           # must match DroneState.agent_id
-    proposed_accel:  np.ndarray    # shape (3,), m/s² — unconstrained MARL output
-    timestamp_ms:    int           # must match the state timestamp it was computed from
+**Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent_id` | string | Must match the `DroneState.agent_id` it was computed from |
+| `proposed_accel` | float[3] | Unconstrained MARL acceleration output in m/s² |
+| `timestamp_ms` | int | Must match the state timestamp it was computed from |
 
-# Batch type used when calling the CBF solver
-MARLActionBatch = list[MARLAction]
-```
-
-**Producer**: `anas/marl-policy` branch.
-**Consumer**: `salman/cbf-safety` branch (`qp_solver.py`).
-**Contract**: The CBF solver MUST NOT modify `agent_id` or `timestamp_ms`. It only replaces `proposed_accel` with `safe_accel`.
+**Producer**: Anas (`anas/marl-policy`)  
+**Consumer**: Salman (`salman/cbf-safety`, `qp_solver.py`)  
+**Rule**: The CBF solver must not modify `agent_id` or `timestamp_ms`. It only replaces `proposed_accel` with `safe_accel` in its output.
 
 ---
 
-## § CBF-OUTPUT · Safe Action Output from Shield
+## § CBF-OUTPUT · Safe Action from Shield
 
-Defined in `salman/cbf/qp_solver.py` (ticket `S-04`).
+Defined in ticket S-04. Lives in `shared/schemas.py`.
 
-```python
-@dataclass
-class SafeAction:
-    agent_id:         str
-    safe_accel:       np.ndarray    # shape (3,), m/s² — CBF-filtered action
-    timestamp_ms:     int
-    shield_active:    bool          # True if CBF modified the proposed action
-    h_min:            float         # minimum barrier value across all pairwise constraints
-    qp_feasible:      bool          # False triggers fallback controller
-    fallback_used:    bool          # True if HJ fallback was triggered (S-08)
-```
+**Fields**:
+| Field | Type | Description |
+|-------|------|-------------|
+| `agent_id` | string | Same as the input `MARLAction.agent_id` |
+| `safe_accel` | float[3] | CBF-filtered acceleration in m/s² |
+| `timestamp_ms` | int | Same as input |
+| `shield_active` | bool | `true` if CBF modified the proposed action |
+| `h_min` | float | Minimum barrier value across all pairwise constraints (negative = unsafe) |
+| `qp_feasible` | bool | `false` means no safe action existed → fallback triggered |
+| `fallback_used` | bool | `true` if HJ hover fallback was activated |
 
-**Producer**: `salman/cbf-safety` branch.
-**Consumer**: `anas/marl-policy` (sim loop), `aman/infra-api` (logging endpoint).
-**Contract**: If `qp_feasible == False`, `safe_accel` is set to `[0, 0, 0]` (hover). The simulation layer must handle this.
+**Fallback rule**: If `qp_feasible == false`, then `safe_accel` must be set to `[0, 0, 0]` (hover). The simulation layer (Anas) must handle this case without crashing.
+
+**Producer**: Salman (`salman/cbf-safety`)  
+**Consumer**: Anas (sim loop), Aman (logging endpoint, visualizer color logic)
 
 ---
 
-## § ENV-OUTPUT · Episode Step Return
+## § ENV-OUTPUT · Simulation Step Return
 
-Defined in `anas/env/drone_env.py` (ticket `A-01`). Follows PettingZoo `ParallelEnv` API.
+Follows PettingZoo `ParallelEnv` API. Defined in ticket A-01.
 
-```python
-# env.step(actions: dict[agent_id, np.ndarray]) returns:
-observations:  dict[str, np.ndarray]   # agent_id → obs vector, shape (obs_dim,)
-rewards:       dict[str, float]        # agent_id → scalar reward
-terminations:  dict[str, bool]         # True when agent reaches goal or crashes
-truncations:   dict[str, bool]         # True when episode time limit hit
-infos:         dict[str, dict]         # agent_id → {"shield_active": bool, "h_min": float}
-```
+**`env.step(actions)` returns 5 values**:
 
-**Observation vector layout** (`obs_dim = 18`):
+| Return | Type | Description |
+|--------|------|-------------|
+| `observations` | dict[agent_id → float[18]] | Per-agent observation vector |
+| `rewards` | dict[agent_id → float] | Scalar reward |
+| `terminations` | dict[agent_id → bool] | `true` when agent reaches goal or crashes |
+| `truncations` | dict[agent_id → bool] | `true` when episode time limit hit |
+| `infos` | dict[agent_id → dict] | Must include `shield_active: bool` and `h_min: float` |
+
+**Observation vector layout** (18 dimensions, in order):
 ```
 [0:3]   own position (x, y, z)
 [3:6]   own velocity (vx, vy, vz)
-[6:9]   goal vector (gx, gy, gz)
-[9:12]  nearest neighbor position (relative)
-[12:15] nearest neighbor velocity (relative)
-[15]    nearest neighbor distance (scalar)
-[16]    shield_active last step (0 or 1)
+[6:9]   goal direction vector (goal - position)
+[9:12]  nearest neighbor position (relative to self)
+[12:15] nearest neighbor velocity (relative to self)
+[15]    nearest neighbor distance (scalar, meters)
+[16]    shield_active last step (0.0 or 1.0)
 [17]    h_min last step (clipped to [-1, 1])
 ```
 
-**Owner**: Anas (primary), Salman reviews `[15:17]` shield fields.
+**Owner**: Anas (primary). Salman reviews indices [15:17] (shield fields).  
+**Rule**: Indices must not shift. Adding info goes to the `infos` dict, not to the obs vector, unless all owners agree.
 
 ---
 
 ## § API-AIRSPACE · Sovereign Core REST API
 
-Defined in `aman/api/sovereign_core.py` (ticket `M-05`). Base URL: `http://localhost:8000`.
+Defined in ticket M-05. Runs at `http://localhost:8000` (dev) / `http://<server-ip>:8000` (cloud).
 
 ### `GET /airspace/rules`
-Returns current airspace configuration. Called once per episode.
+Called once per simulation episode.
 
+Response:
 ```json
 {
   "version": "1.0",
@@ -131,17 +127,13 @@ Returns current airspace configuration. Called once per episode.
       "max_alt_m": 200.0
     }
   ],
-  "altitude_limits": {
-    "min_m": 30.0,
-    "max_m": 200.0
-  },
+  "altitude_limits": { "min_m": 30.0, "max_m": 200.0 },
   "separation_minimum_m": 5.0
 }
 ```
 
 ### `GET /airspace/notam`
-Returns active NOTAMs (temporary restrictions).
-
+Response:
 ```json
 {
   "notams": [
@@ -156,63 +148,71 @@ Returns active NOTAMs (temporary restrictions).
 ```
 
 ### `POST /drone/register`
-Registers a drone at episode start.
+Request body: `{ "agent_id": "drone_003", "operator": "sim", "mission_type": "delivery" }`  
+Response: `{ "registered": true, "transponder_code": "A1B2" }`
 
-```json
-// Request body
-{ "agent_id": "drone_003", "operator": "sim", "mission_type": "delivery" }
-
-// Response
-{ "registered": true, "transponder_code": "A1B2" }
-```
-
-**Owner**: Aman (primary). All endpoints are versioned. Salman's `rulebook.py` reads the JSON from this API.
+**Owner**: Aman. All endpoints are versioned. Salman's `rulebook.py` reads the JSON output of `GET /airspace/rules` — do not rename fields without updating S-02.
 
 ---
 
-## § SHIELD-LOG · Shield Intervention Log Schema
+## § SHIELD-LOG · Intervention Log CSV Schema
 
-Defined in `salman/cbf/shield_logger.py` (ticket `S-06`). Written as CSV for analysis.
+Written by Salman's `shield_logger.py` (S-06). Read by Aman's `plot_results.py` (M-08).
 
+**CSV columns (order and names are fixed)**:
 ```
-timestep, agent_id, proposed_accel_x, proposed_accel_y, proposed_accel_z,
-safe_accel_x, safe_accel_y, safe_accel_z, h_value, constraint_active,
-qp_feasible, fallback_used
+timestep, agent_id,
+proposed_accel_x, proposed_accel_y, proposed_accel_z,
+safe_accel_x, safe_accel_y, safe_accel_z,
+h_value, constraint_active, qp_feasible, fallback_used
 ```
 
-**Consumer**: `aman/analysis/plot_results.py` (ticket `M-08`). The CSV column names are fixed — do not rename without updating `M-08`.
+**Rule**: Do not rename these columns without updating both `shield_logger.py` and `plot_results.py` in the same PR.
 
 ---
 
 ## § CHAOS-API · Chaos Injector Interface
 
-Defined in `anas/chaos/chaos_injector.py` (ticket `A-07`).
+Defined in ticket A-07. Lives in `anas/chaos/chaos_injector.py`.
 
-```python
-class ChaosInjector:
-    def apply_comm_delay(self, state: DroneState, delay_ms: int) -> DroneState:
-        """Returns a stale copy of state with position/velocity extrapolated back by delay_ms."""
-        ...
+Three methods, all callable mid-episode:
 
-    def apply_byzantine(self, state: DroneState) -> DroneState:
-        """Returns state with randomized position/velocity (adversarial telemetry)."""
-        ...
+| Method | Input | Output | Effect |
+|--------|-------|--------|--------|
+| `apply_comm_delay(state, delay_ms)` | `DroneState`, int | `DroneState` | Returns stale state with position/velocity extrapolated back by `delay_ms` |
+| `apply_byzantine(state)` | `DroneState` | `DroneState` | Returns state with randomized position/velocity (adversarial telemetry) |
+| `apply_wind_gust(accel, magnitude)` | float[3], float | float[3] | Adds bounded random noise to acceleration command |
 
-    def apply_wind_gust(self, accel: np.ndarray, magnitude: float) -> np.ndarray:
-        """Adds bounded random noise to an acceleration command."""
-        ...
-```
-
-**Owner**: Anas. Salman reviews that `delay_ms` values used in `S-07` analysis match what's actually injected here.
+**Owner**: Anas. Salman verifies that `delay_ms` values used in the latency analysis (S-07) match what is actually injected here.
 
 ---
 
-## Interface Change Protocol
+## § RERUN-LOG · Visualizer Logging Interface
+
+Defined in ticket UI-01. Lives in `aman/ui/visualizer.py`.
+
+Anas calls one method per simulation step:
+
+```
+RerunLogger.log_step(states, safe_actions, step_metrics)
+```
+
+| Argument | Type | Description |
+|----------|------|-------------|
+| `states` | list[DroneState] | Current positions/velocities |
+| `safe_actions` | list[SafeAction] | Used to determine drone color (shield_active) |
+| `step_metrics` | dict | Keys: `n_collisions`, `n_interventions`, `min_separation`, `chaos_flags` |
+
+**Owner**: Aman writes `RerunLogger`. Anas calls it. The method signature must not change without both agreeing.
+
+---
+
+## Interface change protocol
 
 1. Open a PR on the affected branch with the proposed change.
-2. Tag all three owners as reviewers.
+2. Tag all owners affected by that interface as reviewers.
 3. Do not merge until all affected owners approve.
-4. Bump the version comment at the top of this file.
-5. Update all `Inputs needed` references in `TASKS.md`.
+4. Bump the version at the top of this file.
+5. Update all "Needs" references in `TASKS.md`.
 
 **Current version**: v1.0 — Oct 18, 2026
