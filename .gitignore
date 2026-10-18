@@ -1,0 +1,51 @@
+# Secrets and keys — NEVER commit these
+*.pem
+*.key
+.env
+*.env.*
+secrets/
+credentials.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb_checkpoints
+
+# ML artifacts — large files, use cloud storage
+anas/checkpoints/*.pt
+anas/checkpoints/*.ckpt
+anas/checkpoints/*.onnx
+*.pt
+*.ckpt
+*.onnx
+
+# Results data — large CSVs go to cloud
+results/*.csv
+results/figures/*.png
+# Keep the folders tracked
+!results/figures/.gitkeep
+
+# Logs
+*.log
+wandb/
+runs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp

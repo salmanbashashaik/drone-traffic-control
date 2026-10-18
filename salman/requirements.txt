@@ -1,0 +1,9 @@
+# salman/ — CBF Safety Layer dependencies
+numpy==1.26.4
+scipy==1.13.0
+cvxpy==1.5.3
+osqp==0.6.7
+scs==3.2.4
+jupyter==1.0.0
+ipykernel==6.29.4
+matplotlib==3.8.4
