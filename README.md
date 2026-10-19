@@ -86,15 +86,19 @@ Compare the deterministic reference, unshielded MARL, and shielded MARL on the s
 
 Zero observed failures in a finite simulation campaign does not prove zero risk. A CBF/HOCBF safety claim is conditional on the model, initial conditions, control authority, uncertainty bounds, sample timing, and a feasible optimization problem. The v1 interfaces and fallback do not provide the report's full state-integrity or runtime-assurance architecture.
 
+## Codebase structure
+
+The repository uses a single Python package with component ownership aligned to the three workstreams. The [repository structure and merge workflow](./docs/architecture/REPOSITORY_STRUCTURE.md) defines the main tree and how work reaches `main`. Aman’s [product and integration architecture](./docs/architecture/PRODUCT_AND_INTEGRATION.md) describes the run boundary. Owner briefs live in `docs/workstreams/`; shared contracts remain in [`shared/contracts.py`](./shared/contracts.py), and source modules live under `src/utm_services/`. The mock API is a local prototype boundary, not a deployed or production-ready service.
+
 ## Repository and ownership
 
 `main` is the shared source of truth. The shared product and delivery plan is [`TASKS.md`](./TASKS.md), and v1 simulation contracts live in [`INTERFACES.md`](./INTERFACES.md). There is no `dev` documentation or integration step. Each workstream keeps its detailed owner brief on its named branch; its path is unique so a pull request does not replace this product README.
 
 | Branch | Owner and responsibility | Owner brief |
 | --- | --- | --- |
-| `aman/product-platform` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. | [`aman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/aman/README.md) |
-| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`salman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/salman/README.md) |
-| `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`anas/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/anas/README.md) |
+| `aman/product-platform` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. | [`docs/workstreams/aman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/docs/workstreams/aman.md) |
+| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`docs/workstreams/salman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/docs/workstreams/salman.md) |
+| `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`docs/workstreams/anas.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/docs/workstreams/anas.md) |
 
 Each workstream sends pull requests directly to `main`. Before using an AI coding agent, read this README, [`TASKS.md`](./TASKS.md), [`INTERFACES.md`](./INTERFACES.md), and the owner brief on your branch. Keep changes within the assigned workstream, use the shared contract, identify assumptions, and summarize changed files, evidence, open issues, and handoff needs in the pull request. A change to a shared contract requires review from the affected owners and an update to every affected consumer.
 

@@ -1,3 +1,2 @@
-# Local test runner; installs the runtime schema dependency as well.
--r requirements.txt
-pytest>=8,<10
+# Editable project install with development and verification dependencies.
+-e .[dev]

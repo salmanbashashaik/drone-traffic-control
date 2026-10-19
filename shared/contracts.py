@@ -42,6 +42,8 @@ def _as_tuple(value: Any) -> Any:
 
 
 Vec3 = Annotated[tuple[float, float, float], BeforeValidator(_as_tuple)]
+Vec2 = Annotated[tuple[float, float], BeforeValidator(_as_tuple)]
+BoundingBox3D = Annotated[tuple[float, float, float, float, float, float], BeforeValidator(_as_tuple)]
 ObservationValues = Annotated[
     tuple[float, ...],
     BeforeValidator(_as_tuple),
@@ -262,6 +264,114 @@ class DroneRegisterResponse(ContractModel):
     def _registration_id_is_nonblank(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("sim_registration_id must not be blank")
+        return value
+
+
+class GeofenceV1(ContractModel):
+    """Closed-cylinder synthetic geofence used by the local mock API."""
+
+    id: str = Field(min_length=1)
+    center_xy_m: Vec2
+    radius_m: float = Field(gt=0)
+    floor_m: float
+    ceiling_m: float
+    active_from_ms: TimestampMs
+    active_until_ms: TimestampMs
+
+    @field_validator("id")
+    @classmethod
+    def _id_is_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("geofence id must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> GeofenceV1:
+        if self.floor_m >= self.ceiling_m:
+            raise ValueError("geofence floor_m must be below ceiling_m")
+        if self.active_from_ms > self.active_until_ms:
+            raise ValueError("geofence active_from_ms must not exceed active_until_ms")
+        return self
+
+
+class AltitudeLimitsV1(ContractModel):
+    """Synthetic local-coordinate altitude limits."""
+
+    min: float
+    max: float
+
+    @model_validator(mode="after")
+    def _limits_are_ordered(self) -> AltitudeLimitsV1:
+        if self.min >= self.max:
+            raise ValueError("altitude min must be below max")
+        return self
+
+
+class AirspaceRulesV1(ContractModel):
+    """Versioned synthetic rules response for GET /airspace/rules."""
+
+    version: str = Field(min_length=1)
+    geofences: Annotated[tuple[GeofenceV1, ...], BeforeValidator(_as_tuple)]
+    altitude_limits_m: AltitudeLimitsV1
+    separation_minimum_m: float = Field(gt=0)
+
+    @field_validator("version")
+    @classmethod
+    def _version_is_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("rules version must not be blank")
+        return value
+
+
+class NotamV1(ContractModel):
+    """Synthetic local-coordinate notice; not an official NOTAM."""
+
+    id: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    bbox_m: BoundingBox3D
+    active_from_ms: TimestampMs
+    active_until_ms: TimestampMs
+
+    @field_validator("id", "description")
+    @classmethod
+    def _text_is_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("notice text fields must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def _bounds_are_ordered(self) -> NotamV1:
+        xmin, ymin, zmin, xmax, ymax, zmax = self.bbox_m
+        if xmin > xmax or ymin > ymax or zmin > zmax:
+            raise ValueError("bbox_m minimum coordinates must not exceed maximum coordinates")
+        if self.active_from_ms > self.active_until_ms:
+            raise ValueError("notice active_from_ms must not exceed active_until_ms")
+        return self
+
+
+class NotamListV1(ContractModel):
+    """Synthetic notices response for GET /airspace/notam."""
+
+    notams: Annotated[tuple[NotamV1, ...], BeforeValidator(_as_tuple)]
+
+
+class APIError(ContractModel):
+    """Stable error envelope for local mock API failures."""
+
+    code: Literal[
+        "invalid_request",
+        "not_found",
+        "duplicate_agent_id",
+        "scenario_unavailable",
+        "mock_api_error",
+    ]
+    message: str = Field(min_length=1)
+
+    @field_validator("code", "message")
+    @classmethod
+    def _error_text_is_nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("error code and message must not be blank")
         return value
 
 
