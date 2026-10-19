@@ -1,6 +1,6 @@
 # Shared interfaces — simulation-only v1
 
-This document is the single cross-branch contract for the v1 simulation/API demo. The values below are proposed implementation defaults inherited from the prototype plan; they are **not** real aviation rules, a regulatory standard, or the report's complete state-integrity or assurance architecture. Any change requires a pull request to `main` that identifies affected producers and consumers.
+This document is the single cross-branch contract for the v1 simulation/API demo—the first engineering milestone on a startup path toward real UTM services. The values below are proposed simulation defaults; they are **not** production service contracts, real aviation rules, a regulatory standard, or the report's complete state-integrity or assurance architecture. Any change requires a pull request to `main` that identifies affected producers and consumers. Production APIs and integrations must be defined separately after the first real service and operating domain are selected.
 
 ## Contract status and units
 
@@ -110,6 +110,10 @@ Returns `{ "notams": [...] }`. Each synthetic record contains `id`, `description
 Accepts `{ "agent_id", "operator", "mission_type" }` and returns `{ "registered": true, "sim_registration_id" }`. The ID is synthetic and scoped to the simulation. This does not register an actual aircraft or operator.
 
 Invalid JSON, missing required fields, invalid ranges, duplicate IDs, and unavailable scenario data return explicit errors with a stable `code` and human-readable `message`; no request should silently succeed with omitted required data. Route versioning and any extra response fields must be documented before consumers depend on them.
+
+## Production service boundary — future work
+
+The routes above are mock interfaces for the simulator. They are a starting point for product learning, not endpoints to connect to live traffic or operational users. Before a real service uses data from aircraft, operators, USS/UTM providers, or airspace authorities, Phase 5 in [`TASKS.md`](./TASKS.md) must define the intended user and operating domain, each data source’s authority and provenance, freshness/quality behavior, authenticated access, privacy and security controls, auditability, availability and support needs, service-specific failure/degraded modes, monitoring, and deployment/rollback gates. The exact contract depends on whether the first service provides information, coordination, advice, or control influence. Keep each production contract versioned and distinct from this simulation schema until its requirements and evidence are reviewed.
 
 ## Disturbance and stress inputs
 
