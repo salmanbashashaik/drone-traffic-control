@@ -1,6 +1,6 @@
 # Anas’s workstream — simulation, evaluation, and edge ML
 
-This brief belongs to the `anas/marl-policy` branch. **Anas owns the simulator and scenarios, stress evaluation, and edge ML packaging and benchmarking.** The branch name understates this scope: environment design, matched evaluation, and edge measurement are all part of the workstream.
+This brief belongs to the `anas/simulation-edge` branch. **Anas owns the simulator and scenarios, stress evaluation, and edge ML packaging and benchmarking.**
 
 The startup is building toward real UTM services, with a simulation/API prototype as its first engineering milestone. Its product path and current limits are in the [root README](../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); v1 state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
