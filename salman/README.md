@@ -1,8 +1,8 @@
 # Salman’s workstream — MARL methods and CBF/HOCBF safety
 
-This brief belongs to the `salman/cbf-safety` branch. **Salman owns MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims.** The product is the simulation-only UTM assurance prototype described in the [root README](../README.md). The shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md), and all cross-branch units, state/action fields, timing, and logging semantics live in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
+This brief belongs to the `salman/cbf-safety` branch. **Salman owns MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims.** The startup is building toward real UTM services; the simulation/API prototype is its first engineering milestone. The shared root [README](../README.md) describes the product path. The shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md), and v1 simulation units, state/action fields, timing, and logging semantics live in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
-The supporting report motivates a broader layered research direction; it does not report new prototype experiments or prove that the proposed architecture works. V1 studies a learned nominal controller and a model-based filter inside a simulator. Its observation is simplified, its model and disturbance coverage are limited, and its zero-acceleration fallback is unverified. Keep every mathematical or safety statement conditional on the actual model, controller implementation, solver behavior, and experiment evidence.
+The supporting report motivates a broader layered research direction; it does not report new prototype experiments or prove that the proposed architecture works. V1 studies a learned nominal controller and a model-based filter inside a simulator. Its observation is simplified, its model and disturbance coverage are limited, and its zero-acceleration fallback is unverified. Keep every mathematical or safety statement conditional on the actual model, controller implementation, solver behavior, and experiment evidence. Your post-prototype work helps determine what assurance evidence a selected real service will need; the simulation filter alone does not provide that assurance.
 
 ## Ownership boundary
 
@@ -74,10 +74,23 @@ All tasks are planned and map to your rows in [`TASKS.md`](https://github.com/sa
 
 **Acceptance:** A reader can tell which formulation and versions were actually used, what was measured, which guarantees are absent, and what would need additional analysis or evidence. No unimplemented HJ, recoverability, verified-backup, sensor-integrity, or certification feature is implied.
 
+### P5-SA-01 — Assurance requirements for the first real service
+
+**Inputs:** Aman’s selected service role, operating domain, system boundaries, and data/integration map; v1 evaluation and failure records; applicable technical and operational requirements identified during product discovery.
+
+**Deliver:** A service-specific hazard and assurance requirements note plus an evidence roadmap. Map hazards and assumptions across the service boundary; define safety objectives, uncertainty/model limits, monitoring and escalation needs, fallback requirements, independent review, and evidence needed before each proposed deployment stage. Identify which standards, authorities, and external approvals need qualified follow-up without claiming compliance.
+
+**Dependencies:** P5-AM-01 and P3-SA-01. The assurance analysis depends on knowing whether the service provides information, coordination, advice, or control influence.
+
+**Handoff:** Give Aman requirements that shape production architecture and product claims; give Anas scenario coverage and validation evidence criteria for simulation, replay, shadow operation, and any later hardware or field stages.
+
+**Acceptance:** Each identified hazard and safety objective is linked to assumptions, proposed controls/monitoring, and evidence or an explicit open item. Prototype evidence is kept distinct from service evidence. The note identifies independent review and external dependencies, states where the prototype formulation is insufficient, and makes no certification, operational approval, or zero-risk claim.
+
 ## Working with AI tools
 
 - Provide the agent the relevant task ID, this brief, current `main/INTERFACES.md`, and the exact simulator transition code before asking it to derive or alter a constraint.
 - Ask it to show definitions, units, relative-state conventions, assumptions, and a derivation step by step. Verify equations independently and check them against the implemented discretization; generated algebra is not evidence of a guarantee.
 - Ask for primary-source citations when the agent makes a literature claim. Distinguish report content, published results, proposed formulations, and this repository’s measured results.
+- For service assurance planning, use AI to surface hazards, assumptions, and evidence questions for review. Validate them against the selected service, operating domain, and qualified external requirements; do not treat a generated hazard list or assurance argument as an approved safety case.
 - Do not let generated code suppress solver errors, hide infeasibility, modify timestamps, or silently clip actions. Preserve logs that allow the nominal policy and filter output to be compared.
 - Review every use of “safe,” “guaranteed,” “verified,” “recoverable,” and “robust” in code, plots, demo text, and PR descriptions. Open pull requests directly to `main`, list task IDs and artifacts, and identify all consumer handoffs.
