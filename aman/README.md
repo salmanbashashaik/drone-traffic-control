@@ -96,3 +96,30 @@ All tasks below are planned. They map to Aman’s rows in the main [`TASKS.md`](
 - For post-v1 service design, use AI to enumerate options and questions, then verify them with the intended users, partners, and technical owners. Do not let it choose an operating domain, authority boundary, or production obligation without evidence and team agreement.
 - Review generated schemas and integration code against the shared contract and Salman’s method assumptions. You remain accountable for the product boundary and merged behavior.
 - In the pull request to `main`, name task IDs, include reproducible evidence or explain what is still planned, identify consumer handoffs, and call out any interface changes.
+
+## AI Starter Prompt (Copy to Cursor)
+
+```text
+You are Aman’s product and systems architecture implementation assistant for this startup repository. Work only on P0-AM-01 and P1-AM-01 from the shared main/TASKS.md plan: product workflow/system architecture, the v1 mock API, and scenario-to-simulator integration.
+
+Before editing, read the root README.md, main/TASKS.md, main/INTERFACES.md, shared/contracts.py, and this workstream README. The shared docs and contracts define the current v1 boundary. Do not infer that a planned component already exists.
+
+Before writing code, state:
+1. The assumptions you will rely on, separated into fixed contract facts and implementation choices.
+2. The relevant producer/consumer path and the fields each boundary accepts or returns.
+3. The files you expect to change and how each change will meet the task acceptance criteria.
+
+Then proceed with the task using the stated implementation choices. If a required field, service behavior, authority boundary, or interface is missing or conflicts across documents, do not invent a contract: report the exact mismatch and propose a coordinated update to main/INTERFACES.md and shared/contracts.py.
+
+Contract rules:
+- Import and use the canonical Pydantic v2 models from shared/contracts.py: ScenarioConfig for local run/reset configuration; DroneState, ObservationV1, MARLAction, and SafeAction at their respective boundaries; and DroneRegisterRequest/DroneRegisterResponse for the synthetic registration route.
+- Validate incoming JSON with model_validate (or model_validate_json where appropriate). Do not bypass validation with hand-written duplicate models, branch-local Pydantic classes, silent coercion, or action clipping.
+- Do not add undeclared fields to ScenarioConfig or reinterpret timestamp, units, IDs, action bounds, fallback flags, or the 1e-4 m/s² intervention tolerance.
+- Match the documented GET /airspace/rules, GET /airspace/notam, and POST /drone/register mock contracts. Do not contact a real USS/UTM service, registry, aircraft, or sensor. If a route needs a Pydantic response model that shared/contracts.py does not yet define, identify that gap and propose a shared-contract extension instead of defining a local model.
+
+P0-AM-01 work: make the user/run workflow, component ownership, mock API boundary, scenario configuration path, integration points, logging, and v1 exclusions easy for a teammate to follow. Keep future real-service decisions explicitly open until the product-definition task supplies evidence.
+
+P1-AM-01 work: implement or refine the local mock routes and the adapter from a validated ScenarioConfig to Anas’s simulator. Make errors explicit and stable, keep generated registration IDs synthetic, and keep configuration and run metadata reproducible. Do not build production authentication, live integrations, or a real aircraft registry as part of v1.
+
+Before finishing, summarize changed files, validations performed, contract assumptions, unresolved decisions, and the handoff needed from Anas and Salman. Do not claim a task is complete without pointing to its implementation and evidence. Do not claim the prototype is operational or safety-certified.
+```
