@@ -10,24 +10,45 @@ As more drones share constrained airspace, each vehicle's motion can affect the 
 
 The first build is a **simulation/API demo**. A user should be able to configure synthetic airspace and missions, run a scenario, inspect the proposed and filtered actions, and compare measured outcomes across controller variants. Its API and registered vehicles are mock simulation interfaces. The product path after this milestone is to define the first real service, select its operating context and data sources, harden the service architecture, and then validate integrations through staged deployment gates.
 
-## V1 workflow
+## V1 System Architecture (Data Flow)
+
+This diagram is the authoritative source of truth for the v1 data flow. Shared field names and semantics are defined in [`INTERFACES.md`](./INTERFACES.md) and validated by [`shared/contracts.py`](./shared/contracts.py).
 
 ```mermaid
 flowchart LR
-    A[Mock airspace rules and missions] --> B[Simulator state]
-    B --> C[MARL policy proposes acceleration]
-    C --> D[CBF/HOCBF filter checks modeled constraints]
-    D -->|feasible| E[Filtered acceleration]
-    D -->|solver error or infeasible| F[Zero-acceleration fallback]
-    E --> G[Simulator advances]
-    F --> G
-    G --> H[Matched-run metrics and visualization]
-    H --> B
+    CFG["ScenarioConfig + seed<br/>local demo input"] --> RUN["Aman's demo/run adapter"]
+    API["Aman's mock airspace API<br/>synthetic rules, notices, registration"] --> RUN
+    RUN -->|"scenario and synthetic airspace inputs"| SIM["Anas's simulator<br/>reset and 100 ms steps"]
+
+    SIM -->|"modeled ground truth"| STATE["DroneState<br/>one per active agent"]
+    SIM -->|"policy-facing input"| OBS["ObservationV1<br/>18 values per agent"]
+    OBS --> POLICY["Salman's MARL/reference policy"]
+    POLICY -->|"proposed acceleration"| NOM["MARLAction"]
+
+    STATE --> FILTER["Salman's CBF/HOCBF QP filter<br/>modeled active pairs"]
+    NOM --> FILTER
+    FILTER --> FEAS{"QP feasible?"}
+    FEAS -->|"yes"| PASS["SafeAction<br/>filtered or pass-through action"]
+    FEAS -->|"no or solver error"| FALL["Fallback SafeAction<br/>zero acceleration<br/>qp_feasible=false<br/>fallback_used=true"]
+
+    PASS --> APPLY["Anas's simulator applies action<br/>and advances one step"]
+    FALL --> APPLY
+    APPLY --> SIM
+    APPLY --> RESULT["Step result<br/>next observations, rewards,<br/>termination, truncation, info"]
+    RESULT -->|"next ObservationV1"| POLICY
+
+    STATE --> LOG["Aman's API/demo logger"]
+    NOM --> LOG
+    PASS --> LOG
+    FALL --> LOG
+    RESULT --> LOG
+    CFG --> LOG
+    LOG --> OUT["Run record and summary metrics"]
 ```
 
 The simulator owns ground-truth state. The policy receives the documented, deliberately simplified 18-value observation. The filter may alter the policy's proposed acceleration using the simulator's modeled state. If the filter fails or its optimization problem is infeasible, v1 emits a zero-acceleration command. That is an **unverified fallback**: it is not a hover controller and does not guarantee separation, especially when a drone already has velocity.
 
-The shared simulation-only v1 data types, units, API routes, timing, logging, and error behavior are specified in [`INTERFACES.md`](./INTERFACES.md). That document is the contract for all branches. If code and contract differ, record the mismatch and resolve it through a change to `main` before treating either version as authoritative.
+The shared simulation-only v1 data types, units, API routes, timing, logging, and error behavior are specified in [`INTERFACES.md`](./INTERFACES.md). That document is the contract for all branches. Pydantic v2 models in [`shared/contracts.py`](./shared/contracts.py) validate the structured inputs and outputs; install the schema and test dependencies with `python -m pip install -r requirements-dev.txt`. If code and contract differ, record the mismatch and resolve it through a change to `main` before treating either version as authoritative.
 
 ## V1 prototype scope
 
