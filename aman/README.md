@@ -1,6 +1,6 @@
 # Aman’s workstream — product, architecture, and integration
 
-This brief belongs to the `aman/infra-api` branch. **Aman owns product and system architecture, ML system design, integration, API/platform design, and platform-level scalability.** The branch name understates that scope: this workstream is not limited to infrastructure or API coding.
+This brief belongs to the `aman/product-platform` branch. **Aman owns product and system architecture, ML system design, integration, API/platform design, and platform-level scalability.**
 
 We are building a startup toward real UTM software services. V1 is a simulation/API prototype that lets the team configure a synthetic airspace scenario, run controller variants, inspect proposed and filtered actions, and compare measured outcomes. It is an early product milestone; the first real service and operating domain are selected after its results and customer discovery. The shared root [README](../README.md) describes the product path; the single shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); simulation data and API contracts are [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
