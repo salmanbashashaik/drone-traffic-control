@@ -2,9 +2,9 @@
 
 This brief belongs to the `anas/marl-policy` branch. **Anas owns the simulator and scenarios, stress evaluation, and edge ML packaging and benchmarking.** The branch name understates this scope: environment design, matched evaluation, and edge measurement are all part of the workstream.
 
-The product is a simulation-only UTM assurance prototype. Its purpose and limits are in the [root README](../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); shared state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
+The startup is building toward real UTM services, with a simulation/API prototype as its first engineering milestone. Its product path and current limits are in the [root README](../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); v1 state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
-Your simulator is the source of modeled ground truth, not a real sensor or flight stack. A chaos injector is a selected, reproducible test condition, not a cyber defense. A zero-acceleration fallback is unverified and may preserve unsafe motion. Keep those limits visible in scenarios, results, plots, and benchmark summaries.
+Your simulator is the source of modeled ground truth, not a real sensor or flight stack. A chaos injector is a selected, reproducible test condition, not a cyber defense. A zero-acceleration fallback is unverified and may preserve unsafe motion. Keep those limits visible in scenarios, results, plots, and benchmark summaries. Your post-prototype work defines how simulator evidence can be extended toward the selected service context; simulation results alone do not establish field readiness.
 
 ## Ownership boundary
 
@@ -76,6 +76,18 @@ All tasks are planned and map to your rows in [`TASKS.md`](https://github.com/sa
 
 **Acceptance:** Another contributor can identify and invoke the same artifact/preprocessing path; measurements are reproducible from recorded metadata; latency is distinguished from simulator step and platform end-to-end latency; model differences or errors are reported rather than hidden; the result makes no flight-readiness or certification claim.
 
+### P5-AN-01 — Validation path toward the selected real service
+
+**Inputs:** Aman’s first-service workflow, operating domain, data sources, deployment model, and constraints; Salman’s hazard/assurance requirements; v1 scenario coverage, failures, edge benchmark, and model assumptions.
+
+**Deliver:** A staged validation and deployment plan mapping the simulator to the selected service context. Specify additional scenarios and model evidence, recorded-data replay, interface and integration validation, shadow-mode comparison, edge/hardware-in-loop evaluation, field evidence, monitoring, and rollback criteria as applicable. Identify the owner, evidence artifact, dependency, and exit condition for each proposed stage.
+
+**Dependencies:** P5-AM-01 and P5-SA-01, plus P3/P4 evaluation artifacts. The plan depends on the agreed service role and operating domain; do not assume flight control or a particular hardware target.
+
+**Handoff:** Give Aman an implementation sequence and measurable deployment gates; give Salman the scenario-to-hazard traceability and evidence plan. Record partner, data-access, hardware, and external approval dependencies for the team to resolve.
+
+**Acceptance:** The plan maps each relevant v1 model assumption and observed failure mode to additional evidence or an explicit accepted limitation. It distinguishes simulation, replay, shadow, hardware, and field evidence; defines monitoring, failure/rollback criteria, and exit gates; names dependencies and accountable owners; and does not present planned validation as completed or approved.
+
 ## Working with AI tools
 
 - Give the agent this brief, the task ID, current `main/INTERFACES.md`, and the exact environment/filter adapter before asking it to change scenario or logging behavior.
@@ -83,3 +95,4 @@ All tasks are planned and map to your rows in [`TASKS.md`](https://github.com/sa
 - For evaluation scripts, require explicit paired-seed matching, controller versions, and abort/hold accounting. Check the manifest and raw run records before accepting generated plots or narrative summaries.
 - For model export, ask the agent to report unsupported operators, preprocessing changes, numerical/action deviations, and runtime versions. Verify output agreement before quoting latency.
 - Keep simulator throughput, inference latency, and Aman’s platform scalability results separate. In pull requests directly to `main`, list task IDs, evidence, interfaces changed, and handoffs.
+- When planning the move toward real services, use AI to map scenario coverage and evidence gaps, then confirm them with Aman’s selected product context and Salman’s assurance requirements. Never turn simulation success into a claim of field readiness.
