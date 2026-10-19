@@ -2,7 +2,7 @@
 
 This brief belongs to the `anas/simulation-edge` branch. **Anas owns the simulator and scenarios, stress evaluation, and edge ML packaging and benchmarking.**
 
-The startup is building toward real UTM services, with a simulation/API prototype as its first engineering milestone. Its product path and current limits are in the [root README](../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); v1 state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
+The startup is building toward real UTM services, with a simulation/API prototype as its first engineering milestone. Its product path and current limits are in the [root README](../../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); v1 state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
 Your simulator is the source of modeled ground truth, not a real sensor or flight stack. A chaos injector is a selected, reproducible test condition, not a cyber defense. A zero-acceleration fallback is unverified and may preserve unsafe motion. Keep those limits visible in scenarios, results, plots, and benchmark summaries. Your post-prototype work defines how simulator evidence can be extended toward the selected service context; simulation results alone do not establish field readiness.
 

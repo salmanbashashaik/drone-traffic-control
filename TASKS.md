@@ -5,7 +5,7 @@ This is the **sole shared task index** for the startup’s product path, from th
 ## How to use this plan
 
 1. Start with the root [`README.md`](./README.md) for startup product direction and [`INTERFACES.md`](./INTERFACES.md) for simulation-only v1 contracts.
-2. Work from the matching owner brief: [Aman](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/aman/README.md), [Salman](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/salman/README.md), or [Anas](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/anas/README.md).
+2. Work from the matching owner brief: [Aman](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/docs/workstreams/aman.md), [Salman](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/docs/workstreams/salman.md), or [Anas](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/docs/workstreams/anas.md).
 3. Open a pull request from the named workstream branch directly to `main`. Describe evidence against the task acceptance criteria and identify any shared-contract changes.
 4. Do not mark a task complete because documentation, generated code, or an AI agent claims it is complete. Link the artifact or reproducible result that meets its criteria.
 
