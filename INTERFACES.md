@@ -81,7 +81,7 @@ If the optimization is infeasible or the solver errors, v1 returns zero accelera
 
 The environment implements a PettingZoo-style parallel step. Its step result has the five mappings `observations`, `rewards`, `terminations`, `truncations`, and `infos`, keyed by active `agent_id`. `infos[agent_id]` includes at least `shield_active`, `h_min_m2`, `qp_feasible`, `fallback_used`, `nearest_separation_m`, and `separation_violation` for the just-completed step. The per-agent `separation_violation` flag is true if that agent was part of any pair below `d_safe` during the step. Episode metric `separation_violation_pair_steps` counts each unordered pair once per step when its separation is below `d_safe`. Neither measure is a certified collision or aviation near-miss measure.
 
-Reset accepts a scenario configuration and seed and returns initial observations and metadata. Same code, configuration, and seed should reproduce the same scenario and transition sequence. A run manifest records code/artifact version, scenario, seed, controller variant, and episode limit. The nominal transition is a bounded point-mass simulation; implementation details such as integration scheme must be documented with the simulator artifact.
+Reset accepts a `ScenarioConfig` (including its seed) and returns initial observations and metadata. The same code, configuration, and seed should reproduce the same scenario and transition sequence. A run manifest records code/artifact version, scenario, seed, controller variant, and episode limit. The nominal transition is a bounded point-mass simulation; implementation details such as integration scheme must be documented with the simulator artifact.
 
 ## Mock API contract
 
