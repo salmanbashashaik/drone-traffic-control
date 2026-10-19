@@ -92,9 +92,9 @@ Zero observed failures in a finite simulation campaign does not prove zero risk.
 
 | Branch | Owner and responsibility | Owner brief |
 | --- | --- | --- |
-| `aman/infra-api` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. The branch name understates this scope; it is not infrastructure work alone. | [`aman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/infra-api/aman/README.md) |
-| `salman/cbf-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`salman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/cbf-safety/salman/README.md) |
-| `anas/marl-policy` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. The branch name understates this scope; simulation and edge evaluation are part of the ownership. | [`anas/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/marl-policy/anas/README.md) |
+| `aman/product-platform` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. | [`aman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/aman/README.md) |
+| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`salman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/salman/README.md) |
+| `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`anas/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/anas/README.md) |
 
 Each workstream sends pull requests directly to `main`. Before using an AI coding agent, read this README, [`TASKS.md`](./TASKS.md), [`INTERFACES.md`](./INTERFACES.md), and the owner brief on your branch. Keep changes within the assigned workstream, use the shared contract, identify assumptions, and summarize changed files, evidence, open issues, and handoff needs in the pull request. A change to a shared contract requires review from the affected owners and an update to every affected consumer.
 
