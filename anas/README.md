@@ -1,0 +1,85 @@
+# Anas’s workstream — simulation, evaluation, and edge ML
+
+This brief belongs to the `anas/marl-policy` branch. **Anas owns the simulator and scenarios, stress evaluation, and edge ML packaging and benchmarking.** The branch name understates this scope: environment design, matched evaluation, and edge measurement are all part of the workstream.
+
+The product is a simulation-only UTM assurance prototype. Its purpose and limits are in the [root README](../README.md); the shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); shared state/action, timing, mock API, disturbance, and metric contracts are in [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
+
+Your simulator is the source of modeled ground truth, not a real sensor or flight stack. A chaos injector is a selected, reproducible test condition, not a cyber defense. A zero-acceleration fallback is unverified and may preserve unsafe motion. Keep those limits visible in scenarios, results, plots, and benchmark summaries.
+
+## Ownership boundary
+
+You own simulation transitions and scenario configuration, deterministic seeding, stress-case execution, evaluation manifests and metrics, simulator-throughput characterization, and policy packaging/edge inference benchmarking. Salman owns MARL algorithm research, policy training, math, and CBF/HOCBF derivation/solver semantics. Aman owns the product workflow, mock API, platform integration, and platform-level scalability. You may wire their outputs into the environment, but shared interface changes require a pull request directly to `main` and coordinated updates by affected consumers.
+
+Simulator scaling and platform scalability are separate claims: you report environment step throughput and fleet/scenario limits; Aman reports integration and platform bottlenecks. Edge inference latency is separate from both. There is no `dev` step, and this branch must not copy the main task plan.
+
+## Your tasks
+
+All tasks are planned and map to your rows in [`TASKS.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md). This brief expands the inputs, outputs, dependencies, handoffs, and acceptance conditions for your branch.
+
+### P0-AN-01 — Simulator and scenario contract
+
+**Inputs:** Proposed world, time step, state/observation, and logging fields in `INTERFACES.md`; product use case and v1 exclusions in the root README.
+
+**Deliver:** A concise simulator note defining state transition and integration scheme, reset/step lifecycle, goals and episode termination, active-agent behavior, scenario configuration, deterministic seed behavior, and supported disturbances/stress injectors. Identify which fields are ground truth and which are delivered observations.
+
+**Dependencies:** Shared v1 contract. Coordinate the actual point-mass transition and any model simplifications with Salman before his filter derivation is treated as final.
+
+**Handoff:** Give Salman the exact state transition and bounded-disturbance model; give Aman the configuration/reset inputs and run metadata needed by the API/demo.
+
+**Acceptance:** Reset and step semantics, time advancement, episode stop conditions, coordinate frame, seed scope, scenario fields, and chaos-injection points are explicit and consistent with the shared contract. No scenario description implies attack defense, sensor fidelity, or aircraft realism that was not implemented.
+
+### P1-AN-01 — Deterministic v1 environment
+
+**Inputs:** P0 scenario note, shared `DroneState` and `ObservationV1`, and mock airspace data from Aman’s API work.
+
+**Deliver:** A parallel multi-agent environment with seeded reset/step, agreed world limits and dynamics, exactly shaped observations, configurable synthetic missions, per-agent termination/truncation/info, and episode accounting. Support the deterministic reference actions that Salman supplies.
+
+**Dependencies:** P0-AN-01. Coordinate configuration fields with Aman and action application/timestamps with Salman before freezing the runner.
+
+**Handoff:** Give Salman a reproducible training/evaluation environment and Aman a stable reset/step/config entry point.
+
+**Acceptance:** The same environment version, scenario config, and seed reproduce initial conditions and transition sequence; observation and action shapes, units, and timestamps match `INTERFACES.md`; bounds and episode accounting are explicit; API-provided restrictions are represented in the scenario as documented. Environment throughput is measured only with its workload and timing boundary stated.
+
+### P2-AN-01 — Controller wrappers and fallback integration
+
+**Inputs:** P1 environment, Salman’s versioned reference/MARL policy and CBF/HOCBF filter, and Aman’s integrated run configuration.
+
+**Deliver:** Comparable runners for deterministic reference, unshielded MARL, and shielded MARL; an explicit infeasible/error path using the shared zero-acceleration fallback; step and episode logs that keep proposed action, returned action, intervention, feasibility, fallback, and separation diagnostics separate. Add seeded stress scenarios such as bounded wind, delayed/dropped observation delivery, or a corrupted synthetic record where supported.
+
+**Dependencies:** P1-AN-01 and P2-SA-01. Freeze the runner/config schema with Aman before evaluation campaigns.
+
+**Handoff:** Give Aman one stable experiment entry point and give the evaluation task identical controller interfaces and complete run manifests.
+
+**Acceptance:** All controller variants receive identical scenario demand, dynamics, disturbances, episode limits, and paired seeds; policy/filter failures are visible in logs; fallback semantics match `INTERFACES.md` and are never described as hover, verified, or guaranteed safe; stress inputs are reproducible, clearly named, and reported as test scenarios only.
+
+### P3-AN-01 — Matched evaluation and stress results
+
+**Inputs:** Frozen P2 runner and config from Aman, versioned policy/filter artifacts from Salman, and shared metric definitions.
+
+**Deliver:** Reproducible evaluation manifests, per-run records, summary tables/plots, and a short methods note comparing the deterministic reference, unshielded MARL, and shielded MARL. Include nominal and selected stress scenarios, failure runs, and a record of any excluded/aborted/held missions.
+
+**Dependencies:** P2-AN-01 and a stable P2-AM-01 experiment interface. Resolve metric mismatches with both consumers before the campaign.
+
+**Handoff:** Give Salman raw summaries and manifests for technical interpretation; give Aman reviewed metrics for product interpretation.
+
+**Acceptance:** At least 10 paired scenario seeds/runs per comparison use matched demand, dynamics, disturbance, and episode limits. Report launch/completion/abort/hold counts, completion percentage, minimum separation, pair-step samples below `d_safe`, shield interventions, infeasible filter steps, fallback agent-step events, simulation-step latency, and policy latency. Include run-to-run variation, sample counts, configs, artifact versions, and failures. Do not call the separation threshold a certified collision/NMAC/LoWC measure or infer zero risk from zero observed violations.
+
+### P4-AN-01 — Policy packaging and edge inference benchmark
+
+**Inputs:** Salman’s final policy artifact and adapter/preprocessing metadata; P3 evaluation configuration; the agreed edge target/runtime, if available.
+
+**Deliver:** A packaged model (ONNX when supported by the chosen model stack) and benchmark record. State target hardware, runtime/library versions, model and preprocessing version, input shape, warm-up, measurement method and sample count; report p50/p95 inference latency and memory use where available, plus output/action agreement with the reference runtime.
+
+**Dependencies:** P2-SA-01 artifact and P3-AN-01 evaluation interface. Agree on the benchmark device and runtime with Salman/Aman before collecting numbers. If a target device is unavailable, use a CPU-only proxy and label it plainly; do not call it an edge-device result.
+
+**Handoff:** Give Aman the versioned artifact, invocation details, resource/latency results, and any unsupported operations or conversion discrepancies; give Salman any numerical differences relevant to method interpretation.
+
+**Acceptance:** Another contributor can identify and invoke the same artifact/preprocessing path; measurements are reproducible from recorded metadata; latency is distinguished from simulator step and platform end-to-end latency; model differences or errors are reported rather than hidden; the result makes no flight-readiness or certification claim.
+
+## Working with AI tools
+
+- Give the agent this brief, the task ID, current `main/INTERFACES.md`, and the exact environment/filter adapter before asking it to change scenario or logging behavior.
+- Ask it to preserve seed control, record every injected disturbance, and state which simulator layer receives each fault. Do not let an agent describe an injector as a defense or equate synthetic corruption with real attack coverage.
+- For evaluation scripts, require explicit paired-seed matching, controller versions, and abort/hold accounting. Check the manifest and raw run records before accepting generated plots or narrative summaries.
+- For model export, ask the agent to report unsupported operators, preprocessing changes, numerical/action deviations, and runtime versions. Verify output agreement before quoting latency.
+- Keep simulator throughput, inference latency, and Aman’s platform scalability results separate. In pull requests directly to `main`, list task IDs, evidence, interfaces changed, and handoffs.
