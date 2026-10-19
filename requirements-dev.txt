@@ -1,0 +1,3 @@
+# Local test runner; installs the runtime schema dependency as well.
+-r requirements.txt
+pytest>=8,<10

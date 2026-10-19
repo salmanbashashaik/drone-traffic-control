@@ -2,11 +2,13 @@
 
 This document is the single cross-branch contract for the v1 simulation/API demo—the first engineering milestone on a startup path toward real UTM services. The values below are proposed simulation defaults; they are **not** production service contracts, real aviation rules, a regulatory standard, or the report's complete state-integrity or assurance architecture. Any change requires a pull request to `main` that identifies affected producers and consumers. Production APIs and integrations must be defined separately after the first real service and operating domain are selected.
 
+The canonical Pydantic v2 models are in [`shared/contracts.py`](./shared/contracts.py). Producers and consumers must import and validate with those models; do not create branch-local copies. Keep the code and this document in sync through a shared-contract change.
+
 ## Contract status and units
 
 - Coordinates are local Cartesian meters, not latitude/longitude. A position is `[x, y, z]`; velocity is m/s; acceleration is m/s².
 - Episode time is integer milliseconds from reset. The nominal simulation step is 100 ms (`dt = 0.1 s`); valid action timestamps identify the current state time. The simulator applies the action to advance the following step.
-- Proposed world bounds are `x,y ∈ [0, 1000] m`, `z ∈ [30, 200] m`; maximum speed is 15 m/s and each acceleration component is bounded to `[-3, 3] m/s²`. Proposed maximum episode length is 1000 steps.
+- Proposed world bounds are `x,y ∈ [0, 1000] m`, `z ∈ [30, 200] m`; maximum 3D speed magnitude is 15 m/s and each acceleration component is bounded to `[-3, 3] m/s²`. Proposed maximum episode length is 1000 steps.
 - The v1 pairwise minimum-separation threshold is `d_safe = 5 m`. This is a simulation parameter, not an aviation separation standard, DAA requirement, or certified well-clear threshold.
 - Values are raw simulation units unless a field says otherwise. If policy preprocessing normalizes inputs, the preprocessing parameters and artifact version must travel with the model; the environment contract remains in raw units.
 
@@ -69,7 +71,9 @@ There must be exactly one action for each active controlled agent for the curren
 }
 ```
 
-The type name `SafeAction` means “action returned by the filter adapter”; it does **not** mean the action has a proof or is safe in reality. `h_min_m2` is the minimum modeled pairwise barrier value for the step, or `null` when there is no active pair. A candidate geometric barrier is `h_ij = ||p_i - p_j||² - d_safe²`; Salman owns the exact CBF/HOCBF constraints, derivation, and assumptions in the safety workstream. `shield_active` is true when the returned acceleration differs from the proposal beyond the documented numerical tolerance, including when fallback changes the action. Count these changed actions as interventions and report fallback events separately.
+The type name `SafeAction` means “action returned by the filter adapter”; it does **not** mean the action has a proof or is safe in reality. `h_min_m2` is the minimum modeled pairwise barrier value for the step, or `null` when there is no active pair. A candidate geometric barrier is `h_ij = ||p_i - p_j||² - d_safe²`; Salman owns the exact CBF/HOCBF constraints, derivation, and assumptions in the safety workstream.
+
+**Shield intervention tolerance:** v1 uses `1e-4 m/s²` as the default per-component comparison tolerance. Set `shield_active=true` when `max_k |safe_accel_mps2[k] - proposed_accel_mps2[k]| > 1e-4 m/s²`; otherwise set it false. This is a simulation default and must be updated in the shared contract if Salman’s mathematical review requires a different threshold. Count actions beyond this tolerance as interventions, including fallback-modified actions, and report fallback events separately.
 
 If the optimization is infeasible or the solver errors, v1 returns zero acceleration for every agent in the affected joint solve, sets `qp_feasible=false` and `fallback_used=true`, and logs the failure. Zero acceleration preserves velocity in the simple point-mass model; it is not a hover or verified fallback and may allow separation to decrease. Do not relabel this behavior as an HJ/recoverability or backup assurance layer.
 
@@ -82,6 +86,28 @@ Reset accepts a scenario configuration and seed and returns initial observations
 ## Mock API contract
 
 The API is local to the demo and returns synthetic simulation inputs. It must not call a real UTM service, USS, registry, or external aircraft system.
+
+### `ScenarioConfig` — local simulator reset input
+
+`ScenarioConfig` is passed to the simulator reset/run adapter; it is not a new HTTP route. This is the v1 shape consumed by Anas’s simulator and Aman's API/demo integration:
+
+```json
+{
+  "scenario_id": "baseline-small-n",
+  "seed": 17,
+  "episode_limit_steps": 1000,
+  "drones": [
+    {
+      "agent_id": "drone-001",
+      "initial_position_m": [100.0, 200.0, 80.0],
+      "initial_velocity_mps": [2.0, 0.0, 0.0],
+      "goal_m": [300.0, 200.0, 80.0]
+    }
+  ]
+}
+```
+
+`scenario_id` is non-empty; `seed` is a non-negative integer; and `episode_limit_steps` is an integer from 1 through 1000 (defaults to 1000 when omitted). `drones` contains at least one entry with a unique `agent_id`. Initial positions and goals use the world bounds above; initial 3D speed magnitude must not exceed 15 m/s. Scenario-specific disturbances are configured by the simulator scenario implementation and logged; do not add undeclared fields to this v1 model. Use `ScenarioConfig` from `shared/contracts.py` rather than defining a branch-local schema.
 
 ### `GET /airspace/rules`
 
