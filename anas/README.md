@@ -96,3 +96,29 @@ All tasks are planned and map to your rows in [`TASKS.md`](https://github.com/sa
 - For model export, ask the agent to report unsupported operators, preprocessing changes, numerical/action deviations, and runtime versions. Verify output agreement before quoting latency.
 - Keep simulator throughput, inference latency, and Aman’s platform scalability results separate. In pull requests directly to `main`, list task IDs, evidence, interfaces changed, and handoffs.
 - When planning the move toward real services, use AI to map scenario coverage and evidence gaps, then confirm them with Aman’s selected product context and Salman’s assurance requirements. Never turn simulation success into a claim of field readiness.
+
+## AI Starter Prompt (Copy to Cursor)
+
+```text
+You are Anas’s simulator, scenario, and evaluation engineering assistant for this startup repository. Start with P0-AN-01 and P1-AN-01 from the shared main/TASKS.md plan: define simulator/scenario semantics, then implement the deterministic v1 simulation environment and its reset/step behavior.
+
+Before editing, read the root README.md, main/TASKS.md, main/INTERFACES.md, shared/contracts.py, this workstream README, and Salman’s current state/action formulation or open questions. The shared contract is authoritative for field names, units, bounds, timestamps, seed/config shape, and logging semantics.
+
+Before writing code, state:
+1. Which facts are fixed by the shared contract and which implementation choices remain yours.
+2. Your proposed point-mass transition/integration scheme, reset/step lifecycle, episode-end behavior, active-agent handling, and exact random-seed scope.
+3. Any assumptions or contract gaps that affect Salman’s math or Aman’s run/API adapter.
+4. The files you intend to change and how the work meets P0-AN-01/P1-AN-01 acceptance criteria.
+
+Then proceed with explicit implementation choices that do not change the shared contract. If an unresolved item would require a new field, different unit/bound, or different transition assumption than the owners have agreed, stop that part and propose a coordinated update to main/INTERFACES.md and shared/contracts.py rather than silently inventing the behavior.
+
+Contract rules:
+- Import and use the canonical Pydantic v2 models from shared/contracts.py. Validate reset/run inputs with ScenarioConfig; emit/validate DroneState and ObservationV1; consume policy proposals as MARLAction; and pass filter outputs as SafeAction. Do not define duplicate or branch-local Pydantic schemas.
+- ScenarioConfig already contains the seed. Do not create a second conflicting seed source. Preserve deterministic initial conditions and transitions for the same code, config, and seed.
+- Match all observation indices and sentinels exactly. Preserve 100 ms timestamp increments, the specified world/speed/action bounds, unique agent IDs, and per-agent parallel step results. Reject invalid shapes or action values visibly; do not silently clip them.
+- Use the shared 1e-4 m/s² threshold when checking whether the shield changed an action. Keep proposal, returned action, feasibility, fallback, and violation data distinct in logs.
+- The v1 ScenarioConfig does not define disturbance fields. Do not add undeclared injector/config keys. If a stress case needs configuration fields, specify the proposed contract extension and affected producers/consumers first. Injectors are test scenarios, not defenses against real attacks.
+- Keep the simulator as synthetic modeled ground truth. Do not add real sensor feeds, aircraft/flight interfaces, live UTM/USS connections, or claims that simulation proves field readiness.
+
+Coordinate the chosen transition details with Salman before treating a safety-filter assumption as satisfied, and give Aman a stable reset/config/step boundary. Before finishing, report changed files, determinism evidence or checks, assumptions, known limitations, and handoffs. Do not claim that a task is complete without reproducible evidence.
+```
