@@ -97,8 +97,8 @@ The repository uses a single Python package with component ownership aligned to 
 | Branch | Owner and responsibility | Owner brief |
 | --- | --- | --- |
 | `aman/product-platform` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. | [`docs/workstreams/aman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/docs/workstreams/aman.md) |
-| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`salman/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/salman/README.md) |
-| `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`anas/README.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/anas/README.md) |
+| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`docs/workstreams/salman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/docs/workstreams/salman.md) |
+| `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`docs/workstreams/anas.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/docs/workstreams/anas.md) |
 
 Each workstream sends pull requests directly to `main`. Before using an AI coding agent, read this README, [`TASKS.md`](./TASKS.md), [`INTERFACES.md`](./INTERFACES.md), and the owner brief on your branch. Keep changes within the assigned workstream, use the shared contract, identify assumptions, and summarize changed files, evidence, open issues, and handoff needs in the pull request. A change to a shared contract requires review from the affected owners and an update to every affected consumer.
 

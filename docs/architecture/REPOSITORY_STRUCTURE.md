@@ -25,8 +25,8 @@
 ├── docs/architecture/                # Shared system and repository architecture
 └── docs/workstreams/                 # Owner briefs, one document per workstream
     ├── aman.md
-    ├── salman.md                     # Added when Salman migrates his branch brief
-    └── anas.md                       # Added when Anas migrates his branch brief
+    ├── salman.md
+    └── anas.md
 ```
 
 The package boundaries assign responsibility, not permission to invent local interfaces. All modules import shared types from `shared/contracts.py`. The API does not own simulator state transitions; the simulator does not own policy math; the policy does not own the safety filter; the application layer coordinates these components and records their outputs.
