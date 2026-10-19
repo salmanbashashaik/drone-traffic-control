@@ -23,6 +23,11 @@
 │   └── safety/                       # Salman: CBF/HOCBF filter and assumptions
 ├── tests/                            # Tests mirror contracts and owned modules
 ├── docs/architecture/                # Shared system and repository architecture
+│   ├── HIGH_LEVEL_DESIGN.md          # HLD: V1 boundaries and service evolution
+│   ├── HIGH_LEVEL_DESIGN.drawio      # Editable architecture source
+│   ├── HIGH_LEVEL_DESIGN.svg         # Rendered architecture diagram
+│   ├── PRODUCT_AND_INTEGRATION.md    # Aman: V1 workflow proposal
+│   └── REPOSITORY_STRUCTURE.md       # Tree, ownership, and merge workflow
 └── docs/workstreams/                 # Owner briefs, one document per workstream
     ├── aman.md
     ├── salman.md

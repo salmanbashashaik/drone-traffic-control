@@ -1,0 +1,253 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1800" height="1280" viewBox="0 0 1800 1280" role="img" aria-labelledby="title desc">
+  <title id="title">UTM startup high-level design</title>
+  <desc id="desc">V1 local simulation and API architecture with Aman, Anas, and Salman ownership, contracts, planned control loop, and a provisional path to define a real service after discovery.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#52677f"/></marker>
+    <marker id="arrowBlue" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#2563eb"/></marker>
+    <marker id="arrowPurple" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#7353b8"/></marker>
+    <marker id="arrowAmber" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L10,5 L0,10 z" fill="#b7791f"/></marker>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="130%"><feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#18324d" flood-opacity="0.09"/></filter>
+    <style>
+      text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#172b43}
+      .title{font-size:29px;font-weight:700;letter-spacing:.1px}
+      .subtitle{font-size:14px;fill:#52677f}
+      .note{font-size:12px;fill:#40556c}
+      .zoneTitle{font-size:14px;font-weight:700;letter-spacing:.65px}
+      .cardTitle{font-size:15px;font-weight:700}
+      .cardBody{font-size:12px;fill:#40556c}
+      .small{font-size:11px;fill:#52677f}
+      .edgeLabel{font-size:11px;font-weight:600;fill:#40556c;paint-order:stroke;stroke:#f7f9fc;stroke-width:5px;stroke-linejoin:round}
+      .futureTitle{font-size:13px;font-weight:700}
+      .futureBody{font-size:11px;fill:#52677f}
+      .mono{font-family:Consolas,Monaco,monospace;font-size:11px}
+    </style>
+  </defs>
+
+  <rect width="1800" height="1280" fill="#f4f7fb"/>
+  <text x="42" y="48" class="title">High-Level Design | Simulation-to-Service Architecture</text>
+  <text x="43" y="77" class="subtitle">Drone traffic management startup • V1 is a local simulation/API milestone on a path to a separately defined real service</text>
+
+  <rect x="40" y="98" width="1720" height="50" rx="9" fill="#fff7e6" stroke="#e6b85c" stroke-width="1.4"/>
+  <circle cx="62" cy="123" r="7" fill="#d38b19"/>
+  <text x="80" y="119" font-size="13" font-weight="700" fill="#744b0b">IMPLEMENTATION STATUS</text>
+  <text x="80" y="137" font-size="12" fill="#744b0b">Shared Pydantic contracts and local mock API are present. Simulator, policy, safety filter, run orchestration, and end-to-end logging remain planned.</text>
+
+  <!-- V1 system boundary -->
+  <rect x="310" y="170" width="1450" height="670" rx="18" fill="#ffffff" stroke="#8395aa" stroke-width="1.6"/>
+  <rect x="310" y="170" width="1450" height="42" rx="18" fill="#eaf0f7"/>
+  <rect x="310" y="194" width="1450" height="18" fill="#eaf0f7"/>
+  <text x="335" y="197" font-size="15" font-weight="700">V1 LOCAL SIMULATION / API BOUNDARY</text>
+  <text x="735" y="197" font-size="11" fill="#52677f">Synthetic inputs only • local Python control loop • no live aircraft or external UTM calls</text>
+
+  <!-- External local user -->
+  <rect x="40" y="276" width="235" height="150" rx="13" fill="#ffffff" stroke="#2563eb" stroke-width="1.8" filter="url(#shadow)"/>
+  <rect x="40" y="276" width="235" height="34" rx="13" fill="#eaf2ff"/>
+  <rect x="40" y="298" width="235" height="12" fill="#eaf2ff"/>
+  <text x="58" y="299" class="cardTitle" fill="#1849a9">Local developer / reviewer</text>
+  <text x="58" y="333" class="cardBody">
+    <tspan x="58" dy="0">Chooses scenario, seed,</tspan>
+    <tspan x="58" dy="18">controller variant, then</tspan>
+    <tspan x="58" dy="18">inspects run and results.</tspan>
+    <tspan x="58" dy="21" class="mono">ScenarioConfig</tspan>
+  </text>
+
+  <!-- Excluded live systems -->
+  <rect x="40" y="528" width="235" height="211" rx="13" fill="#fffafa" stroke="#c95858" stroke-width="1.5" stroke-dasharray="7 5"/>
+  <text x="58" y="559" font-size="14" font-weight="700" fill="#a52d2d">OUTSIDE V1</text>
+  <path d="M58 576 H255" stroke="#e7b4b4"/>
+  <text x="58" y="602" class="cardBody" fill="#7e3434">
+    <tspan x="58" dy="0">No connections to:</tspan>
+    <tspan x="58" dy="21">• aircraft or live sensors</tspan>
+    <tspan x="58" dy="21">• USS / UTM providers</tspan>
+    <tspan x="58" dy="21">• real registration systems</tspan>
+    <tspan x="58" dy="21">• operational control loops</tspan>
+  </text>
+  <text x="58" y="720" class="small" fill="#9d3e3e">Future integrations require a new service design.</text>
+
+  <!-- Owner zones -->
+  <rect x="335" y="225" width="330" height="530" rx="13" fill="#f4f8ff" stroke="#91b4ee" stroke-width="1.2"/>
+  <text x="354" y="252" class="zoneTitle" fill="#1849a9">AMAN | PRODUCT &amp; INTEGRATION</text>
+  <rect x="685" y="225" width="365" height="530" rx="13" fill="#f1fbf9" stroke="#8ec9bd" stroke-width="1.2"/>
+  <text x="704" y="252" class="zoneTitle" fill="#147363">ANAS | SIMULATION &amp; EVALUATION</text>
+  <rect x="1070" y="225" width="665" height="530" rx="13" fill="#f8f5ff" stroke="#baa9df" stroke-width="1.2"/>
+  <text x="1089" y="252" class="zoneTitle" fill="#5c4296">SALMAN | POLICY &amp; SAFETY METHODS</text>
+
+  <!-- Aman components -->
+  <rect x="355" y="275" width="290" height="112" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="355" y="275" width="8" height="112" rx="4" fill="#2563eb"/>
+  <text x="376" y="303" class="cardTitle">Mock airspace API</text>
+  <text x="376" y="326" class="cardBody">
+    <tspan x="376" dy="0">Present baseline • loopback only</tspan>
+    <tspan x="376" dy="19">GET rules / notices</tspan>
+    <tspan x="376" dy="19">POST synthetic registration</tspan>
+  </text>
+
+  <rect x="355" y="425" width="290" height="132" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="376" y="453" class="cardTitle">Run orchestration</text>
+  <text x="376" y="476" class="cardBody">
+    <tspan x="376" dy="0">Planned • validates config, selects</tspan>
+    <tspan x="376" dy="18">variant, sequences reset / policy /</tspan>
+    <tspan x="376" dy="18">filter / step, creates run manifest.</tspan>
+  </text>
+  <text x="376" y="540" class="small">Scenario validation adapter exists; full loop does not.</text>
+
+  <rect x="355" y="610" width="290" height="125" rx="10" fill="#ffffff" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="376" y="638" class="cardTitle">Run records &amp; demo</text>
+  <text x="376" y="661" class="cardBody">
+    <tspan x="376" dy="0">Planned • manifest, per-step actions,</tspan>
+    <tspan x="376" dy="18">filter flags, timing, episode metrics.</tspan>
+    <tspan x="376" dy="18">Artifact format / storage TBD.</tspan>
+  </text>
+
+  <!-- Anas components -->
+  <rect x="705" y="282" width="325" height="177" rx="10" fill="#ffffff" stroke="#15927c" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="727" y="312" class="cardTitle">Deterministic simulator</text>
+  <text x="727" y="337" class="cardBody">
+    <tspan x="727" dy="0">Planned • owns scenario, ground truth,</tspan>
+    <tspan x="727" dy="19">dynamics, reset / step and termination.</tspan>
+    <tspan x="727" dy="23">Emits policy observations and modeled</tspan>
+    <tspan x="727" dy="19">states; applies returned actions.</tspan>
+  </text>
+  <text x="727" y="438" class="small">100 ms / seeded behavior per shared contract</text>
+
+  <rect x="705" y="510" width="325" height="111" rx="10" fill="#ffffff" stroke="#15927c" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="727" y="538" class="cardTitle">Step result &amp; evaluation</text>
+  <text x="727" y="561" class="cardBody">
+    <tspan x="727" dy="0">Observations, rewards, termination,</tspan>
+    <tspan x="727" dy="18">truncation, info and paired metrics.</tspan>
+  </text>
+  <text x="727" y="605" class="small">Matched runs and edge benchmark are planned.</text>
+
+  <!-- Salman components -->
+  <rect x="1090" y="282" width="250" height="145" rx="10" fill="#ffffff" stroke="#7353b8" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="1111" y="312" class="cardTitle">Policy adapter</text>
+  <text x="1111" y="337" class="cardBody">
+    <tspan x="1111" dy="0">Planned • reference / MARL</tspan>
+    <tspan x="1111" dy="19">Consumes ObservationV1.</tspan>
+    <tspan x="1111" dy="19">Produces bounded MARLAction.</tspan>
+  </text>
+  <text x="1111" y="409" class="small">Proposal only; not a safety controller.</text>
+
+  <rect x="1380" y="282" width="320" height="165" rx="10" fill="#ffffff" stroke="#7353b8" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="1402" y="312" class="cardTitle">CBF / HOCBF QP filter</text>
+  <text x="1402" y="337" class="cardBody">
+    <tspan x="1402" dy="0">Planned • Salman defines equations,</tspan>
+    <tspan x="1402" dy="19">assumptions, solver and failure limits.</tspan>
+    <tspan x="1402" dy="23">Consumes MARLAction + all required</tspan>
+    <tspan x="1402" dy="19">modeled DroneState values.</tspan>
+  </text>
+  <text x="1402" y="427" class="small">Feasible result carries status / intervention.</text>
+
+  <rect x="1090" y="510" width="250" height="105" rx="10" fill="#f5f9ff" stroke="#7353b8" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="1111" y="539" class="cardTitle">Filter return</text>
+  <text x="1111" y="563" class="cardBody">
+    <tspan x="1111" dy="0">SafeAction (legacy type name)</tspan>
+    <tspan x="1111" dy="19">feasible / intervention metadata</tspan>
+  </text>
+
+  <rect x="1380" y="510" width="320" height="105" rx="10" fill="#fff8e9" stroke="#c58a26" stroke-width="1.8" stroke-dasharray="7 4"/>
+  <text x="1402" y="539" class="cardTitle" fill="#8b5c12">Infeasible / solver error path</text>
+  <text x="1402" y="563" class="cardBody" fill="#76551d">
+    <tspan x="1402" dy="0">Zero acceleration; qp_feasible=false;</tspan>
+    <tspan x="1402" dy="19">fallback_used=true. Unverified.</tspan>
+  </text>
+
+  <!-- V1 data-flow arrows -->
+  <path d="M275 350 H320 V478 H355" fill="none" stroke="#2563eb" stroke-width="2.2" marker-end="url(#arrowBlue)"/>
+  <text x="282" y="338" class="edgeLabel">config / variant</text>
+  <path d="M500 387 V425" fill="none" stroke="#2563eb" stroke-width="2" marker-end="url(#arrowBlue)"/>
+  <text x="508" y="410" class="edgeLabel">synthetic data</text>
+  <path d="M645 477 H675 V370 H705" fill="none" stroke="#52677f" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="650" y="466" class="edgeLabel">validated ScenarioConfig / reset</text>
+  <path d="M1030 335 H1090" fill="none" stroke="#15927c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1036" y="324" class="edgeLabel">ObservationV1</text>
+  <path d="M1340 352 H1380" fill="none" stroke="#7353b8" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <text x="1341" y="340" class="edgeLabel">MARLAction</text>
+  <path d="M1030 405 H1058 V465 H1360 V405 H1380" fill="none" stroke="#15927c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="1071" y="458" class="edgeLabel">DroneState for all modeled active agents</text>
+  <path d="M1470 447 V480 H1215 V510" fill="none" stroke="#7353b8" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <path d="M1590 447 V510" fill="none" stroke="#b7791f" stroke-width="2" marker-end="url(#arrowAmber)"/>
+  <text x="1496" y="477" class="edgeLabel">feasible</text>
+  <text x="1600" y="482" class="edgeLabel">infeasible / error</text>
+  <path d="M1090 563 H1060 V445 H1030" fill="none" stroke="#7353b8" stroke-width="2" marker-end="url(#arrowPurple)"/>
+  <path d="M1380 586 H1055 V445 H1030" fill="none" stroke="#b7791f" stroke-width="2" marker-end="url(#arrowAmber)"/>
+  <text x="1064" y="635" class="edgeLabel">returned action applied on next simulator step</text>
+  <path d="M705 565 H665 V672 H645" fill="none" stroke="#15927c" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="654" y="660" class="edgeLabel">step result</text>
+  <path d="M500 557 V610" fill="none" stroke="#2563eb" stroke-width="1.8" stroke-dasharray="5 4" marker-end="url(#arrowBlue)"/>
+  <text x="510" y="590" class="edgeLabel">manifest</text>
+
+  <!-- Canonical contract cross-cut -->
+  <rect x="335" y="774" width="1400" height="45" rx="9" fill="#eaf2ff" stroke="#2563eb" stroke-width="1.5"/>
+  <text x="354" y="793" font-size="12" font-weight="700" fill="#1849a9">SHARED CONTRACT CROSS-CUT</text>
+  <text x="354" y="810" class="mono" fill="#31577e">shared/contracts.py + INTERFACES.md • ScenarioConfig • DroneState • ObservationV1 • MARLAction • SafeAction • API/error models</text>
+
+  <!-- Future service definition / production capability lane -->
+  <rect x="40" y="870" width="1720" height="350" rx="18" fill="#f8fafc" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="9 6"/>
+  <text x="65" y="906" font-size="16" font-weight="700">FUTURE SERVICE DESIGN — AFTER CUSTOMER / OPERATOR DISCOVERY</text>
+  <text x="65" y="930" font-size="12" fill="#52677f">Capability view only • exact service role, domain, topology, vendors, and controls remain undecided under P5</text>
+
+  <rect x="65" y="965" width="275" height="128" rx="11" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="84" y="995" class="futureTitle">1. Product definition</text>
+  <text x="84" y="1020" class="futureBody">
+    <tspan x="84" dy="0">Choose user, workflow, domain,</tspan>
+    <tspan x="84" dy="18">service role and authority boundary.</tspan>
+    <tspan x="84" dy="21">Decide information, coordination,</tspan>
+    <tspan x="84" dy="18">advice or control influence.</tspan>
+  </text>
+
+  <rect x="385" y="965" width="285" height="128" rx="11" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="404" y="995" class="futureTitle">2. Governed data adapters</text>
+  <text x="404" y="1020" class="futureBody">
+    <tspan x="404" dy="0">Connect only selected sources.</tspan>
+    <tspan x="404" dy="18">Define authority, provenance,</tspan>
+    <tspan x="404" dy="18">freshness, quality and outage</tspan>
+    <tspan x="404" dy="18">behavior for each feed.</tspan>
+  </text>
+
+  <rect x="715" y="965" width="285" height="128" rx="11" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="734" y="995" class="futureTitle">3. Bounded service boundary</text>
+  <text x="734" y="1020" class="futureBody">
+    <tspan x="734" dy="0">Specify API, identity/access,</tspan>
+    <tspan x="734" dy="18">partner trust, audit and data</tspan>
+    <tspan x="734" dy="18">handling for the chosen role.</tspan>
+  </text>
+
+  <rect x="1045" y="965" width="285" height="128" rx="11" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="1064" y="995" class="futureTitle">4. Service workflow</text>
+  <text x="1064" y="1020" class="futureBody">
+    <tspan x="1064" dy="0">Implement the selected user job</tspan>
+    <tspan x="1064" dy="18">and explicit failure behavior.</tspan>
+    <tspan x="1064" dy="21">Do not assume direct aircraft</tspan>
+    <tspan x="1064" dy="18">actuation is in scope.</tspan>
+  </text>
+
+  <rect x="1375" y="965" width="350" height="128" rx="11" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="7 4"/>
+  <text x="1394" y="995" class="futureTitle">5. Operations &amp; evidence</text>
+  <text x="1394" y="1020" class="futureBody">
+    <tspan x="1394" dy="0">Specify security, reliability, monitoring,</tspan>
+    <tspan x="1394" dy="18">support, assurance and rollback.</tspan>
+    <tspan x="1394" dy="21">Validate in staged environments before</tspan>
+    <tspan x="1394" dy="18">any permitted operational use.</tspan>
+  </text>
+
+  <path d="M340 1029 H385" fill="none" stroke="#8797a9" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <path d="M670 1029 H715" fill="none" stroke="#8797a9" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <path d="M1000 1029 H1045" fill="none" stroke="#8797a9" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+  <path d="M1330 1029 H1375" fill="none" stroke="#8797a9" stroke-width="2" stroke-dasharray="6 4" marker-end="url(#arrow)"/>
+
+  <rect x="65" y="1120" width="1660" height="65" rx="10" fill="#eef2f6" stroke="#aab5c2"/>
+  <text x="84" y="1147" font-size="12" font-weight="700">IMPORTANT BOUNDARY</text>
+  <text x="84" y="1168" font-size="12" fill="#40556c">V1 simulation results do not establish operational safety. Zero acceleration is an unverified fallback; the future lane is a planning checklist, not an approved production architecture.</text>
+
+  <!-- Legend -->
+  <rect x="40" y="1235" width="18" height="14" rx="3" fill="#ffffff" stroke="#2563eb" stroke-width="2"/>
+  <text x="66" y="1247" class="small">Present baseline</text>
+  <rect x="190" y="1235" width="18" height="14" rx="3" fill="#ffffff" stroke="#52677f" stroke-width="1.8" stroke-dasharray="5 3"/>
+  <text x="216" y="1247" class="small">Planned V1 component</text>
+  <rect x="380" y="1235" width="18" height="14" rx="3" fill="#ffffff" stroke="#8797a9" stroke-width="1.5" stroke-dasharray="5 3"/>
+  <text x="406" y="1247" class="small">Future capability / decision open</text>
+  <line x1="650" y1="1242" x2="690" y2="1242" stroke="#52677f" stroke-width="2" marker-end="url(#arrow)"/>
+  <text x="701" y="1247" class="small">Contracted data flow</text>
+  <text x="1750" y="1247" text-anchor="end" class="small">Detailed V1 step sequence: root README • fields and semantics: INTERFACES.md</text>
+</svg>

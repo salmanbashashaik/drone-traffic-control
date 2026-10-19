@@ -37,7 +37,7 @@ The simulator, policy, filter, and run orchestration remain in one local Python 
 
 The local mock API implements only `GET /airspace/rules`, `GET /airspace/notam`, and `POST /drone/register` from [INTERFACES.md](../../INTERFACES.md). Its HTTP layer is in `src/utm_services/api/app.py`; scenario validation is in `src/utm_services/application/scenario_adapter.py`. Responses use canonical Pydantic models in `shared/contracts.py`. Invalid request payloads return the shared `APIError` envelope with HTTP 422; duplicate synthetic registration returns HTTP 409; unavailable scenario data returns HTTP 503; unknown routes return HTTP 404. Mock data and registrations are local simulation data. None of these routes is a real UTM service or aircraft registration service. From the repository root, install the project with `python -m pip install -e .` and start the loopback API with `utm-mock-api`.
 
-The response-model and error-code additions to `shared/contracts.py` and `INTERFACES.md` are proposed in this Aman branch. Salman and Anas should review the shared change in the PR before their consumers depend on those types; the merged `main` contract remains the shared authority.
+The response models and error codes are part of the shared contract on `main`. Treat `INTERFACES.md` and `shared/contracts.py` there as authoritative; propose future changes through a pull request that names affected producers and consumers and updates both together.
 
 ## Handoffs and unresolved integration detail
 

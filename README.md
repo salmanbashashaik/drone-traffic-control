@@ -61,6 +61,21 @@ The shared simulation-only v1 data types, units, API routes, timing, logging, an
 
 These are planned deliverables. They are not claims that working implementations, performance numbers, or safety results already exist. V1 is intended to retire engineering and product questions that can be answered in simulation; it is not the startup’s complete service offering.
 
+## Run the current local baseline
+
+No shared cloud machine is needed for the current phase. Each contributor can work from the repository root on their own development machine; the mock API binds only to `127.0.0.1` and uses synthetic data. Python 3.11 or newer is required.
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -e ".[dev]"
+utm-mock-api
+```
+
+On macOS or Linux, activate the environment with `source .venv/bin/activate` instead. Open `http://127.0.0.1:8000/docs` to inspect and call the mock routes. Stop the server with `Ctrl+C`.
+
+This starts **only the synthetic API baseline**. The simulator, policy, safety filter, end-to-end run orchestrator, and complete demo are still planned, so there is not yet a full V1 simulation run command. Do not point this API at live aircraft, sensor, USS/UTM, or registration services.
+
 ## Long-term research direction
 
 The supporting report describes a broader layered architecture: strategic UTM intent and reservation coordination; tactical MARL or trajectory planning; CBF/HOCBF action filtering; a recoverability supervisor informed by Hamilton–Jacobi reachability; deterministic or independently validated backup behavior; and state-integrity, communication-trust, and conformance monitoring. This is a research direction, not the v1 architecture. V1 does not implement the full report architecture or inherit its possible assurance properties by using a simplified CBF filter.
@@ -88,7 +103,7 @@ Zero observed failures in a finite simulation campaign does not prove zero risk.
 
 ## Codebase structure
 
-The repository uses a single Python package with component ownership aligned to the three workstreams. The [repository structure and merge workflow](./docs/architecture/REPOSITORY_STRUCTURE.md) defines the main tree and how work reaches `main`. Aman’s [product and integration architecture](./docs/architecture/PRODUCT_AND_INTEGRATION.md) describes the run boundary. Owner briefs live in `docs/workstreams/`; shared contracts remain in [`shared/contracts.py`](./shared/contracts.py), and source modules live under `src/utm_services/`. The mock API is a local prototype boundary, not a deployed or production-ready service.
+The repository uses a single Python package with component ownership aligned to the three workstreams. The [repository structure and merge workflow](./docs/architecture/REPOSITORY_STRUCTURE.md) defines the main tree and how work reaches `main`. Aman’s [product and integration architecture](./docs/architecture/PRODUCT_AND_INTEGRATION.md) describes the run boundary. The [High-Level Design](./docs/architecture/HIGH_LEVEL_DESIGN.md) documents component boundaries, current implementation status, and the staged path toward a real service; it includes editable [draw.io source](./docs/architecture/HIGH_LEVEL_DESIGN.drawio) and a matching static [SVG preview](./docs/architecture/HIGH_LEVEL_DESIGN.svg). Owner briefs live in `docs/workstreams/`; shared contracts remain in [`shared/contracts.py`](./shared/contracts.py), and source modules live under `src/utm_services/`. The mock API is a local prototype boundary, not a deployed or production-ready service.
 
 ## Repository and ownership
 
