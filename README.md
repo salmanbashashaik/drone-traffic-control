@@ -16,7 +16,7 @@ This diagram is the authoritative source of truth for the v1 data flow. Shared f
 
 ```mermaid
 flowchart LR
-    CFG["ScenarioConfig + seed<br/>local demo input"] --> RUN["Aman's demo/run adapter"]
+    CFG["ScenarioConfig (includes seed)<br/>local demo input"] --> RUN["Aman's demo/run adapter"]
     API["Aman's mock airspace API<br/>synthetic rules, notices, registration"] --> RUN
     RUN -->|"scenario and synthetic airspace inputs"| SIM["Anas's simulator<br/>reset and 100 ms steps"]
 
