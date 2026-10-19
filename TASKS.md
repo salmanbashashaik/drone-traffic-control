@@ -1,10 +1,10 @@
 # Shared task plan
 
-This is the **sole shared task index** for the prototype. It assigns one directly responsible owner per task, records dependencies and handoffs, and defines phase gates. Detailed implementation notes stay in the owner's branch brief; do not copy this plan to workstream branches. All tasks are planned until their deliverables and evidence exist. There are no calendar-date commitments in this plan.
+This is the **sole shared task index** for the startup’s product path, from the v1 prototype through definition of the first real service. It assigns one directly responsible owner per task, records dependencies and handoffs, and defines phase gates. Detailed implementation notes stay in the owner's branch brief; do not copy this plan to workstream branches. All tasks are planned until their deliverables and evidence exist. There are no calendar-date commitments in this plan.
 
 ## How to use this plan
 
-1. Start with the root [`README.md`](./README.md) for product scope and [`INTERFACES.md`](./INTERFACES.md) for simulation-only v1 contracts.
+1. Start with the root [`README.md`](./README.md) for startup product direction and [`INTERFACES.md`](./INTERFACES.md) for simulation-only v1 contracts.
 2. Work from the matching owner brief: [Aman](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/infra-api/aman/README.md), [Salman](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/cbf-safety/salman/README.md), or [Anas](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/marl-policy/anas/README.md).
 3. Open a pull request from the named workstream branch directly to `main`. Describe evidence against the task acceptance criteria and identify any shared-contract changes.
 4. Do not mark a task complete because documentation, generated code, or an AI agent claims it is complete. Link the artifact or reproducible result that meets its criteria.
@@ -59,6 +59,18 @@ This is the **sole shared task index** for the prototype. It assigns one directl
 | P4-AM-01 | Aman | Reproducible demo/run instructions, integrated artifact/version record, and platform-level scalability characterization. | `P2-AM-01`, `P3-AM-01`, `P4-AN-01`, `P4-SA-01` | Delivers the reviewable v1 product slice to the team. | Fresh contributor can configure, run, and inspect a documented scenario; tested scale, bottlenecks, deployment assumptions, and unimplemented platform needs are explicit; no real integration or operational use is implied. |
 | P4-SA-01 | Salman | Final method and assumptions note linked to the shipped policy/filter artifacts. | `P3-SA-01`, `P4-AN-01` | Supplies the mathematical caveats alongside the final demo and results. | Exact formulation, artifact/config version, model assumptions, feasible-control conditions, and limitations are recorded; any unresolved proof obligation is visible. |
 
+## Phase 5 — Define the first real service
+
+This is the next product-planning phase after v1. It turns the prototype findings into a scoped real-service specification and an evidence-based delivery plan. It does **not** authorize live integrations, flight operation, or deployment by itself.
+
+**Gate:** The team has selected a first user workflow and operating domain; specified the service’s role, data sources, integrations, reliability/security/support requirements, assurance obligations, and staged validation evidence; and approved a delivery plan for implementation. If decisions depend on customer, partner, or regulator input, record who must supply it and what remains unresolved.
+
+| ID | Owner | Deliverable | Depends on | Handoff | Acceptance criteria |
+| --- | --- | --- | --- | --- | --- |
+| P5-AM-01 | Aman | First-service product definition and production architecture. | `P4-AM-01`, prototype evaluation, stakeholder/customer discovery | Gives Salman a bounded intended use for assurance analysis and Anas a target workflow/data/edge environment for validation planning. | Names the target user and workflow, operating domain, whether the service provides information, coordination, advice, or control influence, service boundaries, deployment model, authoritative data/integration needs, identity/access, audit, reliability/availability, support, and scale requirements. Records decisions, assumptions, and open stakeholder dependencies. |
+| P5-SA-01 | Salman | Assurance and safety requirements for the selected service and operating domain. | `P5-AM-01`, `P3-SA-01`, and the selected service role | Gives Aman assurance requirements and gives Anas validation scenarios and evidence criteria. | Defines hazards, safety objectives, model/operating assumptions, assurance evidence, independent review needs, fallback expectations, runtime monitoring, and any unresolved external approval/standards questions. Makes no claim that the v1 filter or report alone satisfies these requirements. |
+| P5-AN-01 | Anas | Validation and deployment transition plan from simulation toward the selected service context. | `P5-AM-01`, `P5-SA-01`, `P3-AN-01`, and `P4-AN-01` | Gives Aman implementation sequencing and Salman the proposed validation evidence path. | Maps simulator assumptions to the selected operating context; identifies required replay/shadow, integration, edge, hardware-in-loop or field evidence as applicable; defines scenario coverage, monitoring, failure/rollback criteria, and gates before each deployment stage. Labels evidence and dependencies that require partner or external approval. |
+
 ## Shared evaluation definitions
 
 Use the terms and units in [`INTERFACES.md`](./INTERFACES.md). A separation violation is a **pair-step sample** whose modeled separation is below the v1 threshold; report the number of samples, not as a certified collision or aviation near-miss measure. Minimum separation is over all active modeled pairs during a run. Match episode demand, dynamics, seed, disturbance, and time limit across controller variants. Keep aborted, held, and incomplete missions in the accounting. Report distributions or uncertainty across runs; a single favorable run is not acceptance evidence.
@@ -68,6 +80,7 @@ Use the terms and units in [`INTERFACES.md`](./INTERFACES.md). A separation viol
 - Aman owns product/system architecture, ML system design, API/platform integration, and platform-level scalability.
 - Salman owns MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and assumptions behind safety claims.
 - Anas owns simulator/scenarios, stress evaluation, and edge ML packaging/benchmarking.
+- Phase 5 extends these responsibilities toward real-service requirements and validation planning; it does not imply that production integrations or operational approvals already exist.
 - An owner may ask another owner for review, but each task above has one accountable owner. Consumers accept outputs through the stated handoff.
 - Shared contracts are changed on a workstream branch and proposed directly to `main`; the pull request names affected producers/consumers and includes coordinated updates. There is no `dev` step.
 - AI coding tools may assist implementation. The owner remains responsible for checking generated code, equations, units, experiment reproducibility, and claims against evidence.
