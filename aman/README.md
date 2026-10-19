@@ -2,9 +2,9 @@
 
 This brief belongs to the `aman/infra-api` branch. **Aman owns product and system architecture, ML system design, integration, API/platform design, and platform-level scalability.** The branch name understates that scope: this workstream is not limited to infrastructure or API coding.
 
-The product is a simulation-only UTM assurance prototype. It lets the team configure a synthetic airspace scenario, run controller variants, inspect proposed and filtered actions, and compare measured outcomes. The shared root [README](../README.md) describes the product and limits; the single shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); the cross-branch data and API contracts are [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
+We are building a startup toward real UTM software services. V1 is a simulation/API prototype that lets the team configure a synthetic airspace scenario, run controller variants, inspect proposed and filtered actions, and compare measured outcomes. It is an early product milestone; the first real service and operating domain are selected after its results and customer discovery. The shared root [README](../README.md) describes the product path; the single shared task index is [`TASKS.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md); simulation data and API contracts are [`INTERFACES.md` on main](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/INTERFACES.md).
 
-Treat the report’s layered architecture as long-term research context. V1 does not connect to real aircraft, sensors, USS/UTM providers, or flight operations, and the simple fallback is not verified. Do not present interface names such as `SafeAction` or “Sovereign Core” as evidence of a safety guarantee or confirmed product brand.
+Treat the report’s layered architecture as research context for product evolution. V1 does not connect to live aircraft, sensors, USS/UTM providers, or operations, and the simple fallback is not verified. Your architecture work should make it possible to evolve from the prototype toward the selected real service while keeping the v1 boundary explicit. Do not present interface names such as `SafeAction` or “Sovereign Core” as evidence of a safety guarantee or confirmed product brand.
 
 ## Ownership boundary
 
@@ -76,10 +76,23 @@ All tasks below are planned. They map to Aman’s rows in the main [`TASKS.md`](
 
 **Acceptance:** A new contributor can follow the instructions to run and inspect the documented scenario; every named artifact and runtime has a version or stated limitation; platform scalability is distinguished from simulator throughput and edge inference; no operational or flight-readiness claim is implied.
 
+### P5-AM-01 — Define the first real service
+
+**Inputs:** V1 evaluation and team handoffs, prototype architecture, and customer/operator/partner discovery for candidate workflows.
+
+**Deliver:** A first-service product brief and production architecture. Define the target user and job, operating domain, deployment model, and whether the initial service provides information, coordination, advice, or control influence. Map its data sources and trust boundaries; specify production API/integration needs, identity/access, data provenance, audit, security/privacy, reliability/availability, monitoring, support, and scale requirements.
+
+**Dependencies:** P4-AM-01 and stakeholder/customer discovery. The service scope must be clear before Salman finalizes assurance requirements and Anas finalizes the validation path.
+
+**Handoff:** Give Salman a bounded intended use and service role for hazard/assurance analysis. Give Anas the selected workflow, data sources, deployment environment, and performance constraints for validation planning. Bring unresolved partner and external approval needs to the team.
+
+**Acceptance:** The brief names the first service, user, workflow, operating domain, system boundaries, producers/consumers, data authority/freshness expectations, reliability/support expectations, service failure modes, and product success measures. It separates decisions from assumptions and lists dependencies on discovery. Production implementation work is sequenced behind the review of this specification and assurance/validation plans.
+
 ## Working with AI tools
 
 - Give the agent this brief, the relevant task ID, the root README, and the current `main` versions of `TASKS.md` and `INTERFACES.md` before asking it to change code or docs.
 - Ask it to trace the affected producer and consumer before changing an API, message, timestamp, unit, or metric. Require it to list assumptions and files changed.
 - Keep generated code and architecture proposals within v1 scope. Do not ask an agent to invent live integrations, certification evidence, benchmark results, or completed capabilities.
+- For post-v1 service design, use AI to enumerate options and questions, then verify them with the intended users, partners, and technical owners. Do not let it choose an operating domain, authority boundary, or production obligation without evidence and team agreement.
 - Review generated schemas and integration code against the shared contract and Salman’s method assumptions. You remain accountable for the product boundary and merged behavior.
 - In the pull request to `main`, name task IDs, include reproducible evidence or explain what is still planned, identify consumer handoffs, and call out any interface changes.
