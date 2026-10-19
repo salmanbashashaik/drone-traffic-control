@@ -14,6 +14,8 @@ Keep shared interface definitions in `main/INTERFACES.md`. A branch implementati
 
 ## Your tasks
 
+The current P0 architecture proposal and integration boundaries are in [`Product and integration architecture`](../architecture/PRODUCT_AND_INTEGRATION.md). It is a draft pending the simulator and policy/filter handoffs; the root README diagram and `INTERFACES.md` remain the shared data-flow and field contracts.
+
 All tasks below are planned. They map to Aman’s rows in the main [`TASKS.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/main/TASKS.md). The shared row remains the tracking source; this brief gives your branch the specific working instructions.
 
 ### P0-AM-01 — Product workflow and system architecture

@@ -87,6 +87,8 @@ Reset accepts a `ScenarioConfig` (including its seed) and returns initial observ
 
 The API is local to the demo and returns synthetic simulation inputs. It must not call a real UTM service, USS, registry, or external aircraft system.
 
+The canonical Pydantic response models for these routes are `AirspaceRulesV1`, `NotamListV1`, and `DroneRegisterResponse` in `shared/contracts.py`. `GeofenceV1`, `AltitudeLimitsV1`, and `NotamV1` define their nested records. API failures use `APIError` with exactly `code` and `message`; return a stable code and human-readable message for a given failure class. These schemas are simulation-only v1 defaults.
+
 ### `ScenarioConfig` — local simulator reset input
 
 `ScenarioConfig` is passed to the simulator reset/run adapter; it is not a new HTTP route. This is the v1 shape consumed by Anas’s simulator and Aman's API/demo integration:
@@ -135,7 +137,7 @@ Returns `{ "notams": [...] }`. Each synthetic record contains `id`, `description
 
 Accepts `{ "agent_id", "operator", "mission_type" }` and returns `{ "registered": true, "sim_registration_id" }`. The ID is synthetic and scoped to the simulation. This does not register an actual aircraft or operator.
 
-Invalid JSON, missing required fields, invalid ranges, duplicate IDs, and unavailable scenario data return explicit errors with a stable `code` and human-readable `message`; no request should silently succeed with omitted required data. Route versioning and any extra response fields must be documented before consumers depend on them.
+Invalid JSON, missing required fields, and invalid ranges return HTTP 422 with `APIError.code="invalid_request"`. A duplicate `agent_id` in the running mock API process returns HTTP 409 with `code="duplicate_agent_id"`; an unknown route returns HTTP 404 with `code="not_found"`; unavailable synthetic scenario data returns HTTP 503 with `code="scenario_unavailable"`. No request should silently succeed with omitted required data. The local v1 implementation keeps registrations in process memory and generates deterministic synthetic IDs; restarting it clears registrations. Route versioning and any extra response fields must be documented before consumers depend on them.
 
 ## Production service boundary — future work
 
