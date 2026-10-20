@@ -8,7 +8,7 @@ The canonical Pydantic v2 models are in [`shared/contracts.py`](./shared/contrac
 
 - Coordinates are local Cartesian meters, not latitude/longitude. A position is `[x, y, z]`; velocity is m/s; acceleration is m/s².
 - Episode time is integer milliseconds from reset. The nominal simulation step is 100 ms (`dt = 0.1 s`); valid action timestamps identify the current state time. The simulator applies the action to advance the following step.
-- Proposed world bounds are `x,y ∈ [0, 1000] m`, `z ∈ [30, 200] m`; maximum 3D speed magnitude is 15 m/s and each acceleration component is bounded to `[-3, 3] m/s²`. Proposed maximum episode length is 1000 steps.
+- Proposed world bounds are `x,y ∈ [0, 1000] m`, `z ∈ [30, 200] m`; maximum 3D speed magnitude is 15 m/s and each acceleration component is bounded to `[-3.5, 3.5] m/s²`. Proposed maximum episode length is 1000 steps.
 - The v1 pairwise minimum-separation threshold is `d_safe = 5 m`. This is a simulation parameter, not an aviation separation standard, DAA requirement, or certified well-clear threshold.
 - Values are raw simulation units unless a field says otherwise. If policy preprocessing normalizes inputs, the preprocessing parameters and artifact version must travel with the model; the environment contract remains in raw units.
 
