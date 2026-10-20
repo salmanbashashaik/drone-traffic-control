@@ -458,3 +458,84 @@ Every item below is an **assumption**, not a verified property.
   not as "the drone stopped safely"
 - Real deployment requires accounting for sensor uncertainty, non-cooperative objects,
   and onboard camera-based perception — none of which are modeled in v1
+
+---
+
+## 12. Proximity range gate — scalable pair selection
+
+### The proposal and why pure repulsion doesn't work
+
+A natural instinct is to have each drone "maximize distance" from all neighbors within
+a radius (e.g. 500 m). This resembles **Velocity Obstacles (VO)** or **ORCA** from
+multi-robot and urban air mobility research, and **potential-field repulsion** from
+classical robotics. The appeal: drones spread out, reducing conflict density.
+
+**This does not work cleanly for three reasons:**
+
+1. **Conflicts with the mission objective.** "Maximize spread" pushes every drone away
+   from every neighbor at all times, even when they're 400 m apart and no conflict is
+   possible. This directly fights goal-seeking behavior — a drone detours unnecessarily
+   and mission time increases. The HOCBF QP already does the right thing: it only
+   deviates from the policy's proposed action when a specific barrier constraint is
+   *actually about to be violated*.
+
+2. **Reciprocal oscillation at cluster boundaries.** If two groups of drones approach
+   each other, boundary drones get repelled by both clusters simultaneously. Both agents
+   independently solve symmetric optimization problems and repeatedly switch direction.
+   The research report (Section 2) documents this explicitly as **"reciprocal avoidance
+   oscillation"** — observable as left-right-left or altitude oscillations. ORCA systems
+   are known to produce this in dense crossing-traffic scenarios.
+
+3. **Local optimality trap.** Repulsion from the nearest neighbor can push a drone
+   directly into another conflict. The PDF documents this: *"pairwise resolutions do not
+   jointly solve a multi-agent geometry — avoidance of one intruder creates another
+   conflict."* The HOCBF joint QP solves all pairs simultaneously, which handles this.
+
+### What to use instead: a range gate on the QP
+
+The correct way to capture the "only care about nearby drones" insight is a **range gate**
+on pair inclusion in the QP — not repulsion. Only include pair `(i, j)` in the HOCBF
+constraint set if the drones are within a range threshold `R_gate`:
+
+```
+Include pair (i,j) in QP  iff  ||p_i - p_j|| < R_gate
+```
+
+**Choosing `R_gate`:** A pair outside `R_gate` cannot become dangerous within a K-step
+lookahead. At max speed 15 m/s, closing at 30 m/s, over K=10 steps (1 second):
+
+```
+Max approach distance in K steps = v_close_max × K × dt = 30 × 10 × 0.1 = 30 m
+```
+
+So any pair currently farther than `d_safe + 30 m = 35 m` apart cannot violate `d_safe`
+within 10 steps even at full closing speed. A gate of **R_gate = 100–200 m** is already
+very conservative. 500 m is fine but includes far more pairs than necessary.
+
+**Scaling benefit:** With N drones uniformly distributed in a 1 km² area, the expected
+number of neighbors within R_gate = 200 m is approximately:
+
+```
+k ≈ N × π × R_gate² / A_world
+  = N × π × 200² / 1,000,000
+  = N × 0.126
+```
+
+So at N = 20 drones, k ≈ 2.5 neighbors per drone on average. QP constraint count
+drops from N(N-1)/2 = 190 pairs to roughly Nk/2 ≈ 25 pairs — a 7× reduction.
+
+The PDF (Section 2) confirms: *"Let G = (V,E) be a proximity graph and bound each
+aircraft's relevant neighborhood by k ≪ N. Then |E| = O(Nk), so distributed tactical
+processing can approach linear scaling in fleet size if physical density and sensor
+horizon keep k bounded."*
+
+### v1 implementation
+
+For v1 with small N (≤ 10 drones), the range gate is optional — all pairs fit in the
+QP trivially. Add it as a configurable parameter `qp_range_gate_m` in the filter config,
+defaulting to `None` (include all pairs). When set, exclude pairs beyond the gate before
+building `A_cbf`. Log the number of pairs included vs. excluded per step.
+
+**This is a computational optimization, not a change to the safety architecture.**
+The HOCBF formulation, QP structure, fallback semantics, and barrier definition remain
+identical.

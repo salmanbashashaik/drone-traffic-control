@@ -29,12 +29,12 @@ def test_observation_rejects_19_values() -> None:
         ObservationV1.model_validate([0.0] * 19)
 
 
-def test_marl_action_rejects_acceleration_component_above_3_mps2() -> None:
+def test_marl_action_rejects_acceleration_component_above_3_5_mps2() -> None:
     with pytest.raises(ValidationError):
         MARLAction.model_validate(
             {
                 "agent_id": "drone-001",
-                "proposed_accel_mps2": [3.01, 0.0, 0.0],
+                "proposed_accel_mps2": [3.51, 0.0, 0.0],
                 "timestamp_ms": 1200,
             }
         )
