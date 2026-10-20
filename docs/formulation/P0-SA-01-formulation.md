@@ -10,9 +10,9 @@
 
 ---
 
-## 0. Proposed contract change (requires PR to `main`)
+## 0. Contract change (merged to `main` in PR #1)
 
-The current contract sets `MAX_ACCEL_COMPONENT_MPS2 = 3.0 m/s²`. This formulation proposes raising it to **3.5 m/s²** to give the filter more authority to maneuver, especially in head-on and high-closing-speed scenarios (see Section 5). This is a shared-contract change:
+The contract previously set `MAX_ACCEL_COMPONENT_MPS2 = 3.0 m/s²`. This formulation raised it to **3.5 m/s²** (merged to `main` in PR #1) to give the filter more authority to maneuver, especially in head-on and high-closing-speed scenarios (see Section 5). This is a shared-contract change:
 
 - `shared/contracts.py`: `MAX_ACCEL_COMPONENT_MPS2 = 3.5`
 - `INTERFACES.md`: update the stated bound

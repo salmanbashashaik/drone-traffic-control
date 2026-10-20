@@ -88,7 +88,10 @@ def _validate_velocity(velocity: Vec3) -> Vec3:
 
 def _validate_acceleration(acceleration: Vec3) -> Vec3:
     if any(abs(component) > MAX_ACCEL_COMPONENT_MPS2 for component in acceleration):
-        raise ValueError("each acceleration component must be within [-3, 3] m/s²")
+        raise ValueError(
+            "each acceleration component must be within "
+            f"[-{MAX_ACCEL_COMPONENT_MPS2}, {MAX_ACCEL_COMPONENT_MPS2}] m/s²"
+        )
     return acceleration
 
 
@@ -375,6 +378,14 @@ class APIError(ContractModel):
         return value
 
 
+def exceeds_intervention_tolerance(proposed: Vec3, applied: Vec3) -> bool:
+    """True when any component changed by more than the shared shield tolerance."""
+    return any(
+        abs(applied_component - proposed_component) > SHIELD_INTERVENTION_TOLERANCE_MPS2
+        for proposed_component, applied_component in zip(proposed, applied, strict=True)
+    )
+
+
 def validate_action_pair(proposed: MARLAction, applied: SafeAction) -> None:
     """Check identity/time alignment and the shared shield-intervention flag."""
     if proposed.agent_id != applied.agent_id:
@@ -382,11 +393,8 @@ def validate_action_pair(proposed: MARLAction, applied: SafeAction) -> None:
     if proposed.timestamp_ms != applied.timestamp_ms:
         raise ValueError("proposed and applied actions must have the same timestamp_ms")
 
-    changed_beyond_tolerance = any(
-        abs(applied_component - proposed_component) > SHIELD_INTERVENTION_TOLERANCE_MPS2
-        for proposed_component, applied_component in zip(
-            proposed.proposed_accel_mps2, applied.safe_accel_mps2, strict=True
-        )
+    changed_beyond_tolerance = exceeds_intervention_tolerance(
+        proposed.proposed_accel_mps2, applied.safe_accel_mps2
     )
     if applied.shield_active != changed_beyond_tolerance:
         raise ValueError("shield_active does not match the v1 intervention tolerance")

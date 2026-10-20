@@ -94,3 +94,25 @@ def test_shield_flag_uses_shared_intervention_tolerance() -> None:
     )
     validate_action_pair(proposed, applied)
 
+
+
+def test_marl_action_accepts_acceleration_component_at_3_5_mps2() -> None:
+    action = MARLAction.model_validate(
+        {
+            "agent_id": "drone-001",
+            "proposed_accel_mps2": [3.5, -3.5, 0.0],
+            "timestamp_ms": 1200,
+        }
+    )
+    assert action.proposed_accel_mps2 == (3.5, -3.5, 0.0)
+
+
+def test_acceleration_error_names_current_limit() -> None:
+    with pytest.raises(ValidationError, match=r"\[-3\.5, 3\.5\]"):
+        MARLAction.model_validate(
+            {
+                "agent_id": "drone-001",
+                "proposed_accel_mps2": [3.6, 0.0, 0.0],
+                "timestamp_ms": 1200,
+            }
+        )

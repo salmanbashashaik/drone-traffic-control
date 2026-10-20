@@ -126,6 +126,9 @@ def create_app(
         elif exception.status_code == 409:
             code = "duplicate_agent_id"
             message = "This agent_id is already registered in this mock API process."
+        elif exception.status_code == 405:
+            code = "mock_api_error"
+            message = "This HTTP method is not allowed for this mock API route."
         else:
             code = "mock_api_error"
             message = "The mock API could not complete the request."

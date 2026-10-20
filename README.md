@@ -74,7 +74,7 @@ utm-mock-api
 
 On macOS or Linux, activate the environment with `source .venv/bin/activate` instead. Open `http://127.0.0.1:8000/docs` to inspect and call the mock routes. Stop the server with `Ctrl+C`.
 
-This starts **only the synthetic API baseline**. The simulator, policy, safety filter, end-to-end run orchestrator, and complete demo are still planned, so there is not yet a full V1 simulation run command. Do not point this API at live aircraft, sensor, USS/UTM, or registration services.
+This starts **only the synthetic API baseline**. The reference policy and a pass-through safety-filter stub exist as library code, but the simulator, real QP solve, end-to-end run orchestrator, and complete demo are still planned, so there is not yet a full V1 simulation run command. Do not point this API at live aircraft, sensor, USS/UTM, or registration services.
 
 ## Long-term research direction
 

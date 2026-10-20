@@ -240,3 +240,9 @@ def test_range_gate_includes_nearby_pair() -> None:
     cfg = FilterConfig(range_gate_m=200.0)
     _, diag = apply_filter(states, actions, config=cfg)
     assert diag.n_pairs_in_qp == 1
+
+
+def test_no_active_agents_returns_empty() -> None:
+    safe_actions, diag = apply_filter([], [])
+    assert safe_actions == []
+    assert diag == FilterDiagnostics()
