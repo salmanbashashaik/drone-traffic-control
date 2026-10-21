@@ -10,9 +10,9 @@
 
 ---
 
-## 0. Proposed contract change (requires PR to `main`)
+## 0. Contract change (merged to `main` in PR #1)
 
-The current contract sets `MAX_ACCEL_COMPONENT_MPS2 = 3.0 m/s²`. This formulation proposes raising it to **3.5 m/s²** to give the filter more authority to maneuver, especially in head-on and high-closing-speed scenarios (see Section 5). This is a shared-contract change:
+The contract previously set `MAX_ACCEL_COMPONENT_MPS2 = 3.0 m/s²`. This formulation raised it to **3.5 m/s²** (merged to `main` in PR #1) to give the filter more authority to maneuver, especially in head-on and high-closing-speed scenarios (see Section 5). This is a shared-contract change:
 
 - `shared/contracts.py`: `MAX_ACCEL_COMPONENT_MPS2 = 3.5`
 - `INTERFACES.md`: update the stated bound
@@ -539,3 +539,75 @@ building `A_cbf`. Log the number of pairs included vs. excluded per step.
 **This is a computational optimization, not a change to the safety architecture.**
 The HOCBF formulation, QP structure, fallback semantics, and barrier definition remain
 identical.
+
+---
+
+## 13. Future barrier extensions — spatiotemporal safe flight corridors
+
+This section is a forward-looking note, not a v1 deliverable. It records the
+planned direction for richer obstacle avoidance in post-v1 tiers.
+
+### Current v1 limitation
+
+The v1 barrier `h_ij = ||r_ij||² - d_safe²` only enforces pairwise separation
+between cooperative, known drones. It does not handle:
+
+- Static obstacles (buildings, geofences beyond the boundary check)
+- Unknown dynamic obstacles (birds, non-cooperative vehicles)
+- Non-cooperative agents that are not in the `DroneState` set
+
+### Spatiotemporal safe flight corridors (SFCs)
+
+A more powerful approach, directly applicable to T3+ environment tiers, is
+to replace the scalar pairwise barrier with **convex safety corridor
+constraints**. The key idea (from Kondo et al., 2026):
+
+For each drone `i` over a planning horizon of K steps, compute a sequence of
+convex polytopes `{C_k}` such that the trajectory is required to stay inside
+`C_k` at time step `k`. The polytopes are constructed from detected obstacle
+geometry and account for obstacle *motion over time* — a static corridor would
+be violated by a moving obstacle even if the drone stays still.
+
+The corridor constraint per drone per step becomes:
+
+```
+A_k · p_i[t+k] ≤ b_k    for k = 1, ..., K
+```
+
+This is still linear in `p_i` (and therefore in `a_i` through the dynamics),
+so it fits naturally into the HOCBF QP as additional constraint rows.
+
+### How it extends the current architecture
+
+| v1 (current) | Post-v1 SFC extension |
+|---|---|
+| Barrier: scalar `h_ij` per pair | Barrier: polytope corridor per agent per step |
+| Constraints: pair separation only | Constraints: pair separation + static + dynamic obstacles |
+| Obstacle knowledge: cooperative drones via DroneState | Obstacle knowledge: all detected objects via sensor model |
+| QP constraint count: O(N²) pairs | QP constraint count: O(N·K·M) where M = obstacles per corridor |
+
+### Relevant reference
+
+**SANDO: Safe Autonomous Trajectory Planning for Dynamic Unknown Environments**
+Kondo, Tordesillas, How — IEEE Transactions on Robotics, 2026
+arXiv: 2604.07599 | GitHub: https://github.com/mit-acl/sando
+
+SANDO implements spatiotemporal SFCs for a single physical quadrotor using
+onboard point cloud detection and a Gurobi QP solver in ROS 2 / C++. It is
+**not directly integrable into this Python/OSQP stack** but is the primary
+reference for the SFC concept and the spatiotemporal corridor construction
+algorithm (heat map global planner + convex decomposition).
+
+### What needs to happen before this can be implemented
+
+1. A sensor model must exist (T3+: detection range, dropout, non-cooperative
+   objects). Currently all agents are known via `DroneState` ground truth.
+2. The observation contract (`ObservationV1`) must be extended to carry
+   corridor or obstacle information beyond the single nearest neighbor.
+3. The QP formulation must be extended to include corridor constraints
+   alongside the existing HOCBF pair constraints.
+4. Computational cost must be evaluated — corridor construction adds
+   significant overhead vs the simple pairwise barrier.
+
+This is scoped to **T4/T5 environment tiers** and **P5 real-service** work.
+Do not begin implementation until the v1 matched evaluation (P3) is complete.

@@ -1,36 +1,19 @@
-"""HOCBF QP safety filter — v1 stub.
+"""HOCBF QP safety filter — active OSQP implementation (P2-SA-01).
 
-This module implements the full SafeAction contract interface so that
-the simulator, runner, and logging pipeline can be built against it
-now. The QP solve is a STUB: it passes the nominal action through
-unchanged and computes the barrier value for diagnostics, but does
-NOT yet modify actions to enforce constraints.
+This module implements the full SafeAction contract interface and active HOCBF
+quadratic program solver. When active pairs are close or on a collision path,
+the filter modifies the nominal acceleration commands by solving a joint convex
+QP over all active agents to enforce the pairwise separation barrier.
+If the QP is infeasible or the solver encounters an error, the system applies
+the documented zero-acceleration fallback.
 
 Implementation status
 ---------------------
-STUB — pass-through only. The full HOCBF QP solver (P2-SA-01) will
-replace ``_solve_qp_stub`` once Anas's simulator (P1-AN-01) is
-available to validate the dynamics contract end-to-end.
-
-What IS implemented here
-------------------------
-- Full input/output contract: accepts List[DroneState] + List[MARLAction],
-  returns List[SafeAction].
-- Input validation: rejects missing, duplicate, or mismatched agents and
-  timestamps before doing any computation.
-- Barrier value computation: h_ij = ||r_ij||² - d_safe² computed over
-  all active pairs; h_min_m2 reported in every SafeAction.
-- Shield intervention detection: uses the shared tolerance from contracts.
-- Fallback semantics: zero acceleration when qp_feasible=False.
-- Range gate: optional pair filtering for QP scalability (always-include
-  in v1 default since N is small, documented for later use).
-
-What is NOT implemented (P2-SA-01)
-------------------------------------
-- The HOCBF constraint matrix A_cbf and RHS b_cbf.
-- The actual OSQP solve.
-- Action modification to enforce the barrier constraints.
-- Robust margins for wind disturbances (T2+).
+Active OSQP solver implemented (P2-SA-01).
+- Solves joint QP over all active agents.
+- Enforces pairwise HOCBF constraints (Section 7-8 of formulation note).
+- Enforces box acceleration bounds [-3.5, 3.5] m/s^2 per component.
+- Emits zero-acceleration fallback with qp_feasible=False on solver failure or infeasibility.
 
 Mathematical basis
 ------------------
@@ -55,15 +38,20 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, field
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import dataclass
 
+import numpy as np
+import osqp
+import scipy.sparse as sp
 from shared.contracts import (
+    MAX_ACCEL_COMPONENT_MPS2,
     SAFE_SEPARATION_M,
-    SHIELD_INTERVENTION_TOLERANCE_MPS2,
+    SIMULATION_STEP_MS,
     DroneState,
     MARLAction,
     SafeAction,
+    exceeds_intervention_tolerance,
 )
 
 logger = logging.getLogger(__name__)
@@ -85,11 +73,17 @@ class FilterConfig:
     range_gate_m:
         If set, pairs further apart than this distance are excluded
         from the QP constraint set. None = include all pairs.
+    solver_eps:
+        Absolute and relative tolerance for the OSQP solver.
+    solver_max_iter:
+        Maximum iterations allowed for OSQP.
     """
 
     alpha1: float = 0.5
     alpha2: float = 0.5
     range_gate_m: float | None = _DEFAULT_RANGE_GATE_M
+    solver_eps: float = 1e-5
+    solver_max_iter: int = 4000
 
     def __post_init__(self) -> None:
         if not (0.0 < self.alpha1 <= 1.0):
@@ -98,6 +92,10 @@ class FilterConfig:
             raise ValueError(f"alpha2 must be in (0, 1], got {self.alpha2}")
         if self.range_gate_m is not None and self.range_gate_m <= 0.0:
             raise ValueError(f"range_gate_m must be positive, got {self.range_gate_m}")
+        if self.solver_eps <= 0.0:
+            raise ValueError(f"solver_eps must be positive, got {self.solver_eps}")
+        if self.solver_max_iter <= 0:
+            raise ValueError(f"solver_max_iter must be positive, got {self.solver_max_iter}")
 
 
 @dataclass
@@ -114,7 +112,7 @@ class FilterDiagnostics:
     n_pairs_in_qp:
         Pairs included in the QP after range gate filtering.
     qp_feasible:
-        Whether the QP solve succeeded (stub always returns True).
+        Whether the QP solve succeeded.
     fallback_used:
         Whether the zero-acceleration fallback was applied.
     interventions:
@@ -142,35 +140,147 @@ def _barrier(state_i: DroneState, state_j: DroneState) -> float:
     return _separation_sq(state_i, state_j) - SAFE_SEPARATION_M ** 2
 
 
-def _solve_qp_stub(
+def build_hocbf_qp_matrices(
+    states: dict[str, DroneState],
+    actions: dict[str, MARLAction],
+    pairs_in_qp: list[tuple[str, str]],
+    config: FilterConfig,
+) -> tuple[sp.csc_matrix, np.ndarray, sp.csc_matrix, np.ndarray, np.ndarray, list[str]]:
+    """Build OSQP matrices for the joint HOCBF optimization problem.
+
+    Decision vector x is stacked acceleration [a_0, a_1, ..., a_{N-1}] in R^{3N},
+    ordered by agent_ids (sorted).
+
+    Returns
+    -------
+    P: csc_matrix (3N x 3N)
+    q: ndarray (3N,)
+    A: csc_matrix ((M + 3N) x 3N)
+    l: ndarray (M + 3N,)
+    u: ndarray (M + 3N,)
+    agent_ids: list[str]
+    """
+    agent_ids = sorted(states.keys())
+    agent_idx = {aid: idx for idx, aid in enumerate(agent_ids)}
+    n_agents = len(agent_ids)
+    dim = 3 * n_agents
+
+    # Objective: min sum_i ||a_i - a_i^nom||^2 = min 0.5 * x^T P x + q^T x
+    P = sp.eye(dim, format="csc") * 2.0
+    nom_stacked = np.zeros(dim, dtype=np.float64)
+    for aid, idx in agent_idx.items():
+        nom_stacked[3 * idx : 3 * idx + 3] = actions[aid].proposed_accel_mps2
+    q = -2.0 * nom_stacked
+
+    # Box bounds on control accelerations: -u_max <= a_{i,k} <= u_max
+    u_max = MAX_ACCEL_COMPONENT_MPS2
+    A_box = sp.eye(dim, format="csc")
+    l_box = np.full(dim, -u_max, dtype=np.float64)
+    u_box = np.full(dim, u_max, dtype=np.float64)
+
+    dt = SIMULATION_STEP_MS / 1000.0  # 0.1 s
+    d_safe = SAFE_SEPARATION_M  # 5.0 m
+
+    # Pairwise HOCBF constraints:
+    # s_ij^T * (a_i - a_j) >= rhs
+    cbf_rows = []
+    l_cbf = []
+    u_cbf = []
+
+    for id_i, id_j in pairs_in_qp:
+        idx_i = agent_idx[id_i]
+        idx_j = agent_idx[id_j]
+
+        s_i = states[id_i]
+        s_j = states[id_j]
+
+        r_ij = np.array(s_i.position_m, dtype=np.float64) - np.array(s_j.position_m, dtype=np.float64)
+        v_ij = np.array(s_i.velocity_mps, dtype=np.float64) - np.array(s_j.velocity_mps, dtype=np.float64)
+        s_vec = r_ij + v_ij * dt
+
+        h_ij = float(np.dot(r_ij, r_ij) - d_safe ** 2)
+        r_dot_v = float(np.dot(r_ij, v_ij))
+        v_sq = float(np.dot(v_ij, v_ij))
+
+        # Level-2 HOCBF lower bound (P0-SA-01 Section 7-8)
+        rhs = - v_sq - (config.alpha1 + config.alpha2) * r_dot_v - 0.5 * config.alpha1 * config.alpha2 * h_ij
+
+        row = np.zeros(dim, dtype=np.float64)
+        row[3 * idx_i : 3 * idx_i + 3] = s_vec
+        row[3 * idx_j : 3 * idx_j + 3] = -s_vec
+
+        cbf_rows.append(row)
+        l_cbf.append(rhs)
+        u_cbf.append(np.inf)
+
+    if cbf_rows:
+        A_cbf = sp.csc_matrix(np.vstack(cbf_rows))
+        A = sp.vstack([A_cbf, A_box], format="csc")
+        l = np.concatenate([np.array(l_cbf, dtype=np.float64), l_box])
+        u = np.concatenate([np.array(u_cbf, dtype=np.float64), u_box])
+    else:
+        A = A_box
+        l = l_box
+        u = u_box
+
+    return P, q, A, l, u, agent_ids
+
+
+def _solve_hocbf_qp(
     states: dict[str, DroneState],
     actions: dict[str, MARLAction],
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
 ) -> tuple[dict[str, tuple[float, float, float]], bool]:
-    """STUB: pass nominal actions through unchanged.
+    """Solve the joint HOCBF QP over all active agents using OSQP.
 
     Returns
     -------
     safe_accels:
-        Dict mapping agent_id to (ax, ay, az) — identical to nominal
-        in this stub.
+        Dict mapping agent_id to (ax, ay, az). Empty if infeasible or error.
     qp_feasible:
-        Always True in the stub. The full implementation will return
-        False when the OSQP solve is infeasible or errors.
+        True if OSQP status is 'solved', False otherwise.
     """
-    # TODO (P2-SA-01): Replace with OSQP solve.
-    # Build A_cbf and b_cbf from HOCBF constraints (formulation note
-    # Section 7-8), stack decision variables, call osqp.solve(),
-    # handle infeasibility and solver errors, return modified accels.
-    _ = pairs_in_qp  # Will be used by the real solver.
-    _ = config
+    if not states or not actions:
+        return {}, True
 
-    safe_accels = {
-        aid: actions[aid].proposed_accel_mps2
-        for aid in actions
-    }
-    return safe_accels, True
+    if not pairs_in_qp:
+        # No active pairs to constrain; nominal actions are already valid
+        safe_accels = {
+            aid: actions[aid].proposed_accel_mps2
+            for aid in actions
+        }
+        return safe_accels, True
+
+    try:
+        P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
+            states, actions, pairs_in_qp, config
+        )
+        prob = osqp.OSQP()
+        prob.setup(
+            P, q, A, l, u,
+            verbose=False,
+            eps_abs=config.solver_eps,
+            eps_rel=config.solver_eps,
+            max_iter=config.solver_max_iter,
+        )
+        res = prob.solve()
+
+        if res.info.status == "solved":
+            u_max = MAX_ACCEL_COMPONENT_MPS2
+            safe_accels = {}
+            for idx, aid in enumerate(agent_ids):
+                ax = float(np.clip(res.x[3 * idx], -u_max, u_max))
+                ay = float(np.clip(res.x[3 * idx + 1], -u_max, u_max))
+                az = float(np.clip(res.x[3 * idx + 2], -u_max, u_max))
+                safe_accels[aid] = (ax, ay, az)
+            return safe_accels, True
+        else:
+            logger.warning("filter: OSQP non-optimal status: %s", res.info.status)
+            return {}, False
+    except Exception as exc:  # noqa: BLE001
+        logger.error("filter: OSQP solve exception: %s", exc)
+        return {}, False
 
 
 def apply_filter(
@@ -211,6 +321,10 @@ def apply_filter(
     if config is None:
         config = FilterConfig()
 
+    # No active agents (e.g. all completed or aborted): nothing to filter.
+    if not states and not actions:
+        return [], FilterDiagnostics()
+
     # --- Input validation ---
     state_ids = [s.agent_id for s in states]
     action_ids = [a.agent_id for a in actions]
@@ -248,14 +362,13 @@ def apply_filter(
     diag = FilterDiagnostics()
 
     # --- Barrier computation and pair selection ---
-    d_safe_sq = SAFE_SEPARATION_M ** 2
     h_min: float | None = None
-    pairs_total: list[tuple[str, str]] = []
+    n_pairs_total = 0
     pairs_in_qp: list[tuple[str, str]] = []
 
     for idx, id_i in enumerate(agent_ids):
         for id_j in agent_ids[idx + 1:]:
-            pairs_total.append((id_i, id_j))
+            n_pairs_total += 1
             h = _barrier(state_map[id_i], state_map[id_j])
 
             if h_min is None or h < h_min:
@@ -270,15 +383,15 @@ def apply_filter(
             pairs_in_qp.append((id_i, id_j))
 
     diag.h_min_m2 = h_min
-    diag.n_pairs_total = len(pairs_total)
+    diag.n_pairs_total = n_pairs_total
     diag.n_pairs_in_qp = len(pairs_in_qp)
 
-    # --- QP solve (stub) ---
+    # --- QP solve ---
     try:
-        safe_accels, qp_feasible = _solve_qp_stub(
+        safe_accels, qp_feasible = _solve_hocbf_qp(
             state_map, action_map, pairs_in_qp, config
         )
-    except Exception as exc:
+    except Exception as exc:  # noqa: BLE001
         logger.error(
             "filter: QP solver error at t=%d ms, applying fallback: %s",
             step_ts, exc,
@@ -302,10 +415,7 @@ def apply_filter(
             accel = safe_accels[aid]
 
         # Determine whether the shield modified the action beyond tolerance.
-        shield_active = any(
-            abs(accel[k] - nom[k]) > SHIELD_INTERVENTION_TOLERANCE_MPS2
-            for k in range(3)
-        )
+        shield_active = exceeds_intervention_tolerance(nom, accel)
         if shield_active:
             diag.interventions += 1
 

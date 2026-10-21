@@ -112,7 +112,7 @@ def run_policy(
     try:
         # Re-validate to catch any policy that constructs MARLAction
         # without going through the validator (e.g. model_construct).
-        MARLAction.model_validate(action.model_dump())
+        action = MARLAction.model_validate(action.model_dump())
     except ValidationError as exc:
         raise ActionValidationError(
             f"Policy returned invalid MARLAction for agent '{agent_id}' "
