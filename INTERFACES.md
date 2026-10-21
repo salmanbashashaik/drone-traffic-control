@@ -75,7 +75,9 @@ The type name `SafeAction` means “action returned by the filter adapter”; it
 
 **Shield intervention tolerance:** v1 uses `1e-4 m/s²` as the default per-component comparison tolerance. Set `shield_active=true` when `max_k |safe_accel_mps2[k] - proposed_accel_mps2[k]| > 1e-4 m/s²`; otherwise set it false. This is a simulation default and must be updated in the shared contract if Salman’s mathematical review requires a different threshold. Count actions beyond this tolerance as interventions, including fallback-modified actions, and report fallback events separately.
 
-If the optimization is infeasible or the solver errors, v1 returns zero acceleration for every agent in the affected joint solve, sets `qp_feasible=false` and `fallback_used=true`, and logs the failure. Zero acceleration preserves velocity in the simple point-mass model; it is not a hover or verified fallback and may allow separation to decrease. Do not relabel this behavior as an HJ/recoverability or backup assurance layer.
+**Contract v1.1 (Sprint 1 PR A).** Each pair constraint carries a non-negative slack variable with a heavy linear penalty, so the QP is always feasible. A step that cannot satisfy every barrier is still solved: `qp_feasible=true`, `fallback_used=false`, and the violated pairs are reported through the filter diagnostics (`pair_slack_mps2`) and the episode slack metrics below. Positive slack means that pair's barrier was violated on that step; it is not a separation violation by itself. Known limit: inside `d_eff` the barrier's square root is clamped, so slack magnitudes there become very large (10³–10⁵ m/s²) and only the count `slack_pair_steps` is meaningful.
+
+The fallback now runs only on a solver error (non-`solved` OSQP status or an exception). It applies only to the conflict cluster: agents in pairs whose barrier the nominal action violates, grown until every agent outside the cluster satisfies its constraints against the cluster's fallback actions. Agents outside the cluster keep their nominal action with `qp_feasible=true` and `fallback_used=false`. Each cluster agent gets an evasive acceleration away from its most critical neighbour (lowest barrier value): braking along the line of sight, a lateral component, and a vertical component, scaled so the largest component equals the ±3.5 m/s² bound. Cluster agents have `qp_feasible=false` and `fallback_used=true`. **Breaking change from v1.0:** v1.0 required the fallback action to be zero acceleration; v1.1 allows any acceleration within the component bounds. This fallback is a heuristic, not a verified recoverability or backup assurance layer, and it ignores world bounds and third neighbours.
 
 ## Simulator contract
 
@@ -159,7 +161,9 @@ Emit a per-step record sufficient to reconstruct and diagnose controller behavio
 | `separation_violation_pair_steps` | Count of pair-step samples with separation `< d_safe`; not unique events or a certified collision count. |
 | `shield_interventions` | Count of agent-step returned actions modified beyond the documented tolerance, including fallback-modified actions. |
 | `qp_infeasible_steps` | Count of joint filter steps reported infeasible or errored. |
-| `fallback_events` | Count of agent-step actions where the zero-acceleration fallback was used. |
+| `fallback_events` | Count of agent-step actions where the evasive fallback was used (solver errors only since v1.1). |
+| `total_slack_mps2`, `max_slack_mps2` | Sum and maximum of per-pair barrier slack over all steps (v1.1). Magnitudes inside `d_eff` are not meaningful; see the filter section. |
+| `slack_pair_steps` | Count of pair-step samples with slack above the intervention tolerance, i.e. barrier-violating pair-steps (v1.1). |
 | `mean_step_time_ms`, `p95_step_time_ms` | Simulator/whole-step latency under a named measurement boundary. |
 | `mean_policy_latency_ms`, `p95_policy_latency_ms` | Policy inference latency, measured separately and with timing method stated. |
 

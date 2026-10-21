@@ -1,8 +1,8 @@
 """Unit and property tests for the active HOCBF QP safety filter (safety/filter.py).
 
 Verifies the mathematical correctness of the QP formulation, matrix construction,
-active collision interventions, pass-through conditions, and zero-acceleration
-fallback semantics.
+active collision interventions and pass-through conditions. Slack and
+fallback semantics live in test_filter_safety_core.py.
 """
 
 import math
@@ -64,16 +64,20 @@ def test_build_matrices_shapes_and_bounds() -> None:
     P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(states, actions, pairs, cfg)
 
     assert agent_ids == ["d1", "d2"]
-    assert P.shape == (6, 6)
-    assert q.shape == (6,)
-    # 1 pair constraint + 6 box bound constraints = 7 rows
-    assert A.shape == (7, 6)
-    assert len(l) == 7
-    assert len(u) == 7
+    # 6 acceleration variables + 1 slack variable per pair
+    assert P.shape == (7, 7)
+    assert q.shape == (7,)
+    # 1 pair constraint + 6 box bound constraints + 1 slack >= 0 row = 8 rows
+    assert A.shape == (8, 7)
+    assert len(l) == 8
+    assert len(u) == 8
 
-    # Box bounds on variables:
-    assert np.allclose(l[1:], -MAX_ACCEL_COMPONENT_MPS2)
-    assert np.allclose(u[1:], MAX_ACCEL_COMPONENT_MPS2)
+    # Box bounds on acceleration variables:
+    assert np.allclose(l[1:7], -MAX_ACCEL_COMPONENT_MPS2)
+    assert np.allclose(u[1:7], MAX_ACCEL_COMPONENT_MPS2)
+    # Slack is non-negative and unbounded above:
+    assert l[7] == 0.0
+    assert np.isinf(u[7])
 
 
 # ---------------------------------------------------------------------------
@@ -195,38 +199,6 @@ def test_qp_three_drone_symmetric_convergence() -> None:
         acc_vec = np.array(acc)
         # Dot product with inward direction must be negative (outward braking)
         assert np.dot(acc_vec, inward_dir) < -0.1
-
-
-# ---------------------------------------------------------------------------
-# Infeasibility and fallback semantics
-# ---------------------------------------------------------------------------
-
-def test_qp_infeasible_triggers_zero_acceleration_fallback() -> None:
-    # 3-agent sandwich: Agent 2 is caught between Agent 1 and Agent 3.
-    # Agent 1 (left) moves right at 10 m/s; Agent 3 (right) moves left at 10 m/s.
-    # Agent 2 cannot simultaneously accelerate left and right to satisfy both barriers.
-    states = [
-        _state("d1", pos=(490.0, 500.0, 100.0), vel=(10.0, 0.0, 0.0)),
-        _state("d2", pos=(500.0, 500.0, 100.0), vel=(0.0, 0.0, 0.0)),
-        _state("d3", pos=(510.0, 500.0, 100.0), vel=(-10.0, 0.0, 0.0)),
-    ]
-    actions = [
-        _action("d1", accel=(0.0, 0.0, 0.0)),
-        _action("d2", accel=(0.0, 0.0, 0.0)),
-        _action("d3", accel=(0.0, 0.0, 0.0)),
-    ]
-
-    safe_actions, diag = apply_filter(states, actions)
-
-    # Must report infeasible and apply zero-accel fallback
-    assert diag.qp_feasible is False
-    assert diag.fallback_used is True
-    assert len(safe_actions) == 3
-
-    for sa in safe_actions:
-        assert sa.qp_feasible is False
-        assert sa.fallback_used is True
-        assert sa.safe_accel_mps2 == (0.0, 0.0, 0.0)
 
 
 def test_lag_reserve_brakes_earlier() -> None:

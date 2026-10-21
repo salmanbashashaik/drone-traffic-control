@@ -161,7 +161,11 @@ class MARLAction(ContractModel):
 
 
 class SafeAction(ContractModel):
-    """Action returned by the filter adapter; the name is not a safety claim."""
+    """Action returned by the filter adapter; the name is not a safety claim.
+
+    Contract v1.1: a fallback action may have non-zero (bounded) acceleration;
+    v1.0 required zero acceleration. See INTERFACES.md.
+    """
 
     agent_id: str = Field(min_length=1)
     safe_accel_mps2: Vec3
@@ -187,8 +191,6 @@ class SafeAction(ContractModel):
             raise ValueError("an infeasible QP requires fallback_used=true")
         if self.qp_feasible and self.fallback_used:
             raise ValueError("fallback_used=true requires qp_feasible=false")
-        if self.fallback_used and any(component != 0.0 for component in self.safe_accel_mps2):
-            raise ValueError("the v1 fallback action must have zero acceleration")
         return self
 
 
