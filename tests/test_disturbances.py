@@ -5,7 +5,7 @@ from pathlib import Path
 
 import numpy as np
 import pytest
-from shared.contracts import MAX_ACCEL_COMPONENT_MPS2, SAFE_SEPARATION_M, SafeAction, ScenarioConfig
+from shared.contracts import MAX_ACCEL_COMPONENT_MPS2, SafeAction, ScenarioConfig
 
 from utm_services.policy.reference import ReferencePolicy
 from utm_services.simulation import runner
@@ -242,27 +242,3 @@ def test_reference_completes_under_steady_wind(scenario) -> None:
                         make_env=lambda rules: DroneEnv(rules, disturbances=wind), keep_records=False).summary
         assert s["n_completed"] == s["n_launched"], seed
 
-
-_BL06 = pytest.mark.xfail(reason="BL-06: the filter has no disturbance margin; fix in C+D", strict=True)
-
-
-def _bl06_marks(scenario, profile, seed):
-    # Measured: crossing-90 keeps separation except realistic seed 3. Wind shifts the arrival
-    # times, so the drones never meet in the exact symmetric crossing the filter cannot resolve.
-    if scenario == "crossing-90" and (profile, seed) != ("realistic", 3):
-        return ()
-    return _BL06
-
-
-@pytest.mark.parametrize(
-    "scenario, profile, seed",
-    [pytest.param(sc, p, s, marks=_bl06_marks(sc, p, s))
-     for sc in ("head-on-40", "crossing-90", "sandwich-3") for p in ("nominal", "realistic") for s in range(5)],
-)
-def test_t2_shielded_keeps_separation(scenario, profile, seed) -> None:
-    cfg = ScenarioConfig.model_validate_json((SCENARIOS / f"{scenario}.json").read_text())
-    cfg = cfg.model_copy(update={"seed": seed})
-    s = run_episode(cfg, "shielded_marl", policy=ReferencePolicy(), policy_id="reference-standin",
-                    make_env=lambda rules: DroneEnv(rules, disturbances=PROFILES[profile]),
-                    keep_records=False).summary
-    assert s["min_separation_m"] >= SAFE_SEPARATION_M

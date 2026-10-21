@@ -77,7 +77,7 @@ These items come from Sprint 1 review. Each must be closed before any test on a 
 
 | ID | Owner | Item | Found in | Acceptance criteria |
 | --- | --- | --- | --- | --- |
-| BL-06 | TBD | The safety filter has no disturbance margin. It plans with the commanded acceleration only, ignores wind (up to 1.0 m/s² per axis in T2), takes the noisy, delayed states it receives as exact, and assumes every drone receives its command. Under T2 the shielded variant can lose separation. Fix in the C+D filter PR. | Sprint 1 PR F | `test_t2_shielded_keeps_separation` passes without `xfail` for every shipped scenario, both T2 profiles (nominal, realistic) and seeds 0–4, with zero fallbacks. |
+| BL-06 | TBD | The safety filter has no disturbance margin. It plans with the commanded acceleration only, ignores wind (up to 1.0 m/s² per axis in T2), takes the noisy, delayed states it receives as exact, and assumes every drone receives its command. Under T2 the shielded variant can lose separation. Fix in the C+D filter PR. | Sprint 1 PR F | Every row of `scripts/disturbance_matrix.py` (every shipped scenario plus the no-wind symmetric crossing, both T2 profiles, seeds 0–4) keeps d_safe with zero fallbacks. Those rows then become tests. Baseline: `docs/results/bl06-baseline-2026-10-21.md`. |
 
 ## Shared evaluation definitions
 
