@@ -92,7 +92,7 @@ def test_truncation_at_episode_limit() -> None:
     ],
 )
 def test_step_rejects_invalid_actions(actions, err) -> None:
-    env = DroneEnv()
+    env = DroneEnv(strict=True)
     env.reset(_config(*PAIR))
     with pytest.raises(err):
         env.step(actions)

@@ -4,7 +4,7 @@
 |---|---|
 | Task | P0-AN-01 |
 | Owner | Anas (branch `anas/simulation-edge`); implemented by Aman while Anas is on exams |
-| Status | Accepted (Salman answered Open Items 1–9 on 2026-10-19). T1 implemented in `src/utm_services/simulation/env.py` (`DroneEnv`, `sim-v1.0`) and `runner.py` (controller variants). Disturbance injectors (Section 7) are not implemented yet. |
+| Status | Accepted (Salman answered Open Items 1–9 on 2026-10-19). T1 implemented in `src/utm_services/simulation/env.py` (`DroneEnv`, `sim-v1.0`) and `runner.py` (controller variants). Sprint 1 PR F adds the T2 injectors (`Disturbances`, `T2` in `env.py`: steady seeded wind, observation noise and delay, command dropout) and degraded command handling (hold the last command for `hold_steps`, then brake and hover). They are configured on `DroneEnv`; the `ScenarioConfig.disturbances` field follows as contract v1.4. |
 | Date | 2026-10-19, revised 2026-10-21 |
 | Authority | `INTERFACES.md` and `shared/contracts.py` on `main`. This note only fills gaps those documents leave open. |
 
