@@ -47,11 +47,23 @@ def test_infeasible_qp_requires_fallback_flag() -> None:
         )
 
 
-def test_fallback_requires_zero_acceleration() -> None:
+def test_fallback_accepts_bounded_nonzero_acceleration() -> None:
+    # Contract v1.1: the evasive fallback may command a bounded acceleration.
+    action = SafeAction.model_validate(
+        _safe_action(
+            safe_accel_mps2=[-3.5, 1.2, 3.5],
+            qp_feasible=False,
+            fallback_used=True,
+        )
+    )
+    assert action.safe_accel_mps2 == (-3.5, 1.2, 3.5)
+
+
+def test_fallback_rejects_acceleration_above_bound() -> None:
     with pytest.raises(ValidationError):
         SafeAction.model_validate(
             _safe_action(
-                safe_accel_mps2=[0.1, 0.0, 0.0],
+                safe_accel_mps2=[3.51, 0.0, 0.0],
                 qp_feasible=False,
                 fallback_used=True,
             )

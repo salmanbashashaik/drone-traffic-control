@@ -3,9 +3,11 @@
 Every variant gets the same scenario, dynamics and episode limit; only the
 policy and the presence of the safety filter differ. Unshielded variants wrap
 the proposed action unchanged into a SafeAction (shield_active=False). The
-shielded variant calls the HOCBF filter, whose infeasible path returns the
-zero-acceleration fallback. That fallback is unverified: it is not a hover and
-does not guarantee separation.
+shielded variant calls the HOCBF filter. Pair-constraint slack (a barrier
+violation metric) is summed from the filter diagnostics; it is 0 for
+unshielded variants. On a solver error the filter's evasive fallback applies
+to the conflict cluster; that fallback is unverified and does not guarantee
+separation.
 """
 
 from __future__ import annotations
@@ -81,6 +83,7 @@ def run_episode(
     records: list[dict[str, Any]] = []
     step_ms: list[float] = []
     policy_ms: list[float] = []
+    slack = {"total_slack_mps2": 0.0, "max_slack_mps2": 0.0, "slack_pair_steps": 0}
 
     while not env.done:
         t0 = time.perf_counter()
@@ -95,7 +98,10 @@ def run_episode(
             policy_ms.append((time.perf_counter() - p0) * 1000.0)
 
         if shielded:
-            returned, _ = apply_filter(observed, proposed, filter_config)
+            returned, diag = apply_filter(observed, proposed, filter_config)
+            slack["total_slack_mps2"] += diag.slack_total_mps2
+            slack["max_slack_mps2"] = max(slack["max_slack_mps2"], diag.slack_max_mps2)
+            slack["slack_pair_steps"] += len(diag.pair_slack_mps2)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -135,6 +141,7 @@ def run_episode(
     summary = {
         "episode_id": episode_id,
         **env.summary(),
+        **slack,
         "mean_step_time_ms": mean_step,
         "p95_step_time_ms": p95_step,
         "mean_policy_latency_ms": mean_pol,
