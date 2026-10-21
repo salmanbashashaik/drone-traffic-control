@@ -11,6 +11,7 @@ does not guarantee separation.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -47,12 +48,14 @@ def run_episode(
     filter_config: FilterConfig | None = None,
     rules: AirspaceRulesV1 | None = None,
     keep_records: bool = True,
+    make_env: Callable[[AirspaceRulesV1 | None], DroneEnv] = DroneEnv,
 ) -> EpisodeResult:
     """Run one episode; returns the manifest, episode summary and per-step records.
 
     ``reference`` always uses the deterministic reference controller. The MARL
     variants need ``policy``; until a trained policy exists, callers may pass the
-    reference controller and must label it through ``policy_id``.
+    reference controller and must label it through ``policy_id``. ``make_env``
+    selects the dynamics backend (point-mass ``DroneEnv`` by default).
     """
     if variant not in VARIANTS:
         raise ValueError(f"unknown controller variant '{variant}'")
@@ -63,7 +66,7 @@ def run_episode(
     shielded = variant == "shielded_marl"
     filter_config = filter_config or FilterConfig()
 
-    env = DroneEnv(rules)
+    env = make_env(rules)
     observations, metadata = env.reset(config)
     episode_id = f"{config.scenario_id}-s{config.seed}-{variant}"
     manifest = {
