@@ -1,0 +1,10 @@
+{
+  "scenario_id": "sandwich-3",
+  "seed": 0,
+  "episode_limit_steps": 600,
+  "drones": [
+    {"agent_id": "d1", "initial_position_m": [490.0, 500.0, 100.0], "initial_velocity_mps": [10.0, 0.0, 0.0], "goal_m": [900.0, 500.0, 100.0]},
+    {"agent_id": "d2", "initial_position_m": [500.0, 500.0, 100.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [500.0, 900.0, 100.0]},
+    {"agent_id": "d3", "initial_position_m": [510.0, 500.0, 100.0], "initial_velocity_mps": [-10.0, 0.0, 0.0], "goal_m": [100.0, 500.0, 100.0]}
+  ]
+}

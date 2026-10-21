@@ -31,9 +31,14 @@ physics = [
     "pybullet>=3.2.7,<4",
     "transforms3d>=0.4,<1",
 ]
+# Replay plot for utm-run --plot.
+plot = [
+    "matplotlib>=3.8,<4",
+]
 
 [project.scripts]
 utm-mock-api = "utm_services.api.app:run"
+utm-run = "utm_services.evaluation.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "shared" = "shared"}
