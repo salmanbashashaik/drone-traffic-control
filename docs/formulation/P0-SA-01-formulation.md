@@ -260,7 +260,7 @@ with `γ > 0` (default 1.0 s⁻¹). Section 8 expands this into one linear row.
 
 A symmetric head-on or crossing pair can stall at `d = D`: braking alone keeps them safe,
 but neither moves sideways. When the nominal action violates a pair's constraint, the QP
-target for both agents gets a lateral bias of `tie_break` (default 0.5 m/s²). The bias is
+target for both agents gets a lateral bias of `tie_break` (default 1.0 m/s²; 0.5 until Sprint 1 PR B). The bias is
 along `ẑ × n` for agent i and the opposite for agent j, so both turn right. For vertical
 pairs (`n ≈ ±ẑ`) it uses `x̂ × n`. The bias is perpendicular to `n`, so it never weakens the
 constraint. It only changes the QP objective.
@@ -271,7 +271,7 @@ constraint. It only changes the QP objective.
 |---|---|---|
 | `gamma` | 1.0 s⁻¹ | Larger → approaches the braking curve faster, fewer early interventions |
 | `margin_m` | 0.5 m | Buffer for discretization error |
-| `tie_break_mps2` | 0.5 m/s² | Lateral bias that breaks symmetric deadlocks; 0 disables |
+| `tie_break_mps2` | 1.0 m/s² | Lateral bias that breaks symmetric deadlocks; 0 disables |
 | `lag_s` | 0 s | Actuator lag budget |
 
 These are assumptions to tune in evaluation, not guarantees.
