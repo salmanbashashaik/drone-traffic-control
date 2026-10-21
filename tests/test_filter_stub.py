@@ -199,9 +199,13 @@ def test_shield_inactive_when_pass_through() -> None:
 # FilterConfig validation
 # ---------------------------------------------------------------------------
 
-def test_filter_config_rejects_zero_alpha() -> None:
+def test_filter_config_rejects_bad_gains() -> None:
     with pytest.raises(ValueError):
-        FilterConfig(alpha1=0.0)
+        FilterConfig(gamma=0.0)
+    with pytest.raises(ValueError):
+        FilterConfig(margin_m=-0.1)
+    with pytest.raises(ValueError):
+        FilterConfig(tie_break_mps2=4.0)
 
 
 def test_filter_config_rejects_negative_range_gate() -> None:
@@ -210,8 +214,8 @@ def test_filter_config_rejects_negative_range_gate() -> None:
 
 
 def test_filter_config_accepts_valid_values() -> None:
-    cfg = FilterConfig(alpha1=0.3, alpha2=0.8, range_gate_m=200.0)
-    assert cfg.alpha1 == 0.3
+    cfg = FilterConfig(gamma=0.5, margin_m=1.0, tie_break_mps2=0.0, range_gate_m=200.0)
+    assert cfg.gamma == 0.5
 
 
 # ---------------------------------------------------------------------------
