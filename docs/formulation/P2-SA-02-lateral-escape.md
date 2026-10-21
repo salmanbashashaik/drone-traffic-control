@@ -91,7 +91,10 @@ Two candidates from the literature fit our setting (double-integrator agents, pe
 
 ### 4.1 Collision-cone CBF (recommended for evaluation first)
 
-References: Tayal et al., "Control barrier functions in dynamic UAVs for kinematic obstacle avoidance: a collision cone approach", ACC 2024; Thontepu et al., "Collision cone control barrier functions for kinematic obstacle avoidance in UGVs", 2023. Author lists and venues to be checked before this note is finalised.
+References (each checked against its arXiv page on 2026-10-21):
+
+- M. Tayal, R. Singh, J. Keshavan, S. Kolathaya, "Control Barrier Functions in Dynamic UAVs for Kinematic Obstacle Avoidance: A Collision Cone Approach", arXiv:2303.15871. https://arxiv.org/abs/2303.15871
+- P. Thontepu, B. G. Goswami, M. Tayal, et al., "Control Barrier Functions in UGVs for Kinematic Obstacle Avoidance: A Collision Cone Approach", arXiv:2209.11524 (title of v4; earlier versions were titled "Collision Cone Control Barrier Functions for Kinematic Obstacle Avoidance in UGVs"). https://arxiv.org/abs/2209.11524
 
 The safe set is the set of states whose relative velocity points outside the cone of directions that would bring the pair within `d_eff`:
 
@@ -113,7 +116,10 @@ Known limits that must be handled before adoption:
 
 ### 4.2 Backup-set CBF (alternative)
 
-Reference: Gurriet, Mote, Singletary, Nilsson, Feron, Ames, "A scalable safety critical control framework for nonlinear systems", IEEE Access 2020; Chen, Jankovic, Santillo, Ames, "Backup control barrier functions: formulation and comparative study", CDC 2021.
+References (each checked on 2026-10-21):
+
+- T. Gurriet, M. Mote, A. Singletary, P. Nilsson, E. Feron, A. D. Ames, "A Scalable Safety Critical Control Framework for Nonlinear Systems", IEEE Access, vol. 8, pp. 187249–187275, 2020. DOI 10.1109/ACCESS.2020.3025248. https://doi.org/10.1109/ACCESS.2020.3025248
+- Y. Chen, M. Jankovic, M. Santillo, A. D. Ames, "Backup Control Barrier Functions: Formulation and Comparative Study", arXiv:2104.11332. https://arxiv.org/abs/2104.11332
 
 Pick a backup policy (for example the evasive brake-and-split already used in the fallback), simulate the pair forward under it for a short horizon, and constrain the QP so that the backup trajectory from the next state stays outside `d_eff`. This respects input bounds by construction and gives a recoverability argument that the collision cone does not.
 
