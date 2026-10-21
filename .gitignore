@@ -21,3 +21,6 @@ dist/
 
 # Local session ledger (not committed)
 LEDGER.md
+
+# utm-run default output directory
+runs/

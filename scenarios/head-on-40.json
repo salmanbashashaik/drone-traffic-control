@@ -1,0 +1,9 @@
+{
+  "scenario_id": "head-on-40",
+  "seed": 0,
+  "episode_limit_steps": 600,
+  "drones": [
+    {"agent_id": "a", "initial_position_m": [480.0, 500.0, 100.0], "initial_velocity_mps": [15.0, 0.0, 0.0], "goal_m": [880.0, 500.0, 100.0]},
+    {"agent_id": "b", "initial_position_m": [520.0, 500.0, 100.0], "initial_velocity_mps": [-15.0, 0.0, 0.0], "goal_m": [120.0, 500.0, 100.0]}
+  ]
+}

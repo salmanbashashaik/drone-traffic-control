@@ -5,7 +5,7 @@ import math
 import pytest
 
 from shared.contracts import MAX_ACCEL_COMPONENT_MPS2, MARLAction, ObservationV1
-from utm_services.policy.reference import compute_reference_action
+from utm_services.policy.reference import ReferencePolicy, compute_reference_action
 
 
 # ---------------------------------------------------------------------------
@@ -145,3 +145,33 @@ def test_reaches_far_goal_without_overshoot() -> None:
         assert x <= goal_x + 0.5
     assert abs(goal_x - x) < 0.1
     assert abs(v) < 0.1
+
+
+# ---------------------------------------------------------------------------
+# ReferencePolicy: integral term with anti-windup
+# ---------------------------------------------------------------------------
+
+def test_integral_cancels_a_steady_offset_within_accel_limits() -> None:
+    """A constant 1 m error, which the P-D term alone leaves in place, gets a growing push, never past u_max."""
+    policy = ReferencePolicy()
+    first = policy(_obs(goal_disp=(1.0, 0.0, 0.0)), "a", 0).proposed_accel_mps2[0]
+    for k in range(1, 2000):
+        a = policy(_obs(goal_disp=(1.0, 0.0, 0.0)), "a", k * 100).proposed_accel_mps2
+        assert max(abs(c) for c in a) <= MAX_ACCEL_COMPONENT_MPS2
+    assert a[0] > first
+
+
+def test_integral_does_not_wind_up_while_saturated() -> None:
+    policy = ReferencePolicy()
+    for k in range(500):
+        policy(_obs(goal_disp=(400.0, 0.0, 0.0)), "a", k * 100)  # saturated cruise
+    a = policy(_obs(goal_disp=(0.5, 0.0, 0.0)), "a", 50_000).proposed_accel_mps2
+    assert a == compute_reference_action(_obs(goal_disp=(0.5, 0.0, 0.0)), "a", 50_000).proposed_accel_mps2
+
+
+def test_integral_state_is_per_agent() -> None:
+    policy = ReferencePolicy()
+    for k in range(50):
+        policy(_obs(goal_disp=(1.0, 0.0, 0.0)), "a", k * 100)
+    b = policy(_obs(goal_disp=(1.0, 0.0, 0.0)), "b", 0).proposed_accel_mps2
+    assert b == compute_reference_action(_obs(goal_disp=(1.0, 0.0, 0.0)), "b", 0).proposed_accel_mps2

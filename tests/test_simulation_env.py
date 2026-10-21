@@ -4,7 +4,7 @@ import pytest
 from shared.contracts import MAX_SPEED_MPS, SafeAction, ScenarioConfig
 
 from utm_services.api.app import _default_rules
-from utm_services.policy.reference import compute_reference_action
+from utm_services.policy.reference import ReferencePolicy
 from utm_services.simulation.env import GOAL_RADIUS_M, DroneEnv
 from utm_services.simulation.runner import run_episode
 
@@ -92,7 +92,7 @@ def test_truncation_at_episode_limit() -> None:
     ],
 )
 def test_step_rejects_invalid_actions(actions, err) -> None:
-    env = DroneEnv()
+    env = DroneEnv(strict=True)
     env.reset(_config(*PAIR))
     with pytest.raises(err):
         env.step(actions)
@@ -134,9 +134,9 @@ def test_geofence_incursion_logged_not_enforced() -> None:
 
 def test_runner_variants_share_scenario_and_label_policy() -> None:
     ref = run_episode(_config(*PAIR), "reference")
-    unsh = run_episode(_config(*PAIR), "unshielded_marl", policy=compute_reference_action, policy_id="stand-in")
-    sh = run_episode(_config(*PAIR), "shielded_marl", policy=compute_reference_action, policy_id="stand-in")
-    assert ref.manifest["policy_id"] == "reference-p1-sa-01" and ref.manifest["filter"] is None
+    unsh = run_episode(_config(*PAIR), "unshielded_marl", policy=ReferencePolicy(), policy_id="stand-in")
+    sh = run_episode(_config(*PAIR), "shielded_marl", policy=ReferencePolicy(), policy_id="stand-in")
+    assert ref.manifest["policy_id"] == "reference-p1-sa-01-pid" and ref.manifest["filter"] is None
     assert sh.manifest["filter"] is not None
     # Far-apart pair: the filter passes the reference controller through.
     assert ref.summary["steps"] == unsh.summary["steps"] == sh.summary["steps"]
