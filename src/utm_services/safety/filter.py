@@ -11,7 +11,7 @@ Implementation status
 ---------------------
 Active OSQP solver implemented (P2-SA-01).
 - Solves joint QP over all active agents.
-- Enforces pairwise HOCBF constraints (Section 7-8 of formulation note).
+- Enforces pairwise braking-barrier constraints (Section 6-8 of formulation note).
 - Enforces box acceleration bounds [-3.5, 3.5] m/s^2 per component.
 - Emits zero-acceleration fallback with qp_feasible=False on solver failure or infeasibility.
 
@@ -19,9 +19,10 @@ Mathematical basis
 ------------------
 See docs/formulation/P0-SA-01-formulation.md for the full derivation.
 
-Barrier:    h_ij = ||p_i - p_j||^2 - d_safe^2
-HOCBF:      two-level chain, relative degree 2 under acceleration control
-QP:         min Σ||a_safe - a_nom||^2  s.t. HOCBF constraints, box bounds
+Safe set:   d_ij = ||p_i - p_j|| >= d_safe (reported via h_min_m2 = d^2 - d_safe^2)
+Barrier:    h_ij = sqrt(4 u_max (d_ij - d_safe - margin)) + n_ij . v_ij
+            (braking-distance CBF, relative degree 1 under acceleration control)
+QP:         min Σ||a_safe - a_nom - bias||^2  s.t.  dh/dt >= -gamma h, box bounds
 Fallback:   zero acceleration when infeasible or solver error
 
 Assumptions (inherited from P0-SA-01, Section 9)
@@ -47,7 +48,6 @@ import scipy.sparse as sp
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
     SAFE_SEPARATION_M,
-    SIMULATION_STEP_MS,
     DroneState,
     MARLAction,
     SafeAction,
@@ -67,9 +67,21 @@ class FilterConfig:
 
     Attributes
     ----------
-    alpha1, alpha2:
-        HOCBF class-K decay coefficients (0, 1]. See formulation note
-        Section 6. Starting value 0.5 for both.
+    gamma:
+        Linear class-K gain on the braking barrier (1/s). Larger values let
+        the pair approach the braking curve faster. See formulation §6.
+    margin_m:
+        Separation buffer added to d_safe inside the barrier. Absorbs the
+        100 ms sample-and-hold error and small actuator lag (PR #5 review).
+        Reported h_min_m2 still uses d_safe.
+    tie_break_mps2:
+        Lateral bias added to the nominal of both agents in a pair whose
+        nominal violates the constraint (both turn right about +z). Breaks the
+        symmetric head-on / crossing deadlock; 0 disables it.
+    lag_s:
+        Actuator time constant to budget for (s). The barrier reserves
+        lag_s * closing_speed of extra distance. 0 for the ideal simulator;
+        set to the measured tau when actuators lag.
     range_gate_m:
         If set, pairs further apart than this distance are excluded
         from the QP constraint set. None = include all pairs.
@@ -79,17 +91,23 @@ class FilterConfig:
         Maximum iterations allowed for OSQP.
     """
 
-    alpha1: float = 0.5
-    alpha2: float = 0.5
+    gamma: float = 1.0
+    margin_m: float = 0.5
+    tie_break_mps2: float = 0.5
+    lag_s: float = 0.0
     range_gate_m: float | None = _DEFAULT_RANGE_GATE_M
     solver_eps: float = 1e-5
     solver_max_iter: int = 4000
 
     def __post_init__(self) -> None:
-        if not (0.0 < self.alpha1 <= 1.0):
-            raise ValueError(f"alpha1 must be in (0, 1], got {self.alpha1}")
-        if not (0.0 < self.alpha2 <= 1.0):
-            raise ValueError(f"alpha2 must be in (0, 1], got {self.alpha2}")
+        if not self.gamma > 0.0:
+            raise ValueError(f"gamma must be positive, got {self.gamma}")
+        if not self.margin_m >= 0.0:
+            raise ValueError(f"margin_m must be non-negative, got {self.margin_m}")
+        if not 0.0 <= self.tie_break_mps2 <= MAX_ACCEL_COMPONENT_MPS2:
+            raise ValueError(f"tie_break_mps2 must be in [0, u_max], got {self.tie_break_mps2}")
+        if not self.lag_s >= 0.0:
+            raise ValueError(f"lag_s must be non-negative, got {self.lag_s}")
         if self.range_gate_m is not None and self.range_gate_m <= 0.0:
             raise ValueError(f"range_gate_m must be positive, got {self.range_gate_m}")
         if self.solver_eps <= 0.0:
@@ -170,7 +188,7 @@ def build_hocbf_qp_matrices(
     nom_stacked = np.zeros(dim, dtype=np.float64)
     for aid, idx in agent_idx.items():
         nom_stacked[3 * idx : 3 * idx + 3] = actions[aid].proposed_accel_mps2
-    q = -2.0 * nom_stacked
+    target = nom_stacked.copy()
 
     # Box bounds on control accelerations: -u_max <= a_{i,k} <= u_max
     u_max = MAX_ACCEL_COMPONENT_MPS2
@@ -178,11 +196,10 @@ def build_hocbf_qp_matrices(
     l_box = np.full(dim, -u_max, dtype=np.float64)
     u_box = np.full(dim, u_max, dtype=np.float64)
 
-    dt = SIMULATION_STEP_MS / 1000.0  # 0.1 s
-    d_safe = SAFE_SEPARATION_M  # 5.0 m
+    d_eff = SAFE_SEPARATION_M + config.margin_m
 
-    # Pairwise HOCBF constraints:
-    # s_ij^T * (a_i - a_j) >= rhs
+    # Pairwise braking-barrier constraints (P0-SA-01 Section 6-8):
+    # n_ij^T (a_i - a_j) >= rhs
     cbf_rows = []
     l_cbf = []
     u_cbf = []
@@ -196,22 +213,41 @@ def build_hocbf_qp_matrices(
 
         r_ij = np.array(s_i.position_m, dtype=np.float64) - np.array(s_j.position_m, dtype=np.float64)
         v_ij = np.array(s_i.velocity_mps, dtype=np.float64) - np.array(s_j.velocity_mps, dtype=np.float64)
-        s_vec = r_ij + v_ij * dt
+        dist = max(float(np.linalg.norm(r_ij)), 1e-9)
+        n_ij = r_ij / dist
+        rho = float(np.dot(n_ij, v_ij))  # range rate; negative when closing
 
-        h_ij = float(np.dot(r_ij, r_ij) - d_safe ** 2)
-        r_dot_v = float(np.dot(r_ij, v_ij))
-        v_sq = float(np.dot(v_ij, v_ij))
-
-        # Level-2 HOCBF lower bound (P0-SA-01 Section 7-8)
-        rhs = - v_sq - (config.alpha1 + config.alpha2) * r_dot_v - 0.5 * config.alpha1 * config.alpha2 * h_ij
+        # h = sqrt(2 * (2 u_max) * (d - D)) + rho: the pair can still stop
+        # before d_eff using combined braking 2 u_max along n_ij.
+        # Clamp guards the sqrt derivative once inside the margin.
+        # Lag reserve: distance closed before a lagged actuator starts braking.
+        # Treated as constant within the step (its derivative is ignored).
+        reserve = config.lag_s * max(-rho, 0.0)
+        root = math.sqrt(max(4.0 * u_max * (dist - d_eff - reserve), 1e-6))
+        h_ij = root + rho
+        tangential = (float(np.dot(v_ij, v_ij)) - rho * rho) / dist
+        rhs = -config.gamma * h_ij - 2.0 * u_max * rho / root - tangential
 
         row = np.zeros(dim, dtype=np.float64)
-        row[3 * idx_i : 3 * idx_i + 3] = s_vec
-        row[3 * idx_j : 3 * idx_j + 3] = -s_vec
+        row[3 * idx_i : 3 * idx_i + 3] = n_ij
+        row[3 * idx_j : 3 * idx_j + 3] = -n_ij
+
+        # Symmetric pairs stall at d_eff with no lateral escape. When the
+        # nominal would violate the constraint, bias both agents to turn
+        # right about +z (about +x for vertical pairs).
+        if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < rhs:
+            lateral = np.cross((0.0, 0.0, 1.0), n_ij)
+            if np.linalg.norm(lateral) < 1e-3:
+                lateral = np.cross((1.0, 0.0, 0.0), n_ij)
+            lateral *= config.tie_break_mps2 / np.linalg.norm(lateral)
+            target[3 * idx_i : 3 * idx_i + 3] += lateral
+            target[3 * idx_j : 3 * idx_j + 3] -= lateral
 
         cbf_rows.append(row)
         l_cbf.append(rhs)
         u_cbf.append(np.inf)
+
+    q = -2.0 * target
 
     if cbf_rows:
         A_cbf = sp.csc_matrix(np.vstack(cbf_rows))

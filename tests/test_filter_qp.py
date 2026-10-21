@@ -110,8 +110,9 @@ def test_qp_intervenes_on_head_on_converging_pair() -> None:
 
     # Symmetry in deceleration
     assert abs(a1[0] + a2[0]) < 1e-3
-    assert abs(a1[1]) < 1e-4 and abs(a1[2]) < 1e-4
-    assert abs(a2[1]) < 1e-4 and abs(a2[2]) < 1e-4
+    # Tie-break: both turn right (d1 heading +x -> -y, d2 heading -x -> +y)
+    assert a1[1] < -0.1 and abs(a1[1] + a2[1]) < 1e-3
+    assert abs(a1[2]) < 1e-4 and abs(a2[2]) < 1e-4
 
     # Both must be within control authority
     assert abs(a1[0]) <= MAX_ACCEL_COMPONENT_MPS2
@@ -164,11 +165,12 @@ def test_qp_passes_through_distant_stationary_pair() -> None:
 # ---------------------------------------------------------------------------
 
 def test_qp_three_drone_symmetric_convergence() -> None:
-    # 3 drones starting 25m from center (500, 500, 100), heading directly inward at 4 m/s.
+    # 3 drones starting 25m from center (500, 500, 100), heading directly inward at 12 m/s
+    # (pairwise closing ≈ 20.8 m/s, inside the braking curve so the barrier binds).
     center_x = 500.0
     center_y = 500.0
     r = 25.0
-    v = 4.0
+    v = 12.0
     angles = [0.0, 2.0 * math.pi / 3.0, 4.0 * math.pi / 3.0]
 
     states = []
@@ -214,8 +216,7 @@ def test_qp_infeasible_triggers_zero_acceleration_fallback() -> None:
         _action("d3", accel=(0.0, 0.0, 0.0)),
     ]
 
-    cfg = FilterConfig(alpha1=0.8, alpha2=0.8)
-    safe_actions, diag = apply_filter(states, actions, config=cfg)
+    safe_actions, diag = apply_filter(states, actions)
 
     # Must report infeasible and apply zero-accel fallback
     assert diag.qp_feasible is False
@@ -226,6 +227,22 @@ def test_qp_infeasible_triggers_zero_acceleration_fallback() -> None:
         assert sa.qp_feasible is False
         assert sa.fallback_used is True
         assert sa.safe_accel_mps2 == (0.0, 0.0, 0.0)
+
+
+def test_lag_reserve_brakes_earlier() -> None:
+    # 100 m apart, closing at 30 m/s: just outside the ideal braking curve.
+    states = [
+        _state("d1", pos=(450.0, 500.0, 100.0), vel=(15.0, 0.0, 0.0)),
+        _state("d2", pos=(550.0, 500.0, 100.0), vel=(-15.0, 0.0, 0.0)),
+    ]
+    actions = [_action("d1"), _action("d2")]
+
+    ideal, _ = apply_filter(states, actions)
+    lagged, diag = apply_filter(states, actions, FilterConfig(lag_s=0.5))
+
+    assert ideal[0].shield_active is False
+    assert diag.qp_feasible is True
+    assert lagged[0].safe_accel_mps2[0] < -0.1
 
 
 # ---------------------------------------------------------------------------

@@ -40,7 +40,7 @@ The contract previously set `MAX_ACCEL_COMPONENT_MPS2 = 3.0 m/s²`. This formula
 | `u_max` | Max acceleration per component: `3.5 m/s²` | m/s² (proposed) |
 | `v_max` | Max 3D speed magnitude: `15.0 m/s` | m/s |
 | `h_ij` | Pairwise barrier function | m² |
-| `α₁, α₂` | HOCBF class-K coefficients | — |
+| `γ` | CBF class-K gain (Section 6) | 1/s |
 
 ---
 
@@ -216,61 +216,77 @@ state estimate fed into it.**
 
 ---
 
-## 6. HOCBF construction — step by step
+## 6. Barrier construction — braking-distance CBF
 
-### Step 1: Define the level-0 function
+> **Revision (PR #5 review).** The first implementation used the two-level HOCBF on
+> `h = ||r||² − d_safe²`. In closed loop it crashed head-on pairs at 30 m/s closing even at
+> 120 m gaps, and the QP was infeasible from t = 0. The cause: the exponential HOCBF does not
+> know the braking limit, so it reacts too late. The barrier below encodes the braking limit
+> directly. It follows Wang, Ames & Egerstedt, "Safety Barrier Certificates for Collisions-Free
+> Multirobot Systems", IEEE T-RO 2017.
 
-```
-ψ₀_ij[t] = h_ij[t] = ||r_ij[t]||² - d_safe²
-```
+### Step 1: Safe set
 
-For HOCBF invariance we need `ψ₀_ij[t] ≥ 0` for all `t`.
+The safe set is unchanged: `||r_ij|| ≥ d_safe`. Logs keep reporting
+`h_min_m2 = min ||r_ij||² − d_safe²` for comparability.
 
-### Step 2: Define the level-1 function (forward difference + class-K decay)
+### Step 2: Braking-aware barrier
 
-The discrete forward difference of `ψ₀`:
-
-```
-Δψ₀_ij[t] = ψ₀_ij[t+1] - ψ₀_ij[t]
-           = h_ij[t+1] - h_ij[t]
-```
-
-The level-1 function with class-K coefficient `α₁ ∈ (0, 1]`:
-
-```
-ψ₁_ij[t] = Δψ₀_ij[t] + α₁ · ψ₀_ij[t]
-```
-
-We require `ψ₁_ij[t] ≥ 0`.
-
-### Step 3: Enforce via the level-2 condition (this is the QP constraint)
+Let `d = ||r_ij||`, `n = r_ij / d`, `ρ = nᵀ v_ij` (range rate, negative when closing).
+Both agents can brake along `n` with at least `u_max` each, so the pair has combined
+braking `2·u_max`. The pair can still stop before `D` if `−ρ ≤ sqrt(2 · 2u_max · (d − D))`.
+The barrier is:
 
 ```
-Δψ₁_ij[t] + α₂ · ψ₁_ij[t] ≥ 0
+h_ij = sqrt(4 · u_max · (d − D)) + ρ          D = d_safe + margin + lag_s · max(−ρ, 0)
 ```
 
-with `α₂ ∈ (0, 1]`. This is the constraint that goes into the QP. Expanding:
+`h_ij ≥ 0` keeps the pair inside its braking envelope. `h_ij` has **relative degree 1** under
+acceleration control, so a single CBF condition suffices.
+
+- `margin` (default 0.5 m) absorbs the 100 ms sample-and-hold error.
+- `lag_s` (default 0) reserves the distance closed before a lagged actuator starts braking.
+  Set it to the measured actuator time constant. Its derivative is ignored inside one step.
+
+### Step 3: CBF condition (the QP constraint)
 
 ```
-ψ₁_ij[t+1] - ψ₁_ij[t] + α₂ · ψ₁_ij[t] ≥ 0
-ψ₁_ij[t+1] + (α₂ - 1) · ψ₁_ij[t] ≥ 0
+ḣ_ij ≥ −γ · h_ij
 ```
 
-After substituting the dynamics, `ψ₁_ij[t+1]` depends on `a_i` and `a_j` — so the constraint
-is now linear in the decision variables. That makes it a valid QP constraint.
+with `γ > 0` (default 1.0 s⁻¹). Section 8 expands this into one linear row.
 
-### Class-K coefficients
+### Step 4: Deterministic tie-break
 
-`α₁` and `α₂` are tuning parameters controlling how aggressively the filter intervenes:
+A symmetric head-on or crossing pair can stall at `d = D`: braking alone keeps them safe,
+but neither moves sideways. When the nominal action violates a pair's constraint, the QP
+target for both agents gets a lateral bias of `tie_break` (default 0.5 m/s²). The bias is
+along `ẑ × n` for agent i and the opposite for agent j, so both turn right. For vertical
+pairs (`n ≈ ±ẑ`) it uses `x̂ × n`. The bias is perpendicular to `n`, so it never weakens the
+constraint. It only changes the QP objective.
 
-- **Small α (e.g., 0.1):** filter starts intervening early, when drones are still far apart.
-  Fewer infeasible cases, more interventions, potentially more conservative behavior.
-- **Large α (e.g., 1.0):** filter waits until drones are closer before intervening.
-  Less conservative, but higher risk of infeasibility in fast-closing scenarios.
+### Tuning parameters
 
-**Starting values for v1:** `α₁ = α₂ = 0.5`. To be tuned based on evaluation results.
-Must be treated as assumptions, not guarantees — the right values depend on scenario
-density and initial conditions.
+| Parameter | Default | Effect |
+|---|---|---|
+| `gamma` | 1.0 s⁻¹ | Larger → approaches the braking curve faster, fewer early interventions |
+| `margin_m` | 0.5 m | Buffer for discretization error |
+| `tie_break_mps2` | 0.5 m/s² | Lateral bias that breaks symmetric deadlocks; 0 disables |
+| `lag_s` | 0 s | Actuator lag budget |
+
+These are assumptions to tune in evaluation, not guarantees.
+
+### Envelope
+
+Pure braking needs `v_close² / (4·u_max) + D` of range. At 30 m/s closing that is
+≈ 64 m + 5.5 m. Head-on pairs that start closer are outside the envelope: the QP is
+infeasible and the zero-acceleration fallback applies (Section 7).
+
+Closed-loop check (`tests/test_filter_closed_loop.py`, reference controller):
+head-on at 30 m/s closing with gaps 80–150 m and a 4-way corner swap all hold
+`min separation ≥ 5 m` with zero fallbacks, and all agents reach their goals.
+With a first-order actuator lag of τ = 0.2 or 0.5 s, setting `lag_s = τ` keeps the
+head-on case above 5 m; `lag_s = 0` with τ = 0.5 s does not.
 
 ---
 
@@ -293,13 +309,15 @@ minimize  Σᵢ ||a_i^safe - a_i^nom||²
 This is a **quadratic objective** — minimizing the sum of squared deviations from the
 policy's proposed actions across all agents.
 
-### Constraint 1 — HOCBF for all pairs
+### Constraint 1 — braking CBF for all pairs
 
 For every unordered active pair `(i, j)`:
 
 ```
-ψ₁_ij[t+1](a_i^safe, a_j^safe) + (α₂ - 1) · ψ₁_ij[t] ≥ 0
+ḣ_ij(a_i^safe, a_j^safe) ≥ −γ · h_ij
 ```
+
+The objective target is `a_i^nom` plus any tie-break bias (Section 6, Step 4).
 
 This is **linear** in `{a_i^safe, a_j^safe}` after substituting the dynamics.
 The constraint matrix row for pair `(i,j)` has nonzero entries only in the columns for
@@ -338,68 +356,48 @@ no feasible solution exists. It must be logged, counted in `qp_infeasible_steps`
 
 ---
 
-## 8. Expanding Δh_ij in terms of a — the linear constraint derivation
+## 8. Expanding ḣ_ij in terms of a — the linear constraint derivation
 
-This section shows concretely how the HOCBF constraint becomes linear in `a`.
+This section shows how the CBF condition becomes one linear row per pair.
 
 Define at step `t`:
 ```
-r_ij = p_i - p_j                     (relative position, known)
-v_ij = v_i - v_j                     (relative velocity, known)
-a_ij = a_i^safe - a_j^safe           (relative acceleration, decision variable)
+r_ij = p_i - p_j           (relative position, known)
+v_ij = v_i - v_j           (relative velocity, known)
+a_ij = a_i^safe - a_j^safe (relative acceleration, decision variable)
+d = ||r_ij||,  n = r_ij / d,  ρ = nᵀ v_ij
+R = sqrt(4 · u_max · (d − D))
 ```
 
-Step 1: Compute `r_ij[t+1]` from the discrete dynamics:
+Derivatives (D held constant within the step):
 ```
-r_ij[t+1] = r_ij[t] + v_ij[t]·dt + 0.5·a_ij·dt²
-```
-
-Step 2: Compute `h_ij[t+1]`:
-```
-h_ij[t+1] = ||r_ij[t+1]||²  -  d_safe²
-           = ||r_ij + v_ij·dt + 0.5·a_ij·dt²||²  -  d_safe²
+ḋ = ρ
+ρ̇ = nᵀ a_ij + (||v_ij||² − ρ²) / d
+ḣ = 2 · u_max · ρ / R + ρ̇
 ```
 
-Expand the square (let `s = r_ij + v_ij·dt` — this is purely known at step `t`):
+Substitute into `ḣ ≥ −γ h`:
 ```
-h_ij[t+1] = ||s + 0.5·a_ij·dt²||²  -  d_safe²
-           = ||s||² + 2·sᵀ·(0.5·a_ij·dt²) + ||0.5·a_ij·dt²||²  -  d_safe²
-           = ||s||² + sᵀ·a_ij·dt² + 0.25·||a_ij||²·dt⁴  -  d_safe²
+nᵀ a_i^safe − nᵀ a_j^safe  ≥  −γ · (R + ρ) − 2 · u_max · ρ / R − (||v_ij||² − ρ²) / d
 ```
 
-The `||a_ij||²` term is **quadratic** in `a`. For the QP we drop it (it's tiny:
-`0.25 × dt⁴ = 0.25 × 10⁻⁴`). This is the standard first-order linearization:
-
+So the constraint row has:
 ```
-h_ij[t+1] ≈ (||s||² - d_safe²)  +  sᵀ·(a_i^safe - a_j^safe)·dt²
-           =     known scalar        +   linear in a_i^safe, a_j^safe
-```
-
-So:
-```
-Δh_ij ≈ (||s||² - d_safe²) - h_ij[t]  +  sᵀ·(a_i^safe - a_j^safe)·dt²
+coeff for a_i^safe  =  +n
+coeff for a_j^safe  =  −n
+scalar_rhs          =  −γ·h − 2·u_max·ρ / R − (||v_ij||² − ρ²) / d
 ```
 
-And the HOCBF level-1 function:
-```
-ψ₁_ij[t] = Δh_ij[t] + α₁·h_ij[t]
-```
+Numerical guard: `R` is clamped to `sqrt(max(4·u_max·(d − D), 1e-6))`, so the `ρ / R`
+term stays finite once a pair is inside `D`. Inside `D` with closing velocity the row
+demands more than `2·u_max` and the QP reports infeasible.
 
-The QP constraint `ψ₁_ij[t+1] + (α₂-1)·ψ₁_ij[t] ≥ 0` expands into a row of the form:
+The condition is continuous-time and the simulator holds `a` for `dt = 0.1 s`. The
+`margin` term covers the resulting discretization error. No term is dropped from the
+derivation; the only approximation is the zero-order hold.
 
-```
-[coeff for a_i^safe] · a_i^safe  +  [coeff for a_j^safe] · a_j^safe  ≥  scalar_rhs
-```
-
-Where:
-```
-coeff for a_i^safe  =  +s · dt²   (from the a_i^safe part of a_ij)
-coeff for a_j^safe  =  -s · dt²   (from the -a_j^safe part of a_ij)
-scalar_rhs          =  -(known terms from ψ₁[t] and ψ₁[t+1] that don't involve a)
-```
-
-This is exactly one row in the constraint matrix `A_cbf` per pair. With N active agents
-there are N(N-1)/2 pairs → N(N-1)/2 rows in `A_cbf`.
+This is exactly one row in `A_cbf` per pair. With N active agents there are
+N(N-1)/2 pairs → N(N-1)/2 rows.
 
 ---
 
@@ -414,9 +412,9 @@ Every item below is an **assumption**, not a verified property.
 | A3 | Sensor is perfect — filter gets exact `DroneState` | Filter optimality degrades with position uncertainty; may enforce wrong constraints |
 | A4 | Initial conditions satisfy `h_ij[0] ≥ 0` for all pairs | If drones start already inside `d_safe`, HOCBF invariance argument breaks immediately |
 | A5 | Control authority (3.5 m/s² per component) is sufficient | Head-on high-speed scenarios may be physically irrecoverable regardless of filter |
-| A6 | `α₁, α₂` are chosen appropriately | Wrong values → either over-conservative (frequent infeasibility) or under-conservative (violations) |
+| A6 | `γ`, `margin`, `lag_s` are chosen appropriately | Too small a margin or lag budget → violations under lag; too large → over-conservative |
 | A7 | QP solved to optimality each step | Numerical solver tolerances introduce small errors; OSQP accuracy ~1e-6 acceptable for v1 |
-| A8 | Linearization of `h_ij[t+1]` is valid (drop `||a_ij||²·dt⁴` term) | Term is `~1e-4 × ||a_ij||²` which is negligible at v1 scale |
+| A8 | Continuous-time CBF condition holds under 100 ms zero-order hold | Discretization error; covered by `margin` (0.5 m), checked in closed-loop tests |
 | A9 | Joint solve over all pairs (not decentralized) | Pairwise HOCBF feasibility does not prove simultaneous multi-pair feasibility — the joint solve is required |
 | A10 | No uncooperative or non-communicating agents | Filter cannot constrain agents it doesn't know about (birds, other vehicles) |
 
