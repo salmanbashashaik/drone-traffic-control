@@ -4,9 +4,12 @@ This module implements the full SafeAction contract interface and active HOCBF
 quadratic program solver. When active pairs are close or on a collision path,
 the filter modifies the nominal acceleration commands by solving a joint convex
 QP over all active agents to enforce the pairwise separation barrier.
-Each pair constraint carries a penalised slack, so the QP is always feasible;
-positive slack is reported per pair as a violation metric. Only a solver error
-triggers the fallback: an evasive manoeuvre for the conflict cluster only.
+Each pair constraint carries a penalised slack, so the QP is always feasible.
+When a closing pair needs slack, the step is re-solved with that pair's
+braking constraint replaced by a predicted-separation constraint in metres,
+so the unavoidable violation is minimised in metres using all three axes.
+Only a solver error triggers the fallback: an evasive manoeuvre for the
+conflict cluster only.
 
 Implementation status
 ---------------------
@@ -22,8 +25,10 @@ Mathematical basis
 See docs/formulation/P0-SA-01-formulation.md for the full derivation.
 
 Safe set:   d_ij = ||p_i - p_j|| >= d_safe (reported via h_min_m2 = d^2 - d_safe^2)
-Barrier:    h_ij = sqrt(4 u_max (d_ij - d_safe - margin)) + n_ij . v_ij
-            (braking-distance CBF, relative degree 1 under acceleration control)
+Barrier:    h_ij = B(d_ij - d_safe - margin) + n_ij . v_ij, with
+            B(s) = sqrt(4 u_max s + c^2) - c for s >= 0 and (2 u_max / c) s
+            below (braking-distance CBF, relative degree 1 under acceleration
+            control; C1 with bounded gradient through d_eff)
 QP:         min Σ||a_safe - a_nom - bias||^2 + w Σ s  s.t.  dh/dt + s >= -gamma h, s >= 0, box bounds
 Fallback:   evasive manoeuvre for the conflict cluster on solver error
 
@@ -80,7 +85,9 @@ class FilterConfig:
     tie_break_mps2:
         Lateral bias added to the nominal of both agents in a pair whose
         nominal violates the constraint (both turn right about +z). Breaks the
-        symmetric head-on / crossing deadlock; 0 disables it.
+        symmetric head-on / crossing deadlock; 0 disables it. 1.0 rather
+        than 0.5: at 0.5 a 90-degree crossing locks side by side for 3.6 s
+        (+9 % episode time); at 0 it deadlocks.
     lag_s:
         Actuator time constant to budget for (s). The barrier reserves
         lag_s * closing_speed of extra distance. 0 for the ideal simulator;
@@ -96,17 +103,25 @@ class FilterConfig:
         Linear penalty per m/s² of pair-constraint slack. Must exceed the
         constraint's dual multiplier for the penalty to be exact; the
         multipliers are bounded by the action-change cost (order 10), so
-        1e4 leaves wide headroom.
+        1e4 leaves wide headroom. The escape constraint uses the same weight
+        per metre of predicted shortfall; its row scale 0.5 t*^2 >= 0.005
+        keeps its multiplier below about 3e3.
+    barrier_offset_mps:
+        Offset c in B(s) = sqrt(4 u_max s + c^2) - c (m/s). Bounds the barrier
+        gradient at 2 u_max / c (7 1/s at c = 1), so one 100 ms step cannot
+        overshoot d_eff, and keeps the constraint finite inside d_eff. Costs
+        about c^2 / (4 u_max) + c |rho| / (2 u_max) of extra standoff.
     """
 
     gamma: float = 1.0
     margin_m: float = 0.5
-    tie_break_mps2: float = 0.5
+    tie_break_mps2: float = 1.0
     lag_s: float = 0.0
     range_gate_m: float | None = _DEFAULT_RANGE_GATE_M
     solver_eps: float = 1e-5
     solver_max_iter: int = 4000
     slack_weight: float = 1e4
+    barrier_offset_mps: float = 1.0
 
     def __post_init__(self) -> None:
         if not self.gamma > 0.0:
@@ -125,6 +140,8 @@ class FilterConfig:
             raise ValueError(f"solver_max_iter must be positive, got {self.solver_max_iter}")
         if not self.slack_weight > 0.0:
             raise ValueError(f"slack_weight must be positive, got {self.slack_weight}")
+        if not self.barrier_offset_mps > 0.0:
+            raise ValueError(f"barrier_offset_mps must be positive, got {self.barrier_offset_mps}")
 
 
 @dataclass
@@ -148,10 +165,12 @@ class FilterDiagnostics:
     interventions:
         Number of agents whose action was modified beyond tolerance.
     pair_slack_mps2:
-        Slack per pair (m/s²) for pairs above the intervention tolerance.
-        Positive slack means the barrier constraint of that pair is violated.
-    slack_total_mps2, slack_max_mps2:
-        Sum and maximum of pair_slack_mps2.
+        Raw braking-constraint slack per pair (m/s²) from the first solve,
+        for pairs above the intervention tolerance. Positive slack means the
+        barrier of that pair could not be kept; closing pairs among them are
+        re-solved with the escape constraint. Solver output, not a metric.
+    pair_violation_depth_m:
+        d_eff - d per pair (m) for pairs closer than d_eff this step.
     """
 
     h_min_m2: float | None = None
@@ -161,8 +180,7 @@ class FilterDiagnostics:
     fallback_used: bool = False
     interventions: int = 0
     pair_slack_mps2: dict[tuple[str, str], float] = field(default_factory=dict)
-    slack_total_mps2: float = 0.0
-    slack_max_mps2: float = 0.0
+    pair_violation_depth_m: dict[tuple[str, str], float] = field(default_factory=dict)
 
 
 def _separation_sq(state_i: DroneState, state_j: DroneState) -> float:
@@ -193,17 +211,146 @@ def _pair_constraint(
     n_ij = r_ij / dist
     rho = float(np.dot(n_ij, v_ij))  # range rate; negative when closing
 
-    # h = sqrt(2 * (2 u_max) * (d - D)) + rho: the pair can still stop
-    # before d_eff using combined braking 2 u_max along n_ij.
-    # Clamp guards the sqrt derivative once inside the margin.
+    # h = B(d - D) + rho: the pair can still stop before d_eff using
+    # combined braking 2 u_max along n_ij. B is the braking curve
+    # sqrt(4 u_max s) shifted by c so its slope is 2 u_max / c at s = 0,
+    # continued linearly inside d_eff: finite, C1, slope <= 2 u_max / c.
     # Lag reserve: distance closed before a lagged actuator starts braking.
     # Treated as constant within the step (its derivative is ignored).
     reserve = config.lag_s * max(-rho, 0.0)
-    root = math.sqrt(max(4.0 * u_max * (dist - d_eff - reserve), 1e-6))
-    h_ij = root + rho
+    s = dist - d_eff - reserve
+    c = config.barrier_offset_mps
+    if s >= 0.0:
+        root = math.sqrt(4.0 * u_max * s + c * c)
+        b, slope = root - c, 2.0 * u_max / root
+    else:
+        b, slope = 2.0 * u_max * s / c, 2.0 * u_max / c
+    h_ij = b + rho
     tangential = (float(np.dot(v_ij, v_ij)) - rho * rho) / dist
-    rhs = -config.gamma * h_ij - 2.0 * u_max * rho / root - tangential
+    rhs = -config.gamma * h_ij - slope * rho - tangential
     return n_ij, rhs, h_ij
+
+
+_ESCAPE_HORIZON_S = 3.0
+_MISS_CLEAR_M = 0.5
+# Quadratic penalty per m² of escape shortfall. 1e3 keeps the multiplier
+# (2 w s) well above the action-change cost (about 14) for s >= 0.1 m and lets
+# OSQP converge within solver_max_iter; 1e4 does not converge on the sandwich.
+_ESCAPE_WEIGHT = 1e3
+
+
+def _relative(s_i: DroneState, s_j: DroneState) -> tuple[np.ndarray, np.ndarray, np.ndarray, float]:
+    """(r, v, n, t*) for a pair: relative position and velocity of i to j, unit
+    line of sight, and the closest-approach time clamped to [0.1, 3] s."""
+    r = np.array(s_i.position_m, dtype=np.float64) - np.array(s_j.position_m, dtype=np.float64)
+    v = np.array(s_i.velocity_mps, dtype=np.float64) - np.array(s_j.velocity_mps, dtype=np.float64)
+    n = r / max(float(np.linalg.norm(r)), 1e-9)
+    t_star = float(np.clip(-float(r @ v) / max(float(v @ v), 1e-9), 0.1, _ESCAPE_HORIZON_S))
+    return r, v, n, t_star
+
+
+def _escape_axes(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """Horizontal lateral L and vertical V unit vectors perpendicular to n.
+
+    L is z x n (x x n for vertical n); V is z minus its n component (the
+    x-perpendicular for vertical n). Each is sign-normalised so its largest
+    component is positive, which gives pairs on opposite sides of a drone the
+    same axes and does not flip under small drifts.
+    """
+    lateral = np.cross((0.0, 0.0, 1.0), n)
+    if np.linalg.norm(lateral) < 1e-3:
+        lateral = np.cross((1.0, 0.0, 0.0), n)
+    vertical = np.array((0.0, 0.0, 1.0)) - n[2] * n
+    if np.linalg.norm(vertical) < 1e-3:
+        vertical = np.array((1.0, 0.0, 0.0)) - n[0] * n
+    axes = []
+    for axis in (lateral, vertical):
+        axis = axis / np.linalg.norm(axis)
+        axes.append(axis if axis[int(np.argmax(np.abs(axis)))] > 0.0 else -axis)
+    return axes[0], axes[1]
+
+
+def _escape_signs(
+    state_map: dict[str, DroneState], escape_pairs: list[tuple[str, str]]
+) -> dict[tuple[str, str], tuple[float, float]]:
+    """Lateral and vertical escape signs (s_L, s_V) per escape pair.
+
+    Each sign follows the geometric miss of the pair at closest approach
+    (the part of r + v t* perpendicular to n) when that miss is clear along
+    the axis. Otherwise it comes from a 2-colouring of the escape-pair graph,
+    one per axis: agent i of the pair moves towards +axis when its colour is
+    +1, so a drone squeezed between two neighbours escapes opposite to both.
+    The lateral colouring takes the closest pairs first; a pair left with
+    equal colours (odd cycle) gets sign 0 on that axis. The vertical
+    colouring takes those pairs first, so they split vertically instead.
+    """
+    by_distance = sorted(
+        escape_pairs, key=lambda p: (_separation_sq(state_map[p[0]], state_map[p[1]]), p)
+    )
+    lateral = _two_colour(by_distance)
+    vertical = _two_colour(sorted(by_distance, key=lambda p: lateral[p[0]] != lateral[p[1]]))
+
+    signs = {}
+    for id_i, id_j in escape_pairs:
+        r, v, n, t_star = _relative(state_map[id_i], state_map[id_j])
+        miss = r + v * t_star
+        miss -= float(miss @ n) * n
+        signs[(id_i, id_j)] = tuple(
+            math.copysign(1.0, float(miss @ axis)) if abs(float(miss @ axis)) > _MISS_CLEAR_M
+            else (colour[id_i] if colour[id_i] != colour[id_j] else 0.0)
+            for axis, colour in zip(_escape_axes(n), (lateral, vertical), strict=True)
+        )
+    return signs
+
+
+def _two_colour(edges: list[tuple[str, str]]) -> dict[str, float]:
+    """Greedy +-1 colouring that gives each edge, in order, opposite colours
+    when the edges before it allow; the lowest id of each component is +1."""
+    colour: dict[str, float] = {}
+    component: dict[str, int] = {}
+    for id_i, id_j in edges:
+        if id_i not in colour and id_j not in colour:
+            colour[id_i], colour[id_j] = 1.0, -1.0
+            component[id_i] = component[id_j] = len(component)
+        elif id_j not in colour:
+            colour[id_j], component[id_j] = -colour[id_i], component[id_i]
+        elif id_i not in colour:
+            colour[id_i], component[id_i] = -colour[id_j], component[id_j]
+        elif component[id_i] != component[id_j]:
+            old, flip = component[id_j], colour[id_i] == colour[id_j]
+            for aid in [a for a, c in component.items() if c == old]:
+                component[aid] = component[id_i]
+                colour[aid] = -colour[aid] if flip else colour[aid]
+    for comp in set(component.values()):
+        lowest = min(a for a, c in component.items() if c == comp)
+        if colour[lowest] < 0.0:
+            for aid in [a for a, c in component.items() if c == comp]:
+                colour[aid] = -colour[aid]
+    return colour
+
+
+def _escape_constraint(
+    s_i: DroneState, s_j: DroneState, sign: tuple[float, float], config: FilterConfig
+) -> tuple[np.ndarray, float]:
+    """Predicted-separation constraint coef . (a_i - a_j) >= rhs, in metres.
+
+    With constant relative acceleration a, the relative position at the
+    predicted closest approach t* is p = r + v t* + 0.5 t*^2 a. For a unit
+    vector m, m . p <= |p|, so m . p >= d_eff - s keeps the predicted
+    separation at t* above d_eff - s, with the slack s in metres. m mixes the
+    line of sight n with the lateral L and vertical V axes, signs (s_L, s_V),
+    so the escape uses all three axes. Returns (0.5 t*^2 m, rhs).
+
+    known limit: constant acceleration to t*, re-planned every step; the true
+    closest approach can differ. Revisit with the backup-set barrier
+    (docs/formulation/P2-SA-02-lateral-escape.md).
+    """
+    r, v, n, t_star = _relative(s_i, s_j)
+    lateral, vertical = _escape_axes(n)
+    m = n + sign[0] * lateral + sign[1] * vertical
+    m /= np.linalg.norm(m)
+    d_eff = SAFE_SEPARATION_M + config.margin_m
+    return 0.5 * t_star**2 * m, d_eff - float(m @ (r + v * t_star))
 
 
 def build_hocbf_qp_matrices(
@@ -211,6 +358,7 @@ def build_hocbf_qp_matrices(
     actions: dict[str, MARLAction],
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
+    escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
 ) -> tuple[sp.csc_matrix, np.ndarray, sp.csc_matrix, np.ndarray, np.ndarray, list[str]]:
     """Build OSQP matrices for the joint HOCBF optimization problem.
 
@@ -219,7 +367,9 @@ def build_hocbf_qp_matrices(
     constraint (M pairs). Each pair constraint is softened to
     n_ij . (a_i - a_j) + s_k >= rhs, and the objective adds slack_weight * s_k,
     an exact L1 penalty: s_k stays 0 whenever the hard constraints are
-    jointly satisfiable, so the QP is always feasible.
+    jointly satisfiable, so the QP is always feasible. Pairs in
+    ``escape_signs`` use ``_escape_constraint`` instead, with the slack in
+    metres, and get no tie-break.
 
     Returns
     -------
@@ -238,8 +388,13 @@ def build_hocbf_qp_matrices(
 
     # Objective: min sum_i ||a_i - a_i^nom||^2 + w sum_k s_k
     #          = min 0.5 * x^T P x + q^T x (constant dropped)
+    # Escape slacks (metres) take a quadratic penalty instead of the linear
+    # one: their violation is unavoidable, and squaring spreads it across
+    # pairs instead of loading one pair (an approximation of max-min).
+    escape_signs = escape_signs or {}
+    is_escape = np.array([pair in escape_signs for pair in pairs_in_qp], dtype=bool)
     P = sp.block_diag(
-        [sp.eye(dim) * 2.0, sp.csc_matrix((n_pairs, n_pairs))], format="csc"
+        [sp.eye(dim) * 2.0, sp.diags(np.where(is_escape, 2.0 * _ESCAPE_WEIGHT, 0.0))], format="csc"
     )
     nom_stacked = np.zeros(dim, dtype=np.float64)
     for aid, idx in agent_idx.items():
@@ -261,9 +416,17 @@ def build_hocbf_qp_matrices(
     for id_i, id_j in pairs_in_qp:
         idx_i = agent_idx[id_i]
         idx_j = agent_idx[id_j]
-        n_ij, rhs, _ = _pair_constraint(states[id_i], states[id_j], config)
-
         row = np.zeros(dim, dtype=np.float64)
+        if (id_i, id_j) in escape_signs:
+            coef, rhs = _escape_constraint(states[id_i], states[id_j], escape_signs[(id_i, id_j)], config)
+            row[3 * idx_i : 3 * idx_i + 3] = coef
+            row[3 * idx_j : 3 * idx_j + 3] = -coef
+            cbf_rows.append(row)
+            l_cbf.append(rhs)
+            u_cbf.append(np.inf)
+            continue
+
+        n_ij, rhs, _ = _pair_constraint(states[id_i], states[id_j], config)
         row[3 * idx_i : 3 * idx_i + 3] = n_ij
         row[3 * idx_j : 3 * idx_j + 3] = -n_ij
 
@@ -282,7 +445,7 @@ def build_hocbf_qp_matrices(
         l_cbf.append(rhs)
         u_cbf.append(np.inf)
 
-    q = np.concatenate([-2.0 * target, np.full(n_pairs, config.slack_weight)])
+    q = np.concatenate([-2.0 * target, np.where(is_escape, 0.0, config.slack_weight)])
 
     if cbf_rows:
         A_cbf = sp.hstack([sp.csc_matrix(np.vstack(cbf_rows)), sp.eye(n_pairs)])
@@ -303,6 +466,7 @@ def _solve_hocbf_qp(
     actions: dict[str, MARLAction],
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
+    escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float], bool]:
     """Solve the joint HOCBF QP over all active agents using OSQP.
 
@@ -330,7 +494,7 @@ def _solve_hocbf_qp(
 
     try:
         P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
-            states, actions, pairs_in_qp, config
+            states, actions, pairs_in_qp, config, escape_signs
         )
         prob = osqp.OSQP()
         prob.setup(
@@ -345,6 +509,9 @@ def _solve_hocbf_qp(
             # The 1e4 slack penalty slows ADMM convergence; without polishing,
             # pass-through steps return accelerations ~0.05 m/s² off nominal.
             polish=True,
+            # The escape QP saturates the box with a degenerate active set;
+            # at the default rho (0.1) ADMM needs > 4000 iterations there.
+            rho=10.0 if escape_signs else 0.1,
         )
         res = prob.solve()
 
@@ -570,10 +737,30 @@ def apply_filter(
         qp_feasible = False
         safe_accels, pair_slack = {}, {}
 
+    # Closing pairs that cannot keep the barrier: re-solve with the escape
+    # constraint, minimising the predicted violation in metres.
+    escape_pairs = []
+    for pair in pair_slack:
+        _, v, n, _ = _relative(state_map[pair[0]], state_map[pair[1]])
+        if float(v @ n) < 0.0:
+            escape_pairs.append(pair)
+    if qp_feasible and escape_pairs:
+        try:
+            safe_accels, _, qp_feasible = _solve_hocbf_qp(
+                state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs)
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("filter: escape solve error at t=%d ms, applying fallback: %s", step_ts, exc)
+            qp_feasible = False
+
     diag.qp_feasible = qp_feasible
     diag.pair_slack_mps2 = pair_slack
-    diag.slack_total_mps2 = sum(pair_slack.values())
-    diag.slack_max_mps2 = max(pair_slack.values(), default=0.0)
+    d_eff = SAFE_SEPARATION_M + config.margin_m
+    for idx, id_i in enumerate(agent_ids):
+        for id_j in agent_ids[idx + 1:]:
+            dist = math.sqrt(_separation_sq(state_map[id_i], state_map[id_j]))
+            if dist < d_eff:
+                diag.pair_violation_depth_m[(id_i, id_j)] = d_eff - dist
 
     # Solver error: evasive fallback for the conflict cluster only; every
     # other agent keeps its nominal, which satisfies all its pair constraints.
@@ -619,8 +806,8 @@ def apply_filter(
         )
     elif pair_slack:
         logger.warning(
-            "filter: barrier violated at t=%d ms on %d pairs (slack total %.3f m/s²)",
-            step_ts, len(pair_slack), diag.slack_total_mps2,
+            "filter: barrier violated at t=%d ms on %d pairs (%d escaping)",
+            step_ts, len(pair_slack), len(escape_pairs),
         )
 
     logger.debug(

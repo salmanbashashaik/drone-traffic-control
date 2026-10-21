@@ -48,10 +48,8 @@ def test_sandwich_is_solved_with_slack_not_fallback() -> None:
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
     assert all(not a.fallback_used for a in safe)
-    assert diag.slack_total_mps2 > 0.0
     assert set(diag.pair_slack_mps2) <= {("d1", "d2"), ("d1", "d3"), ("d2", "d3")}
     assert diag.pair_slack_mps2
-    assert diag.slack_max_mps2 == max(diag.pair_slack_mps2.values())
 
 
 def test_feasible_step_reports_no_slack() -> None:
@@ -64,10 +62,10 @@ def test_feasible_step_reports_no_slack() -> None:
 
     assert diag.qp_feasible is True
     assert diag.pair_slack_mps2 == {}
-    assert diag.slack_total_mps2 < 1e-4
+    assert diag.pair_violation_depth_m == {}
 
 
-def test_runner_summary_reports_slack() -> None:
+def test_runner_summary_reports_violation_in_metres() -> None:
     drones = [
         {"agent_id": "a", "initial_position_m": (480.0, 500.0, 100.0),
          "initial_velocity_mps": (15.0, 0.0, 0.0), "goal_m": (900.0, 500.0, 100.0)},
@@ -78,9 +76,10 @@ def test_runner_summary_reports_slack() -> None:
     s = run_episode(cfg, "shielded_marl", policy=compute_reference_action,
                     policy_id="reference-standin", keep_records=False).summary
 
-    assert s["total_slack_mps2"] > 0.0
-    assert s["max_slack_mps2"] > 0.0
-    assert s["slack_pair_steps"] > 0
+    # Head-on 40 m keeps d_eff: nothing to report.
+    assert s["max_violation_depth_m"] == 0.0
+    assert s["time_inside_d_eff_s"] == 0.0
+    assert s["pair_violations"] == {}
 
 
 # ---------------------------------------------------------------------------
@@ -150,7 +149,8 @@ def _run(scenario_id, drones, steps=600):
     s = run_episode(cfg, "shielded_marl", policy=compute_reference_action,
                     policy_id="reference-standin", keep_records=False).summary
     print(f"\n{scenario_id}: min_separation_m={s['min_separation_m']:.2f} "
-          f"total_slack_mps2={s['total_slack_mps2']:.2f} fallback_events={s['fallback_events']}")
+          f"max_violation_depth_m={s['max_violation_depth_m']:.2f} "
+          f"time_inside_d_eff_s={s['time_inside_d_eff_s']:.1f} fallback_events={s['fallback_events']}")
     return s
 
 
@@ -185,7 +185,7 @@ def test_crossing_90_degrees_regression() -> None:
 def test_same_seed_runs_are_identical() -> None:
     # OSQP's default adaptive-rho interval depends on wall-clock setup time;
     # before it was pinned, this scenario hit a solver error on some runs only.
-    keys = ("min_separation_m", "total_slack_mps2", "fallback_events", "steps")
+    keys = ("min_separation_m", "max_violation_depth_m", "time_inside_d_eff_s", "fallback_events", "steps")
     first = _run("crossing-90", _crossing())
     second = _run("crossing-90", _crossing())
 
@@ -230,4 +230,4 @@ def test_three_drone_sandwich_is_physically_unrecoverable() -> None:
 
     assert s["min_separation_m"] <= best_possible
     assert s["fallback_events"] == 0
-    assert s["slack_pair_steps"] > 0
+    assert s["time_inside_d_eff_s"] > 0.0

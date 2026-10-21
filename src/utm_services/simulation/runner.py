@@ -3,9 +3,10 @@
 Every variant gets the same scenario, dynamics and episode limit; only the
 policy and the presence of the safety filter differ. Unshielded variants wrap
 the proposed action unchanged into a SafeAction (shield_active=False). The
-shielded variant calls the HOCBF filter. Pair-constraint slack (a barrier
-violation metric) is summed from the filter diagnostics; it is 0 for
-unshielded variants. On a solver error the filter's evasive fallback applies
+shielded variant calls the HOCBF filter. Every variant reports violation of
+the filter's effective separation d_eff = d_safe + margin from the states:
+depth in metres and time inside d_eff in seconds, per pair and per episode.
+On a solver error the filter's evasive fallback applies
 to the conflict cluster; that fallback is unverified and does not guarantee
 separation.
 """
@@ -18,7 +19,13 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
-from shared.contracts import AirspaceRulesV1, SafeAction, ScenarioConfig
+from shared.contracts import (
+    SAFE_SEPARATION_M,
+    SIMULATION_STEP_MS,
+    AirspaceRulesV1,
+    SafeAction,
+    ScenarioConfig,
+)
 
 from utm_services.policy.adapter import PolicyFn, run_policy
 from utm_services.policy.reference import compute_reference_action
@@ -83,7 +90,8 @@ def run_episode(
     records: list[dict[str, Any]] = []
     step_ms: list[float] = []
     policy_ms: list[float] = []
-    slack = {"total_slack_mps2": 0.0, "max_slack_mps2": 0.0, "slack_pair_steps": 0}
+    d_eff = SAFE_SEPARATION_M + filter_config.margin_m
+    pair_violations: dict[str, dict[str, float]] = {}
 
     while not env.done:
         t0 = time.perf_counter()
@@ -95,11 +103,19 @@ def run_episode(
             proposed.append(run_policy(observations[state.agent_id].root, state.agent_id, ts, policy))
             policy_ms.append((time.perf_counter() - p0) * 1000.0)
 
+        ordered = sorted(states, key=lambda s: s.agent_id)
+        for k, s_i in enumerate(ordered):
+            for s_j in ordered[k + 1:]:
+                depth = d_eff - float(np.linalg.norm(np.subtract(s_i.position_m, s_j.position_m)))
+                if depth > 0.0:
+                    pv = pair_violations.setdefault(
+                        f"{s_i.agent_id}|{s_j.agent_id}", {"max_depth_m": 0.0, "time_inside_s": 0.0}
+                    )
+                    pv["max_depth_m"] = max(pv["max_depth_m"], depth)
+                    pv["time_inside_s"] = round(pv["time_inside_s"] + SIMULATION_STEP_MS / 1000.0, 3)
+
         if shielded:
-            returned, diag = apply_filter(states, proposed, filter_config)
-            slack["total_slack_mps2"] += diag.slack_total_mps2
-            slack["max_slack_mps2"] = max(slack["max_slack_mps2"], diag.slack_max_mps2)
-            slack["slack_pair_steps"] += len(diag.pair_slack_mps2)
+            returned, _ = apply_filter(states, proposed, filter_config)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -138,7 +154,9 @@ def run_episode(
     summary = {
         "episode_id": episode_id,
         **env.summary(),
-        **slack,
+        "max_violation_depth_m": max((p["max_depth_m"] for p in pair_violations.values()), default=0.0),
+        "time_inside_d_eff_s": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
+        "pair_violations": pair_violations,
         "mean_step_time_ms": mean_step,
         "p95_step_time_ms": p95_step,
         "mean_policy_latency_ms": mean_pol,

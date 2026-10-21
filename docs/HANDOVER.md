@@ -11,8 +11,8 @@ Sections 1–9 below describe `main` at `b63d8fe`, before Sprint 1. This table t
 | PR | Scope | Status | Result |
 | --- | --- | --- | --- |
 | A | Always-feasible QP, evasive per-cluster fallback | Done, PR open on `aman/sprint1-a-safe-fallback` | See below. |
-| B | Analysis: is the 40 m head-on escapable laterally/vertically? | Not started | — |
-| C | Default range gate, spatial pair search, QP split, N=100 infeasibility root cause, benchmark | Not started | — |
+| B | Bounded barrier inside `d_eff`, violation metrics in metres, 3-axis escape, crossing liveness, lateral-escape analysis | Done, PR open on `aman/sprint1-b-barrier` (stacked on A) | See below. |
+| C | Default range gate, spatial pair search, QP split, N=100 infeasibility root cause, benchmark, `polish=True` latency | Not started | — |
 | D | Honest `h_min`, geofence constraints, `n_held`, unused exception | Not started | — |
 | E | `utm-run` CLI, scenario files, replay plots | Not started | — |
 | F | Disturbance tier T2 and degraded command handling | Not started | — |
@@ -20,7 +20,7 @@ Sections 1–9 below describe `main` at `b63d8fe`, before Sprint 1. This table t
 
 **PR A — what is now true.**
 
-- Every pair constraint has a non-negative slack variable with penalty weight 1e4 (`FilterConfig.slack_weight`). The QP is always feasible. Violated barriers are reported per pair (`FilterDiagnostics.pair_slack_mps2`) and per episode (`total_slack_mps2`, `max_slack_mps2`, `slack_pair_steps`).
+- Every pair constraint has a non-negative slack variable with penalty weight 1e4 (`FilterConfig.slack_weight`). The QP is always feasible. Violated barriers are reported per pair (`FilterDiagnostics.pair_slack_mps2`) and per episode (`total_slack_mps2`, `max_slack_mps2`, `slack_pair_steps`; replaced in PR B by metres and seconds).
 - The fallback runs only on a solver error. It applies only to the conflict cluster, not the fleet, and it is evasive: brake away from the most critical neighbour plus lateral and vertical escape, largest component at ±3.5 m/s². This replaces section 4's "Fallback" paragraph and risks 1 and section 7's "fallback does not brake" finding. Contract bumped to v1.1 in `INTERFACES.md` (fallback acceleration may be non-zero).
 - OSQP is now pinned to `adaptive_rho_interval=25` and `polish=True`. Before the pin, the same seed gave different results run to run, because OSQP's default picks the rho interval from wall-clock setup time. The crossing scenario hit a solver error on some runs only. `test_same_seed_runs_are_identical` guards this.
 - Regression results (`python -m pytest tests/test_filter_safety_core.py -v -s`, 15 m/s per drone, same altitude, reference controller, shielded):
@@ -36,11 +36,33 @@ Sections 1–9 below describe `main` at `b63d8fe`, before Sprint 1. This table t
 
 - The sandwich is physically unrecoverable: any controller within ±3.5 m/s² per axis ends at most 4.45 m apart at t = 0.8 s. The proof is in the docstring of `test_three_drone_sandwich_is_physically_unrecoverable`. The filter reaches 0.61 m, well below that bound, partly because it never uses z here (max |a_z| = 0.0 over the first 20 steps). PR B should address this.
 
-Open issues found in PR A:
+Open issues found in PR A, and where they stand after PR B:
 
-- Inside `d_eff` (5.5 m) the braking barrier's square root is clamped at 1e-3, so slack magnitudes become 10³–10⁵ m/s². Only `slack_pair_steps` is meaningful there.
-- In the 90° crossing the two drones stall near 5.5 m with alternating accelerations before they separate. Both complete, in 348 steps. Separation holds, but the stall is a liveness problem; I did not measure its length.
-- The evasive fallback ignores world bounds and third neighbours.
+- Fixed in PR B: inside `d_eff` the clamped square root made slack 10³–10⁵ m/s².
+- Fixed in PR B: the 90° crossing stall (see below).
+- Still open, now in `TASKS.md` as BL-01 and BL-02: the evasive fallback ignores world bounds and third neighbours. Both must be fixed before any real-drone test.
+
+**PR B — what is now true.**
+
+- **Barrier blow-up.** The old row contained `2u ρ / sqrt(4u(d − d_eff))`. With the root clamped at 1e-3 that is `7000 ρ`, about 7 × 10⁴ m/s² at 10 m/s closing, and the slack had to absorb it. The barrier now uses `sqrt(4u s + c²) − c` with a linear extension below `d_eff` (`c = barrier_offset_mps = 1 m/s`). It is continuous with a continuous slope, and its slope is at most 7 s⁻¹, so the row is bounded. Cost: about 4.3 m more standoff at 30 m/s closing. Derivation in `docs/formulation/P2-SA-02-lateral-escape.md` §1.
+- **Metrics.** Slack totals are replaced by violation depth `d_eff − d` in metres and time inside `d_eff` in seconds, per pair and per episode, for every controller variant. Contract bumped to v1.2 in `INTERFACES.md`.
+- **Sandwich.** The 4.45 m bound already included z. It is not achievable: the best found over all three pairs is 4.168 m. A new escape stage re-solves pairs that the braking barrier cannot hold, with a predicted-separation constraint in metres using all three axes. Minimum separation went from 0.61 m to 3.91 m, with no fallback.
+- **Crossing.** The stall was a side-by-side lock, not chatter: the braking rows deflect each drone toward the other's path, and the 0.5 m/s² tie-break was too weak to break the symmetry quickly. With tie-break 0.5: 323 steps against 296 unconstrained (+9.1 %), 3.6 s below 6 m, two sign flips of lateral acceleration. With tie-break 0 it deadlocks. The default is now 1.0 m/s²: 307 steps (+3.7 %), minimum separation 5.81 m. `test_crossing_takes_at_most_x_percent_longer_than_unconstrained` fails above +5 %; the justification for 5 % is in the test.
+- **Lateral escape analysis.** For a 30 m/s head-on the braking-only barrier needs 69.8 m; braking plus a y/z split needs 28.9 m. A collision-cone CBF is proposed for evaluation, with a backup-set CBF as the alternative. Doc only, awaiting review: `docs/formulation/P2-SA-02-lateral-escape.md`.
+- **Note for PR C.** Measure what `polish=True` (pinned in PR A) adds to step latency.
+
+Regression results after PR B (`python -m pytest tests/ -q -s`):
+
+| Scenario | Min separation | Max violation depth | Time inside `d_eff` | Fallback events |
+| --- | --- | --- | --- | --- |
+| Head-on, 40 m gap | 5.58 m | 0 m | 0 s | 0 |
+| Head-on, 50 m gap | 6.16 m | 0 m | 0 s | 0 |
+| Head-on, 60 m gap | 6.50 m | 0 m | 0 s | 0 |
+| Head-on, 80 m gap | 14.57 m | 0 m | 0 s | 0 |
+| 90° crossing | 5.81 m | 0 m | 0 s | 0 |
+| 3-drone sandwich | 3.91 m | 1.59 m | 1.8 s | 0 |
+
+Head-on minimum separations are lower than in PR A (for example 6.60 m to 5.58 m at 40 m) but stay above `d_eff`. The escape stage and the offset barrier change the trajectories; I did not investigate the difference further.
 
 ---
 
@@ -249,7 +271,7 @@ Read in words: the closing speed must stay below the speed from which both drone
 |---|---|
 | `gamma` | 1.0 |
 | `margin_m` | 0.5 |
-| `tie_break_mps2` | 0.5 |
+| `tie_break_mps2` | 1.0 |
 | `lag_s` | 0.0 |
 | `range_gate_m` | None (all pairs) |
 | `solver_eps` | 1e-5 |

@@ -202,10 +202,11 @@ def test_qp_three_drone_symmetric_convergence() -> None:
 
 
 def test_lag_reserve_brakes_earlier() -> None:
-    # 100 m apart, closing at 30 m/s: just outside the ideal braking curve.
+    # 106 m apart, closing at 30 m/s: just outside the ideal braking curve
+    # (the barrier offset c = 1 m/s moves it out to about 104 m).
     states = [
-        _state("d1", pos=(450.0, 500.0, 100.0), vel=(15.0, 0.0, 0.0)),
-        _state("d2", pos=(550.0, 500.0, 100.0), vel=(-15.0, 0.0, 0.0)),
+        _state("d1", pos=(447.0, 500.0, 100.0), vel=(15.0, 0.0, 0.0)),
+        _state("d2", pos=(553.0, 500.0, 100.0), vel=(-15.0, 0.0, 0.0)),
     ]
     actions = [_action("d1"), _action("d2")]
 

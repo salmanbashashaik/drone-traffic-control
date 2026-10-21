@@ -71,6 +71,15 @@ This is the next product-planning phase after v1. It turns the prototype finding
 | P5-SA-01 | Salman | Assurance and safety requirements for the selected service and operating domain. | `P5-AM-01`, `P3-SA-01`, and the selected service role | Gives Aman assurance requirements and gives Anas validation scenarios and evidence criteria. | Defines hazards, safety objectives, model/operating assumptions, assurance evidence, independent review needs, fallback expectations, runtime monitoring, and any unresolved external approval/standards questions. Makes no claim that the v1 filter or report alone satisfies these requirements. |
 | P5-AN-01 | Anas | Validation and deployment transition plan from simulation toward the selected service context. | `P5-AM-01`, `P5-SA-01`, `P3-AN-01`, and `P4-AN-01` | Gives Aman implementation sequencing and Salman the proposed validation evidence path. | Maps simulator assumptions to the selected operating context; identifies required replay/shadow, integration, edge, hardware-in-loop or field evidence as applicable; defines scenario coverage, monitoring, failure/rollback criteria, and gates before each deployment stage. Labels evidence and dependencies that require partner or external approval. |
 
+## Backlog — before any real-drone test
+
+These items come from Sprint 1 review. Each must be closed before any test on a real drone.
+
+| ID | Owner | Item | Found in | Acceptance criteria |
+| --- | --- | --- | --- | --- |
+| BL-01 | TBD | The evasive fallback must respect world bounds. Today it can command a drone through the floor, ceiling or a world edge. | Sprint 1 PR A | A fallback action never drives a drone outside the world box within its stopping distance; a test places a drone near each bound and checks it. |
+| BL-02 | TBD | The evasive fallback must account for third neighbours. Today each agent escapes only from its most critical neighbour and may move toward another. | Sprint 1 PR A | In a three-drone cluster the fallback does not reduce the separation of any other pair below `d_eff` when an alternative exists; a test covers it. |
+
 ## Shared evaluation definitions
 
 Use the terms and units in [`INTERFACES.md`](./INTERFACES.md). A separation violation is a **pair-step sample** whose modeled separation is below the v1 threshold; report the number of samples, not as a certified collision or aviation near-miss measure. Minimum separation is over all active modeled pairs during a run. Match episode demand, dynamics, seed, disturbance, and time limit across controller variants. Keep aborted, held, and incomplete missions in the accounting. Report distributions or uncertainty across runs; a single favorable run is not acceptance evidence.
