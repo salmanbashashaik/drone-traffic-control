@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Task | Sprint 1 PR B, item 4 |
-| Status | DRAFT for review. No code in this PR implements the proposed barrier. |
+| Status | Reviewed. Decision recorded in §4.3: backup-set CBF, prototyped in PR B2. |
 | Date | 2026-10-21 |
 | Builds on | [`P0-SA-01-formulation.md`](./P0-SA-01-formulation.md) §5–§8 |
 
@@ -132,4 +132,4 @@ Its cost is computation: one forward simulation and its sensitivity per active p
 3. Accept it only if it is no worse on minimum separation in every case and better on episode time.
 4. Keep the backup-set CBF as the follow-up if the collision cone cannot be bounded inside `d_eff` or loses separation in the sandwich.
 
-**Decision needed from the reviewer:** approve step 1 (collision cone first), or go directly to the backup-set CBF. No code will be written for either until this note is reviewed.
+**Decision (reviewer, 2026-10-21):** skip the collision cone. Prototype the backup-set CBF (§4.2) in PR B2, with PR A's evasive manoeuvre (`_evasive_accel`) as the backup controller, so the fallback and the barrier become one mechanism. It goes behind a `FilterConfig` switch, and the braking barrier stays the default and the baseline. The evidence in step 2 above still applies. If the first version misses the 100 ms step at N = 64, B2 stops and reports, and optimisation moves to PR C. B2 is the last filter-research PR.
