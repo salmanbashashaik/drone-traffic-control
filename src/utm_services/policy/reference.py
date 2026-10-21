@@ -37,12 +37,11 @@ logger = logging.getLogger(__name__)
 # Tuning note: higher gain → faster approach but more overshoot at 100ms steps.
 _PROPORTIONAL_GAIN: float = 0.5
 
-# Braking gain: deceleration applied proportional to own speed when near goal.
-# Prevents the drone from overshooting the goal at high speed.
-_BRAKING_GAIN: float = 1.0
-
-# Distance at which braking kicks in (metres, 3D).
-_BRAKING_RADIUS_M: float = 10.0
+# Damping gain: deceleration proportional to own velocity, applied everywhere.
+# 2*sqrt(Kp) is critical damping, so the drone reaches the goal without
+# overshoot. A braking zone that only starts near the goal cannot stop a
+# drone at 15 m/s (stopping distance ~32 m at 3.5 m/s²).
+_DAMPING_GAIN: float = 2.0 * math.sqrt(_PROPORTIONAL_GAIN)
 
 
 def compute_reference_action(
@@ -70,7 +69,7 @@ def compute_reference_action(
     """
     values: Sequence[float] = obs.root
 
-    # Own velocity (indices 3-5) — used for braking.
+    # Own velocity (indices 3-5) — used for damping.
     vx, vy, vz = values[3], values[4], values[5]
 
     # Goal displacement = goal - own_position (indices 6-8).
@@ -85,19 +84,10 @@ def compute_reference_action(
             timestamp_ms=timestamp_ms,
         )
 
-    # --- Proportional attraction toward goal ---
-    ax = _PROPORTIONAL_GAIN * dx
-    ay = _PROPORTIONAL_GAIN * dy
-    az = _PROPORTIONAL_GAIN * dz
-
-    # --- Braking when close to goal ---
-    # Apply deceleration proportional to current velocity when within
-    # braking radius. This reduces overshoot at 100 ms step size.
-    if dist_to_goal < _BRAKING_RADIUS_M:
-        braking_scale = 1.0 - (dist_to_goal / _BRAKING_RADIUS_M)
-        ax -= _BRAKING_GAIN * braking_scale * vx
-        ay -= _BRAKING_GAIN * braking_scale * vy
-        az -= _BRAKING_GAIN * braking_scale * vz
+    # --- Proportional attraction toward goal, damped by own velocity ---
+    ax = _PROPORTIONAL_GAIN * dx - _DAMPING_GAIN * vx
+    ay = _PROPORTIONAL_GAIN * dy - _DAMPING_GAIN * vy
+    az = _PROPORTIONAL_GAIN * dz - _DAMPING_GAIN * vz
 
     # --- Clip to contract bounds ---
     raw_max = max(abs(ax), abs(ay), abs(az))

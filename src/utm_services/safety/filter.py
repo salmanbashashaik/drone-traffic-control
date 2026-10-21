@@ -60,10 +60,10 @@ from typing import Sequence
 
 from shared.contracts import (
     SAFE_SEPARATION_M,
-    SHIELD_INTERVENTION_TOLERANCE_MPS2,
     DroneState,
     MARLAction,
     SafeAction,
+    exceeds_intervention_tolerance,
 )
 
 logger = logging.getLogger(__name__)
@@ -211,6 +211,10 @@ def apply_filter(
     if config is None:
         config = FilterConfig()
 
+    # No active agents (e.g. all completed or aborted): nothing to filter.
+    if not states and not actions:
+        return [], FilterDiagnostics()
+
     # --- Input validation ---
     state_ids = [s.agent_id for s in states]
     action_ids = [a.agent_id for a in actions]
@@ -248,14 +252,13 @@ def apply_filter(
     diag = FilterDiagnostics()
 
     # --- Barrier computation and pair selection ---
-    d_safe_sq = SAFE_SEPARATION_M ** 2
     h_min: float | None = None
-    pairs_total: list[tuple[str, str]] = []
+    n_pairs_total = 0
     pairs_in_qp: list[tuple[str, str]] = []
 
     for idx, id_i in enumerate(agent_ids):
         for id_j in agent_ids[idx + 1:]:
-            pairs_total.append((id_i, id_j))
+            n_pairs_total += 1
             h = _barrier(state_map[id_i], state_map[id_j])
 
             if h_min is None or h < h_min:
@@ -270,7 +273,7 @@ def apply_filter(
             pairs_in_qp.append((id_i, id_j))
 
     diag.h_min_m2 = h_min
-    diag.n_pairs_total = len(pairs_total)
+    diag.n_pairs_total = n_pairs_total
     diag.n_pairs_in_qp = len(pairs_in_qp)
 
     # --- QP solve (stub) ---
@@ -302,10 +305,7 @@ def apply_filter(
             accel = safe_accels[aid]
 
         # Determine whether the shield modified the action beyond tolerance.
-        shield_active = any(
-            abs(accel[k] - nom[k]) > SHIELD_INTERVENTION_TOLERANCE_MPS2
-            for k in range(3)
-        )
+        shield_active = exceeds_intervention_tolerance(nom, accel)
         if shield_active:
             diag.interventions += 1
 

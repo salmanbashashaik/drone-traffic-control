@@ -68,8 +68,8 @@ The mock HTTP API is configured for loopback development at `127.0.0.1:8000`. Th
 | Scenario adapter | Aman | Validate `ScenarioConfig` and pass that canonical model to a simulator reset boundary. | Present as an adapter protocol/helper in `src/utm_services/application/scenario_adapter.py`; it is not yet a complete run orchestrator. |
 | Run orchestration and controller selection | Aman | Create run metadata, order reset/observe/policy/filter/step calls, and coordinate outputs. | Planned; no end-to-end run service is present yet. |
 | Simulator and scenario engine | Anas | Ground truth, dynamics, seeded reset/step, termination, disturbances, and per-step simulator outputs. | Planned; implement under `src/utm_services/simulation/`. |
-| Reference/MARL policy adapter | Salman | Consume `ObservationV1`, apply declared preprocessing/model metadata, and emit bounded `MARLAction`. | Planned; implement under `src/utm_services/policy/`. |
-| CBF/HOCBF filter | Salman | Consume all modeled states required by the formulation plus proposed actions; return action and feasibility/intervention metadata. | Planned; implement under `src/utm_services/safety/`. |
+| Reference/MARL policy adapter | Salman | Consume `ObservationV1`, apply declared preprocessing/model metadata, and emit bounded `MARLAction`. | Deterministic reference controller and adapter present in `src/utm_services/policy/`; MARL policy planned. |
+| CBF/HOCBF filter | Salman | Consume all modeled states required by the formulation plus proposed actions; return action and feasibility/intervention metadata. | Pass-through stub present in `src/utm_services/safety/filter.py` (computes barrier diagnostics, does not modify actions); HOCBF QP solve planned. |
 | Run logger and results view | Aman | Record run manifest, per-step proposed/applied actions, filter outcomes, metrics, and artifacts for review. | Planned; output format and storage location remain to be chosen. |
 | Matched evaluation and edge benchmark | Anas | Run paired scenarios, report distributions, package/benchmark policy inference, and preserve manifests. | Planned under `src/utm_services/evaluation/`. |
 

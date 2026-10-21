@@ -131,3 +131,17 @@ def test_braking_reduces_accel_near_goal() -> None:
     r_with_vel = compute_reference_action(obs_with_vel, "drone-001", 0)
     # With velocity toward goal, braking should reduce the x acceleration.
     assert r_with_vel.proposed_accel_mps2[0] < r_no_vel.proposed_accel_mps2[0]
+
+
+def test_reaches_far_goal_without_overshoot() -> None:
+    # 1D run from rest toward a goal 200 m away, with the simulator's
+    # proposed double-integrator dynamics and 15 m/s speed cap.
+    goal_x, x, v = 300.0, 100.0, 0.0
+    for step in range(600):
+        obs = _obs(pos=(x, 200.0, 80.0), vel=(v, 0.0, 0.0), goal_disp=(goal_x - x, 0.0, 0.0))
+        a = compute_reference_action(obs, "drone-001", step * 100).proposed_accel_mps2[0]
+        x += v * 0.1 + 0.5 * a * 0.01
+        v = max(-15.0, min(15.0, v + a * 0.1))
+        assert x <= goal_x + 0.5
+    assert abs(goal_x - x) < 0.1
+    assert abs(v) < 0.1
