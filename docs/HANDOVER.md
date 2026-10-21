@@ -12,6 +12,7 @@ Sections 1–9 below describe `main` at `b63d8fe`, before Sprint 1. This table t
 | --- | --- | --- | --- |
 | A | Always-feasible QP, evasive per-cluster fallback | Done, PR open on `aman/sprint1-a-safe-fallback` | See below. |
 | B | Bounded barrier inside `d_eff`, violation metrics in metres, 3-axis escape, crossing liveness, lateral-escape analysis | Done, PR open on `aman/sprint1-b-barrier` (stacked on A) | See below. |
+| B2 | Backup-set barrier from the evasive manoeuvre; default since contract v1.3 | Done, PR open on `aman/sprint1-b2-backup-barrier` (stacked on B) | See below. |
 | C | Default range gate, spatial pair search, QP split, N=100 infeasibility root cause, benchmark, `polish=True` latency | Not started | — |
 | D | Honest `h_min`, geofence constraints, `n_held`, unused exception | Not started | — |
 | E | `utm-run` CLI, scenario files, replay plots | Not started | — |
@@ -87,6 +88,12 @@ Neither the tie-break change nor the offset/linear extension lowers it; the tie-
 | N=64, start at 15 m/s toward goal | 35.3 / 230.2 ms | 290.8 / 351.0 ms (25) | 36.3 / 232.5 / 737.6 ms |
 
 At N=64 the braking baseline already misses the 100 ms step at p95, and a step that needs the escape solve takes up to 738 ms. This is PR C's problem (dense pair search, one joint QP).
+
+**PR B2 — what is now true.**
+
+- **Default barrier.** `FilterConfig.barrier` selects `"backup"` (default) or `"braking"` (kept for one release). The backup barrier simulates each pair flying the fallback's evasive manoeuvre for a horizon derived from the limits (6.6 s) and keeps that escape outside `d_eff` from the next state. The fallback and the barrier now share one function. Contract v1.3 in `INTERFACES.md`; full write-up in `docs/formulation/P2-SA-02-lateral-escape.md` §5.
+- **Results.** The head-ons and the crossing gain separation (40 m head-on 5.58 → 7.09 m, crossing 5.81 → 8.13 m) and lose path overhead. The sandwich is unchanged at 3.91 m. At N = 64 the p95 step time is 165 ms, against 218–235 ms for braking, with no fallbacks and no time inside `d_eff`.
+- **Open, must be fixed before any real flight.** BL-03 (per-pair backups can be inconsistent for a drone with several neighbours) and BL-04 (only the closest-approach step is constrained), in `TASKS.md`.
 
 ---
 

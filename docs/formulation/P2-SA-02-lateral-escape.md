@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | Task | Sprint 1 PR B, item 4 |
-| Status | Reviewed. Decision recorded in §4.3: backup-set CBF, prototyped in PR B2. |
+| Status | Reviewed. Decision recorded in §4.3: backup-set CBF, prototyped in PR B2 (§5) and made the default barrier (contract v1.3). |
 | Date | 2026-10-21 |
 | Builds on | [`P0-SA-01-formulation.md`](./P0-SA-01-formulation.md) §5–§8 |
 
@@ -133,3 +133,75 @@ Its cost is computation: one forward simulation and its sensitivity per active p
 4. Keep the backup-set CBF as the follow-up if the collision cone cannot be bounded inside `d_eff` or loses separation in the sandwich.
 
 **Decision (reviewer, 2026-10-21):** skip the collision cone. Prototype the backup-set CBF (§4.2) in PR B2, with PR A's evasive manoeuvre (`_evasive_accel`) as the backup controller, so the fallback and the barrier become one mechanism. It goes behind a `FilterConfig` switch, and the braking barrier stays the default and the baseline. The evidence in step 2 above still applies. If the first version misses the 100 ms step at N = 64, B2 stops and reports, and optimisation moves to PR C. B2 is the last filter-research PR.
+
+**Follow-up decision (reviewer, 2026-10-21):** keep the escape stage on in backup mode; revise the gate to "backup p95 step time at N = 64 at most 3× the braking baseline, zero fallbacks, no new entries into `d_eff`" (absolute latency is PR C's job); derive the backup horizon from the limits; if all pass, make backup the default and keep braking selectable for one release. Results in §5.
+
+---
+
+## 5. PR B2: the backup-set barrier as built
+
+Code: `_backup_steps`, `_evasive_direction` and `_backup_constraints` in `src/utm_services/safety/filter.py`, selected by `FilterConfig.barrier` (`"backup"`, the default since contract v1.3, or `"braking"`). Tests: `tests/test_filter_backup.py`.
+
+### 5.1 Backup controller
+
+The backup controller is the evasive manoeuvre of the PR A fallback, now one function (`_evasive_direction`) called by both the fallback and the barrier. For a pair it sums the unit line-of-sight vector away from the other drone, a horizontal lateral unit vector and a vertical unit vector, and scales the sum so its largest component is `u = 3.5 m/s²`. Both drones of a pair fly opposite directions from the same rule.
+
+### 5.2 Integration step: 100 ms zero-order hold
+
+The backup trajectory is simulated with the simulator's own update: the acceleration is held for one 100 ms step, the velocity is capped at 15 m/s, and the position uses the trapezoid of the old and new velocity. With this step the first backup step is exactly what the fallback would fly, so the barrier certifies the manoeuvre the drone actually has, not a continuous-time idealisation of it. A finer step would cost proportionally more time and would no longer match the simulator.
+
+### 5.3 Horizon: derived from the limits
+
+Along the line of sight `n` the evasive acceleration of one drone is at least `u / √2`. Proof: `n` and the lateral vector `l` are orthonormal, so for the x and y components `|n_x| + |l_x| ≤ √2` (and the same for y); the z component is `|n_z| + 1`, and the n-component of the unscaled sum is `1 + |n_z|`. After scaling to a largest component of `u`, the n-component is `u (1 + |n_z|) / max(√2, 1 + |n_z|) ≥ u / √2`. A test checks the bound on 10 000 random directions.
+
+A pair closing at the maximum `2 v_max = 30 m/s` therefore stops closing within `2 v_max / (2 u / √2) = √2 v_max / u = 6.06 s`. The horizon is that stopping time plus `FilterConfig.lag_s` plus a 0.5 s margin, rounded up to whole steps: 66 steps (6.6 s) at `lag_s = 0`. The margin keeps the closest approach from being cut off at the horizon end by the 100 ms hold and by the turn of the line of sight during the manoeuvre. `test_backup_horizon_covers_stopping_at_max_closing_speed` fails if the horizon is shorter than the derived value. The first prototype used 5 s, which covers only the axis-aligned head-on (relative deceleration 7 m/s², 4.3 s); that test failed on it.
+
+### 5.4 The constraint row
+
+For each pair, `h = min_k |r_k| − d_eff` over the backup trajectory, reached at step `k*`. The row asks that the trajectory starting with the QP's acceleration instead of the backup's first step keeps `h_next ≥ (1 − γ dt) h` at `k*`, linearised as `m · r_k*(a)` with `m = r_k* / |r_k*|`. Because `m · r ≤ |r|`, the linear row is sufficient. The sensitivity of `r_k*` to the first-step acceleration is `(k* + 0.5) dt²`; the row is divided by it, so it has a unit normal and its slack is in m/s² like the braking row. Left in metres (coefficients near 0.05), OSQP stopped at 4000 iterations and the fallback ran 4–16 times per run. `γ = FilterConfig.gamma = 1`: a sweep over 1, 3 and 10 gave the most margin at 1; at 3 every head-on passed at only 5.5–5.7 m, and at 10 there were fallbacks and time inside `d_eff`.
+
+### 5.5 The escape stage in backup mode
+
+Closing pairs left with slack still go through the PR B escape stage. In the sandwich the backup rows leave the outer pair (d1, d3) without slack, so with the slack pairs alone the escape colouring sent d1 to the same side as d2 and the run reached 3.48 m. In backup mode the escape set therefore also includes closing pairs whose two drones are both in slack pairs. The sandwich then matches braking exactly (3.913 m).
+
+### 5.6 Results
+
+Scenario suite, braking against backup, 600-step limit, reference policy as the stand-in for MARL. The latency is wall-clock time per `apply_filter` call on the development laptop:
+
+| Scenario | Min separation (m) | Max depth (m) | Time inside `d_eff` (s) | Path overhead (%) | Steps | Fallbacks | `apply_filter` p50 / p95 (ms) |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Head-on 40 m | 5.58 → 7.09 | 0 → 0 | 0 → 0 | 0.2 → 0.4 | 296 → 297 | 0 → 0 | 2.4 / 3.2 → 10.3 / 12.5 |
+| Head-on 50 m | 6.16 → 8.33 | 0 → 0 | 0 → 0 | 0.2 → 0.4 | 296 → 297 | 0 → 0 | 2.4 / 4.8 → 10.1 / 11.9 |
+| Head-on 60 m | 6.50 → 9.15 | 0 → 0 | 0 → 0 | 0.2 → 0.3 | 296 → 297 | 0 → 0 | 2.5 / 5.3 → 10.1 / 11.1 |
+| Head-on 80 m | 14.57 → 9.76 | 0 → 0 | 0 → 0 | 0.7 → 0.3 | 307 → 296 | 0 → 0 | 2.4 / 3.2 → 10.1 / 11.6 |
+| Crossing 90° | 5.81 → 8.13 | 0 → 0 | 0 → 0 | 2.5 → 0.3 | 307 → 297 | 0 → 0 | 2.3 / 2.6 → 10.1 / 12.4 |
+| Sandwich | 3.91 → 3.91 | 1.59 → 1.59 | 1.8 → 1.6 | 2.0 → 2.8 | 338 → 347 | 0 → 0 | 2.4 / 3.3 → 10.0 / 12.3 |
+| Random 16, seed 0 | 14.46 → 12.20 | 0 → 0 | 0 → 0 | 0.3 → 0.0 | 349 → 348 | 0 → 0 | 4.6 / 9.8 → 12.4 / 16.5 |
+| Random 16, seed 1 | 14.96 → 9.39 | 0 → 0 | 0 → 0 | 0.7 → 0.1 | 324 → 323 | 0 → 0 | 5.3 / 9.4 → 13.4 / 16.6 |
+| Random 16, seed 2 | 7.20 → 7.35 | 0 → 0 | 0 → 0 | 1.4 → 0.1 | 309 → 306 | 0 → 0 | 6.3 / 9.7 → 13.8 / 17.1 |
+| Random 16, seed 3 | 7.84 → 8.45 | 0 → 0 | 0 → 0 | 1.1 → 0.1 | 258 → 257 | 0 → 0 | 7.1 / 10.0 → 14.8 / 20.0 |
+| Random 16, seed 4 | 8.89 → 8.63 | 0 → 0 | 0 → 0 | 1.1 → 0.1 | 320 → 315 | 0 → 0 | 5.6 / 9.4 → 13.4 / 17.1 |
+| All scenarios | | | | | | | 2.6 / 9.0 → 10.4 / 16.7 |
+
+Path overhead is the flown length over the sum of straight-line distances to the goal radius, minus 1. On a 30 m/s head-on the braking barrier starts acting at about 101 m and the backup barrier at about 68 m. Backup has a smaller minimum separation where braking intervened far out (80 m head-on, random seeds 0, 1 and 4) because it no longer brakes early; all of those stay above `d_eff`. The sandwich takes 9 more steps.
+
+N = 64 gate (random traffic from `tests/test_random_traffic.py` with 64 drones, seeds 0–4):
+
+| Run | Barrier | `apply_filter` p50 / p95 / max (ms) | Steps over 100 ms | Fallbacks | Time inside `d_eff` | All 64 done |
+| --- | --- | --- | --- | --- | --- | --- |
+| Start at rest | braking | 45.5 / 217.9 / 317.6 | 38.7 % | 0 | 0 s | yes |
+| Start at rest | backup | 52.3 / 165.2 / 215.4 | 35.3 % | 0 | 0 s | yes |
+| Start at 15 m/s toward goal | braking | 35.5 / 235.3 / 753.5 | 34.4 % | 0 | 2.2 s (seed 2, depth 0.36 m) | yes |
+| Start at 15 m/s toward goal | backup | 43.5 / 165.2 / 219.3 | 30.8 % | 0 | 0 s | yes |
+
+The gate passes: backup p95 is below the braking p95 (limit 3×), with zero fallbacks and no entry into `d_eff`. Both barriers miss the absolute 100 ms step at N = 64; that is PR C.
+
+### 5.7 Known limits
+
+Each is also in the `_backup_constraints` docstring or in `TASKS.md`:
+
+- The backup is pairwise: a drone with several neighbours is credited with a different escape against each. Backlog **BL-03**.
+- Only the closest-approach step `k*` is constrained. Backlog **BL-04**.
+- The sensitivity `(k* + 0.5) dt²` ignores the backup's feedback and the speed cap.
+- `lag_s` lengthens the horizon but the row does not model the actuator lag; the braking barrier's lag reserve has no backup equivalent yet.
+- One forward simulation per pair per step: about 4× the braking cost at N = 16.

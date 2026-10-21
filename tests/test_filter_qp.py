@@ -20,6 +20,10 @@ from utm_services.safety.filter import (
     build_hocbf_qp_matrices,
 )
 
+# Tests of the braking-barrier geometry (tie-break, braking curve, lag
+# reserve) pin it; the default is the backup barrier since contract v1.3.
+BRAKING = FilterConfig(barrier="braking")
+
 
 def _state(
     agent_id: str,
@@ -97,7 +101,7 @@ def test_qp_intervenes_on_head_on_converging_pair() -> None:
         _action("d2", accel=(0.0, 0.0, 0.0)),
     ]
 
-    safe_actions, diag = apply_filter(states, actions)
+    safe_actions, diag = apply_filter(states, actions, BRAKING)
 
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
@@ -210,8 +214,8 @@ def test_lag_reserve_brakes_earlier() -> None:
     ]
     actions = [_action("d1"), _action("d2")]
 
-    ideal, _ = apply_filter(states, actions)
-    lagged, diag = apply_filter(states, actions, FilterConfig(lag_s=0.5))
+    ideal, _ = apply_filter(states, actions, BRAKING)
+    lagged, diag = apply_filter(states, actions, FilterConfig(barrier="braking", lag_s=0.5))
 
     assert ideal[0].shield_active is False
     assert diag.qp_feasible is True

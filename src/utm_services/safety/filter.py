@@ -9,7 +9,9 @@ When a closing pair needs slack, the step is re-solved with that pair's
 braking constraint replaced by a predicted-separation constraint in metres,
 so the unavoidable violation is minimised in metres using all three axes.
 Only a solver error triggers the fallback: an evasive manoeuvre for the
-conflict cluster only.
+conflict cluster only. The default barrier ("backup", contract v1.3)
+replaces the braking rows with backup-set rows built from that same evasive
+manoeuvre; FilterConfig(barrier="braking") keeps the PR B barrier.
 
 Implementation status
 ---------------------
@@ -54,8 +56,10 @@ import osqp
 import scipy.sparse as sp
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
+    MAX_SPEED_MPS,
     SAFE_SEPARATION_M,
     SHIELD_INTERVENTION_TOLERANCE_MPS2,
+    SIMULATION_STEP_MS,
     DroneState,
     MARLAction,
     SafeAction,
@@ -111,6 +115,14 @@ class FilterConfig:
         gradient at 2 u_max / c (7 1/s at c = 1), so one 100 ms step cannot
         overshoot d_eff, and keeps the constraint finite inside d_eff. Costs
         about c^2 / (4 u_max) + c |rho| / (2 u_max) of extra standoff.
+    barrier:
+        "backup" (default since contract v1.3): the backup-set barrier
+        (``_backup_constraints``),
+        which keeps the evasive fallback manoeuvre able to hold d_eff from
+        the next state; no tie-break. Closing pairs left with slack go
+        through the same escape stage as "braking". "braking": the PR B
+        braking-distance barrier plus the escape stage; kept selectable for
+        one release. See docs/formulation/P2-SA-02-lateral-escape.md §4.2, §5.
     """
 
     gamma: float = 1.0
@@ -122,6 +134,7 @@ class FilterConfig:
     solver_max_iter: int = 4000
     slack_weight: float = 1e4
     barrier_offset_mps: float = 1.0
+    barrier: str = "backup"
 
     def __post_init__(self) -> None:
         if not self.gamma > 0.0:
@@ -142,6 +155,8 @@ class FilterConfig:
             raise ValueError(f"slack_weight must be positive, got {self.slack_weight}")
         if not self.barrier_offset_mps > 0.0:
             raise ValueError(f"barrier_offset_mps must be positive, got {self.barrier_offset_mps}")
+        if self.barrier not in ("braking", "backup"):
+            raise ValueError(f"barrier must be 'braking' or 'backup', got {self.barrier!r}")
 
 
 @dataclass
@@ -353,6 +368,101 @@ def _escape_constraint(
     return 0.5 * t_star**2 * m, d_eff - float(m @ (r + v * t_star))
 
 
+# Extra backup horizon past the derived stopping time, so the closest
+# approach is not cut off at the horizon end by the 100 ms hold and the
+# turn of the line of sight during the manoeuvre.
+_BACKUP_HORIZON_MARGIN_S = 0.5
+
+
+def _backup_steps(config: FilterConfig) -> int:
+    """Backup horizon in simulator steps, derived from the speed and accel limits.
+
+    The evasive manoeuvre brakes each drone by at least u_max / sqrt(2) along
+    the line of sight (``_evasive_direction``: its x and y components are at
+    most sqrt(2), its n component at least 1). A pair closing at 2 v_max
+    therefore stops closing within sqrt(2) v_max / u_max (6.06 s at 15 m/s
+    and 3.5 m/s²). Add the actuator lag and _BACKUP_HORIZON_MARGIN_S.
+    """
+    stop_s = math.sqrt(2.0) * MAX_SPEED_MPS / MAX_ACCEL_COMPONENT_MPS2
+    return math.ceil((stop_s + config.lag_s + _BACKUP_HORIZON_MARGIN_S) / (SIMULATION_STEP_MS / 1000.0))
+
+
+def _evasive_direction(n: np.ndarray, up: np.ndarray | float) -> np.ndarray:
+    """Evasive acceleration for the agent at the head of unit vector(s) n.
+
+    Sums n (away from the neighbour), a horizontal lateral unit vector (right
+    turn about +z, about +x for vertical n) and ``up`` in z, scaled so the
+    largest component is u_max. Works on one (3,) vector or a (M, 3) stack.
+    """
+    lateral = np.cross((0.0, 0.0, 1.0), n)
+    flat = np.linalg.norm(lateral, axis=-1, keepdims=True) < 1e-3
+    lateral = np.where(flat, np.cross((1.0, 0.0, 0.0), n), lateral)
+    lateral = lateral / np.linalg.norm(lateral, axis=-1, keepdims=True)
+    direction = n + lateral
+    direction[..., 2] += up
+    return direction * (MAX_ACCEL_COMPONENT_MPS2 / np.max(np.abs(direction), axis=-1, keepdims=True))
+
+
+def _backup_constraints(
+    states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    """Backup-set barrier rows coef . (a_i - a_j) >= rhs, one per pair.
+
+    Both drones of a pair fly the evasive manoeuvre against each other from
+    the current state for ``_backup_steps`` steps of 100 ms zero-order-hold steps
+    with the simulator's trapezoid position update and speed cap: for an
+    isolated pair this is what the fallback flies. h = min |r| - d_eff over
+    that trajectory is the pair's margin, reached at step k*. The row asks
+    the trajectory that starts with the QP's acceleration instead of the
+    backup's first step to keep h_next >= (1 - gamma dt) h at k*, linearised
+    as m . r_k*(a) with m = r_k* / |r_k*| (m . r <= |r|, so the row is
+    sufficient) and d r_k* / d a = (k* - 0.5) dt^2. The row is divided by
+    that sensitivity, so it has a unit normal m and its slack is in m/s² like
+    the braking row (in metres OSQP stalls at 4000 iterations). The backup's
+    first acceleration meets the row whenever h >= 0, so an isolated pair
+    that is recoverable stays feasible. Returns (m (M, 3), rhs (M,)).
+
+    known limit: pairwise backup (a drone in several conflicts gets one
+    evasive per pair, not one manoeuvre: TASKS.md BL-03); only k* is
+    constrained (BL-04); the sensitivity ignores the backup's feedback and
+    the speed cap; lag_s only lengthens the horizon. Re-planned every step.
+    All must be resolved before any real flight.
+    """
+    dt = SIMULATION_STEP_MS / 1000.0
+    steps = _backup_steps(config)
+    d_eff = SAFE_SEPARATION_M + config.margin_m
+
+    def column(attr: str, k: int) -> np.ndarray:
+        return np.array([getattr(states[pair[k]], attr) for pair in pairs], dtype=np.float64)
+
+    def cap(v: np.ndarray) -> np.ndarray:
+        speed = np.linalg.norm(v, axis=1, keepdims=True)
+        return v * np.minimum(1.0, MAX_SPEED_MPS / np.maximum(speed, 1e-9))
+
+    r = column("position_m", 0) - column("position_m", 1)
+    v_i, v_j = column("velocity_mps", 0), column("velocity_mps", 1)
+    traj = np.empty((steps, len(pairs), 3))
+    for k in range(steps):
+        n = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-9)
+        # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
+        a = _evasive_direction(n, np.where(np.abs(n[:, 2]) > 1e-3, np.sign(n[:, 2]), 1.0))
+        if k == 0:
+            a_first = 2.0 * a
+        v_i_next, v_j_next = cap(v_i + a * dt), cap(v_j - a * dt)
+        r = r + 0.5 * (v_i + v_i_next - v_j - v_j_next) * dt
+        v_i, v_j = v_i_next, v_j_next
+        traj[k] = r
+
+    dist = np.linalg.norm(traj, axis=2)
+    k_star = np.argmin(dist, axis=0)
+    cols = np.arange(len(pairs))
+    d_star = dist[k_star, cols]
+    m = traj[k_star, cols] / np.maximum(d_star, 1e-9)[:, None]
+    sensitivity = (k_star + 0.5) * dt * dt
+    rhs = np.einsum("ij,ij->i", m, a_first) - config.gamma * dt * (d_star - d_eff) / sensitivity
+    return m, rhs
+
+
 def build_hocbf_qp_matrices(
     states: dict[str, DroneState],
     actions: dict[str, MARLAction],
@@ -369,7 +479,8 @@ def build_hocbf_qp_matrices(
     an exact L1 penalty: s_k stays 0 whenever the hard constraints are
     jointly satisfiable, so the QP is always feasible. Pairs in
     ``escape_signs`` use ``_escape_constraint`` instead, with the slack in
-    metres, and get no tie-break.
+    metres, and get no tie-break. With barrier="backup" every other pair
+    uses ``_backup_constraints`` instead, with no tie-break.
 
     Returns
     -------
@@ -413,12 +524,16 @@ def build_hocbf_qp_matrices(
     l_cbf = []
     u_cbf = []
 
-    for id_i, id_j in pairs_in_qp:
+    backup = _backup_constraints(states, pairs_in_qp, config) if config.barrier == "backup" else None
+    for k, (id_i, id_j) in enumerate(pairs_in_qp):
         idx_i = agent_idx[id_i]
         idx_j = agent_idx[id_j]
         row = np.zeros(dim, dtype=np.float64)
-        if (id_i, id_j) in escape_signs:
-            coef, rhs = _escape_constraint(states[id_i], states[id_j], escape_signs[(id_i, id_j)], config)
+        if backup is not None or (id_i, id_j) in escape_signs:
+            if (id_i, id_j) in escape_signs:
+                coef, rhs = _escape_constraint(states[id_i], states[id_j], escape_signs[(id_i, id_j)], config)
+            else:
+                coef, rhs = backup[0][k], float(backup[1][k])
             row[3 * idx_i : 3 * idx_i + 3] = coef
             row[3 * idx_j : 3 * idx_j + 3] = -coef
             cbf_rows.append(row)
@@ -570,16 +685,11 @@ def _evasive_accel(
         return (0.0, 0.0, 0.0)
     other = best[1]
     n, _, _ = _pair_constraint(state_map[aid], state_map[other], config)
-    lateral = np.cross((0.0, 0.0, 1.0), n)
-    if np.linalg.norm(lateral) < 1e-3:
-        lateral = np.cross((1.0, 0.0, 0.0), n)
-    lateral /= np.linalg.norm(lateral)
     if abs(n[2]) > 1e-3:
         up = math.copysign(1.0, n[2])
     else:
         up = 1.0 if aid < other else -1.0
-    direction = n + lateral + np.array((0.0, 0.0, up))
-    direction *= u_max / np.max(np.abs(direction))
+    direction = _evasive_direction(n, up)
     return tuple(float(c) for c in np.clip(direction, -u_max, u_max))
 
 
@@ -739,8 +849,14 @@ def apply_filter(
 
     # Closing pairs that cannot keep the barrier: re-solve with the escape
     # constraint, minimising the predicted violation in metres.
+    # Backup rows can leave a closing pair between two drones that are
+    # already escaping without slack (the outer pair of a sandwich); colour
+    # it too, so the signs of its drones stay consistent.
+    in_slack = {aid for pair in pair_slack for aid in pair}
     escape_pairs = []
-    for pair in pair_slack:
+    for pair in pairs_in_qp if config.barrier == "backup" else pair_slack:
+        if pair not in pair_slack and not (pair[0] in in_slack and pair[1] in in_slack):
+            continue
         _, v, n, _ = _relative(state_map[pair[0]], state_map[pair[1]])
         if float(v @ n) < 0.0:
             escape_pairs.append(pair)
