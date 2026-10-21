@@ -1,0 +1,21 @@
+# Safety filter verification scripts
+
+Independent checks of `utm_services.safety.filter`, written by the PR #12 reviewer. They are
+measurements, not tests: they print results and never fail the suite. Run them from the repository
+root after `pip install -e ".[dev]"`. Python puts this folder on `sys.path`, so the scripts import each
+other (`fuzz`, `optbound`, `invariance`) without extra setup.
+
+| Script | What it checks | Command |
+| --- | --- | --- |
+| `fuzz.py` | Closed-loop fuzz of `apply_filter` on random 2–6 drone encounters, zero nominal acceleration. Reports fallbacks, solver errors, exceptions and runs inside d_eff. `HARD=1` uses shorter time to approach. Writes `fuzz_<barrier>_<start>_<n>[_hard].json` to `$FUZZ_OUT` (default: the current directory). | `python scripts/verify/fuzz.py 5000 backup 100 8` (runs, barrier, steps, processes, [first seed]) |
+| `vertical.py` | Vertical head-on (60 m and 120 m, 10 m/s each), both barriers. Any argument prints the steps inside 40 m. | `python scripts/verify/vertical.py` |
+| `vsweep.py` | Line-of-sight elevation sweep with lateral offsets and two speeds, both barriers. `*` marks min separation below d_eff, `F` a fallback. | `python scripts/verify/vsweep.py` |
+| `floor.py` | Head-on near the altitude floor, both barriers: aborts and lowest altitude. | `python scripts/verify/floor.py` |
+| `targeted.py` | Break attempts: world bounds, symmetric rings, vertical encounters, forced solver error (fallback only). | `python scripts/verify/targeted.py` |
+| `optbound.py` | Independent max-min-separation optimiser (SLSQP, 100 ms zero-order hold). `sandwich [starts]` or `headon`. | `python scripts/verify/optbound.py sandwich 40` |
+| `headon.py` | Head-on minimum start distance for d_eff at 30 m/s closing: closed form and optimiser. | `python scripts/verify/headon.py` |
+| `recov.py` | Whether hard fuzz seeds that entered d_eff were recoverable at all. | `python scripts/verify/recov.py 2704 252` |
+| `invariance.py` | Per-step decay and forward invariance of the backup barrier, 2 drones, serial. | `python scripts/verify/invariance.py` |
+| `inv2.py` | Parallel version of `invariance.py`. | `python scripts/verify/inv2.py 3000` |
+| `horizon.py` | Whether the 6.6 s backup horizon ever overestimates the backup's minimum distance. | `python scripts/verify/horizon.py` |
+| `det.py` | Hashes of filtered actions for fixed scenarios. Run it in separate processes and compare the output. | `python scripts/verify/det.py` |
