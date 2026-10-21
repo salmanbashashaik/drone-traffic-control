@@ -189,17 +189,11 @@ class DroneEnv:
         prev_goal_dist = {a.agent_id: float(np.linalg.norm(a.goal - a.position)) for a in stepping}
 
         # Dynamics, bounds and goal checks (SIMULATOR_NOTE section 4-5).
-        speed_capped: dict[str, bool] = {}
+        accels = {aid: np.array(act.safe_accel_mps2, dtype=np.float64) for aid, act in by_id.items()}
+        speed_capped = self._advance(stepping, accels)
         for agent in stepping:
-            accel = np.array(by_id[agent.agent_id].safe_accel_mps2, dtype=np.float64)
-            v_next = agent.velocity + accel * DT_S
-            speed = float(np.linalg.norm(v_next))
-            speed_capped[agent.agent_id] = speed > MAX_SPEED_MPS
-            if speed_capped[agent.agent_id]:
-                v_next *= MAX_SPEED_MPS / speed * _SPEED_CAP_SCALE
-            # Trapezoid: equals p + v*dt + 0.5*a*dt^2 when uncapped, and stays consistent with v_next when capped.
-            agent.position = agent.position + 0.5 * (agent.velocity + v_next) * DT_S
-            agent.velocity = v_next
+            if agent.status != ACTIVE:
+                continue  # the dynamics backend already ended it (e.g. physical collision)
             if not _in_world(agent.position):
                 agent.status, agent.abort_reason = ABORTED, "out_of_bounds"
             elif np.linalg.norm(agent.goal - agent.position) <= GOAL_RADIUS_M:
@@ -280,6 +274,24 @@ class DroneEnv:
         }
 
     # ------------------------------------------------------------- helpers
+
+    def _advance(self, agents: Sequence[_Agent], accels: dict[str, np.ndarray]) -> dict[str, bool]:
+        """Point-mass dynamics for one step; returns speed_capped per agent.
+
+        Backends override this to integrate with other dynamics; they update
+        ``position``/``velocity`` and may end an agent by setting ``status``.
+        """
+        speed_capped: dict[str, bool] = {}
+        for agent in agents:
+            v_next = agent.velocity + accels[agent.agent_id] * DT_S
+            speed = float(np.linalg.norm(v_next))
+            speed_capped[agent.agent_id] = speed > MAX_SPEED_MPS
+            if speed_capped[agent.agent_id]:
+                v_next *= MAX_SPEED_MPS / speed * _SPEED_CAP_SCALE
+            # Trapezoid: equals p + v*dt + 0.5*a*dt^2 when uncapped, and stays consistent with v_next when capped.
+            agent.position = agent.position + 0.5 * (agent.velocity + v_next) * DT_S
+            agent.velocity = v_next
+        return speed_capped
 
     def _active(self) -> list[_Agent]:
         return [self._agents[aid] for aid in self.active_ids]

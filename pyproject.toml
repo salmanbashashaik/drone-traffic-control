@@ -23,6 +23,14 @@ dev = [
     "pytest>=8,<10",
     "ruff>=0.8,<1",
 ]
+# PyBullet quadrotor backend (Linux/WSL only: pybullet has no Windows wheels).
+# gym-pybullet-drones is not on PyPI; install it with --no-deps, see simulation/pybullet_env.py.
+physics = [
+    "gymnasium>=1.0,<2",
+    "pillow>=12.3,<13",
+    "pybullet>=3.2.7,<4",
+    "transforms3d>=0.4,<1",
+]
 
 [project.scripts]
 utm-mock-api = "utm_services.api.app:run"
