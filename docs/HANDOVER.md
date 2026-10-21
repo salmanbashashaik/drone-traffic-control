@@ -62,7 +62,31 @@ Regression results after PR B (`python -m pytest tests/ -q -s`):
 | 90° crossing | 5.81 m | 0 m | 0 s | 0 |
 | 3-drone sandwich | 3.91 m | 1.59 m | 1.8 s | 0 |
 
-Head-on minimum separations are lower than in PR A (for example 6.60 m to 5.58 m at 40 m) but stay above `d_eff`. The escape stage and the offset barrier change the trajectories; I did not investigate the difference further.
+Head-on minimum separations are lower than in PR A (6.60 m to 5.58 m at the 40 m gap) but stay above `d_eff`. **Cause: the escape stage.** At 30 m/s closing a 40 m gap is inside the braking curve (69.8 m), so the first solve leaves slack and the escape stage runs. Its constraint asks for predicted separation `≥ d_eff` at closest approach, so the pair passes just outside 5.5 m instead of braking harder; the episode is 4 steps shorter (296 against 300). Isolated by toggling each change on the 40 m head-on:
+
+| `tie_break_mps2` | `barrier_offset_mps` | Escape stage | Min separation |
+| --- | --- | --- | --- |
+| 0.5 | 0.001 | off | 6.60 m |
+| 0.5 | 0.001 | on | 5.58 m |
+| 0.5 | 1.0 | off | 6.61 m |
+| 0.5 | 1.0 | on | 5.59 m |
+| 1.0 | 0.001 | off | 6.98 m |
+| 1.0 | 0.001 | on | 5.57 m |
+| 1.0 | 1.0 | off | 7.00 m |
+| 1.0 | 1.0 | on | 5.58 m |
+
+Neither the tie-break change nor the offset/linear extension lowers it; the tie-break raises it.
+
+**Escape-stage latency** (wall-clock per call, this Windows laptop, 5 seeds each, random traffic from `tests/test_random_traffic.py`):
+
+| Run | First solve p50 / p95 | Escape solve p50 / p95 (calls) | Whole `apply_filter` p50 / p95 / max |
+| --- | --- | --- | --- |
+| N=16, drones start at rest | 5.2 / 9.3 ms | never triggered (0 of 1560 steps) | 5.4 / 9.7 / 25.6 ms |
+| N=16, start at 15 m/s toward goal, plus one sandwich triple | 4.4 / 8.7 ms | 8.0 / 11.0 ms (50) | 4.5 / 9.5 / 21.6 ms |
+| N=64, drones start at rest | 44.4 / 220.9 ms | never triggered (0 of 1768 steps) | 45.5 / 223.1 / 322.4 ms |
+| N=64, start at 15 m/s toward goal | 35.3 / 230.2 ms | 290.8 / 351.0 ms (25) | 36.3 / 232.5 / 737.6 ms |
+
+At N=64 the braking baseline already misses the 100 ms step at p95, and a step that needs the escape solve takes up to 738 ms. This is PR C's problem (dense pair search, one joint QP).
 
 ---
 
