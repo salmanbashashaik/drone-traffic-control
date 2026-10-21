@@ -7,8 +7,16 @@ import numpy as np
 import pytest
 from shared.contracts import MAX_ACCEL_COMPONENT_MPS2, SAFE_SEPARATION_M, SafeAction, ScenarioConfig
 
-from utm_services.policy.reference import compute_reference_action
-from utm_services.simulation.env import DT_S, T2, Disturbances, DroneEnv
+from utm_services.policy.reference import ReferencePolicy
+from utm_services.simulation import runner
+from utm_services.simulation.env import (
+    DT_S,
+    PROFILES,
+    T2_NOMINAL,
+    T2_REALISTIC,
+    Disturbances,
+    DroneEnv,
+)
 from utm_services.simulation.runner import VARIANTS, run_episode
 
 SCENARIOS = Path(__file__).resolve().parents[1] / "scenarios"
@@ -158,11 +166,43 @@ def test_command_dropout_degrades_dropped_commands(p, expected) -> None:
     assert s["degraded_agent_steps"] == expected
 
 
-def test_t2_manifest_records_tier_and_injectors() -> None:
-    _, meta = DroneEnv(disturbances=T2).reset(_config(_drone("a", (500.0, 500.0, 100.0))))
+@pytest.mark.parametrize("profile", ["nominal", "realistic"])
+def test_t2_manifest_records_tier_profile_and_injectors(profile) -> None:
+    _, meta = DroneEnv(disturbances=PROFILES[profile]).reset(_config(_drone("a", (500.0, 500.0, 100.0))))
     assert meta["condition_tier"] == "T2"
+    assert meta["disturbance_profile"] == profile
     assert meta["disturbances"]["wind_max_mps2"] == 1.0
     assert meta["hold_steps"] == 3
+
+
+def test_realistic_profile_values() -> None:
+    assert T2_REALISTIC == Disturbances(wind_max_mps2=1.0, obs_pos_sigma_m=1.5, obs_vel_sigma_mps=0.3,
+                                        obs_delay_steps=3, dropout_p=0.1)
+    assert PROFILES["nominal"] is T2_NOMINAL
+
+
+def test_filter_receives_the_disturbed_states_the_policy_sees(monkeypatch) -> None:
+    seen = []
+    real = runner.apply_filter
+
+    def spy(states, proposed, cfg):
+        seen.append(states)
+        return real(states, proposed, cfg)
+
+    monkeypatch.setattr(runner, "apply_filter", spy)
+    d = Disturbances(obs_pos_sigma_m=0.5, obs_delay_steps=2)
+    res = run_episode(_config(_drone("a", (500.0, 500.0, 100.0), vel=(10.0, 0.0, 0.0)),
+                              _drone("b", (500.0, 600.0, 100.0)), limit=10),
+                      "shielded_marl", policy=ReferencePolicy(), policy_id="reference-standin",
+                      make_env=lambda rules: DroneEnv(rules, disturbances=d))
+
+    for states, rec in zip(seen, res.records, strict=True):
+        assert [s.timestamp_ms for s in states] == [rec["timestamp_ms"]] * 2  # filter time check still holds
+        assert [s.model_dump(mode="json") for s in states] == rec["observed_states"]
+        assert rec["observed_states"] != rec["states"]  # noisy, not the truth
+    # Delay: the filter's x for "a" lags truth by about 2 steps (2 m at 10 m/s), not 0.
+    lag = res.records[5]["states"][0]["position_m"][0] - res.records[5]["observed_states"][0]["position_m"][0]
+    assert 1.0 < lag < 3.0
 
 
 # ------------------------------------------------------------------ seeds
@@ -171,7 +211,7 @@ def test_t2_manifest_records_tier_and_injectors() -> None:
 def _t2_run(seed):
     cfg = ScenarioConfig.model_validate_json((SCENARIOS / "crossing-90.json").read_text())
     cfg = cfg.model_copy(update={"seed": seed})
-    res = run_episode(cfg, "reference", make_env=lambda rules: DroneEnv(rules, disturbances=T2))
+    res = run_episode(cfg, "reference", make_env=lambda rules: DroneEnv(rules, disturbances=T2_NOMINAL))
     return [json.dumps(r["states"]) for r in res.records]
 
 
@@ -183,20 +223,46 @@ def test_same_seed_identical_different_seed_different() -> None:
 # --------------------------------------------------------- T2 all variants
 
 
+@pytest.mark.parametrize("profile", ["nominal", "realistic"])
 @pytest.mark.parametrize("variant", VARIANTS)
-def test_t2_runs_every_variant_to_the_end(variant) -> None:
+def test_t2_runs_every_variant_to_the_end(variant, profile) -> None:
     cfg = ScenarioConfig.model_validate_json((SCENARIOS / "crossing-90.json").read_text())
-    s = run_episode(cfg, variant, policy=compute_reference_action, policy_id="reference-standin",
-                    make_env=lambda rules: DroneEnv(rules, disturbances=T2), keep_records=False).summary
+    s = run_episode(cfg, variant, policy=ReferencePolicy(), policy_id="reference-standin",
+                    make_env=lambda rules: DroneEnv(rules, disturbances=PROFILES[profile]), keep_records=False).summary
     assert s["n_incomplete"] + s["n_completed"] + s["n_aborted"] == 2
 
 
-@pytest.mark.xfail(reason="BL-06: the filter has no disturbance margin; fix in C+D", strict=False)
-@pytest.mark.parametrize("seed", range(5))
 @pytest.mark.parametrize("scenario", ["head-on-40", "crossing-90"])
-def test_t2_shielded_keeps_separation(scenario, seed) -> None:
+def test_reference_completes_under_steady_wind(scenario) -> None:
+    """The integral term removes the steady wind offset, so every drone reaches its goal radius."""
+    cfg = ScenarioConfig.model_validate_json((SCENARIOS / f"{scenario}.json").read_text())
+    wind = Disturbances(wind_max_mps2=1.0)
+    for seed in range(5):
+        s = run_episode(cfg.model_copy(update={"seed": seed}), "reference",
+                        make_env=lambda rules: DroneEnv(rules, disturbances=wind), keep_records=False).summary
+        assert s["n_completed"] == s["n_launched"], seed
+
+
+_BL06 = pytest.mark.xfail(reason="BL-06: the filter has no disturbance margin; fix in C+D", strict=True)
+
+
+def _bl06_marks(scenario, profile, seed):
+    # Measured: crossing-90 keeps separation except realistic seed 3. Wind shifts the arrival
+    # times, so the drones never meet in the exact symmetric crossing the filter cannot resolve.
+    if scenario == "crossing-90" and (profile, seed) != ("realistic", 3):
+        return ()
+    return _BL06
+
+
+@pytest.mark.parametrize(
+    "scenario, profile, seed",
+    [pytest.param(sc, p, s, marks=_bl06_marks(sc, p, s))
+     for sc in ("head-on-40", "crossing-90", "sandwich-3") for p in ("nominal", "realistic") for s in range(5)],
+)
+def test_t2_shielded_keeps_separation(scenario, profile, seed) -> None:
     cfg = ScenarioConfig.model_validate_json((SCENARIOS / f"{scenario}.json").read_text())
     cfg = cfg.model_copy(update={"seed": seed})
-    s = run_episode(cfg, "shielded_marl", policy=compute_reference_action, policy_id="reference-standin",
-                    make_env=lambda rules: DroneEnv(rules, disturbances=T2), keep_records=False).summary
+    s = run_episode(cfg, "shielded_marl", policy=ReferencePolicy(), policy_id="reference-standin",
+                    make_env=lambda rules: DroneEnv(rules, disturbances=PROFILES[profile]),
+                    keep_records=False).summary
     assert s["min_separation_m"] >= SAFE_SEPARATION_M

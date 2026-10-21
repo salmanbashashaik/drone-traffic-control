@@ -32,6 +32,14 @@ def test_run_writes_manifest_summary_and_one_record_per_step(tmp_path, variant) 
     assert json.loads(records[0])["timestamp_ms"] == 0
 
 
+def test_profile_selects_the_disturbance_profile(tmp_path) -> None:
+    assert main([str(SCENARIOS[0]), "--profile", "realistic", "--out", str(tmp_path)]) == 0
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text())
+    assert manifest["disturbance_profile"] == "realistic"
+    assert manifest["disturbances"]["obs_pos_sigma_m"] == 1.5
+
+
 def test_plot_writes_replay_png(tmp_path) -> None:
     pytest.importorskip("matplotlib")
     assert main([str(SCENARIOS[0]), "--out", str(tmp_path), "--plot"]) == 0

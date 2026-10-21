@@ -4,7 +4,7 @@
 |---|---|
 | Task | P0-AN-01 |
 | Owner | Anas (branch `anas/simulation-edge`); implemented by Aman while Anas is on exams |
-| Status | Accepted (Salman answered Open Items 1–9 on 2026-10-19). T1 implemented in `src/utm_services/simulation/env.py` (`DroneEnv`, `sim-v1.0`) and `runner.py` (controller variants). Sprint 1 PR F adds the T2 injectors (`Disturbances`, `T2` in `env.py`: steady seeded wind, observation noise and delay, command dropout) and degraded command handling (hold the last command for `hold_steps`, then brake and hover). They are configured on `DroneEnv`; the `ScenarioConfig.disturbances` field follows as contract v1.4. |
+| Status | Accepted (Salman answered Open Items 1–9 on 2026-10-19). T1 implemented in `src/utm_services/simulation/env.py` (`DroneEnv`, `sim-v1.0`) and `runner.py` (controller variants). Sprint 1 PR F adds the T2 injectors (`Disturbances` in `env.py`: steady seeded wind, observation noise and delay, command dropout; profiles `T2_NOMINAL` and `T2_REALISTIC`, both placeholders until real telemetry data exists; the filter receives the same noisy, delayed states as the policy) and degraded command handling (hold the last command for `hold_steps`, then brake and hover). They are configured on `DroneEnv`; the `ScenarioConfig.disturbances` field follows as contract v1.4. |
 | Date | 2026-10-19, revised 2026-10-21 |
 | Authority | `INTERFACES.md` and `shared/contracts.py` on `main`. This note only fills gaps those documents leave open. |
 
@@ -112,7 +112,7 @@ The simulator produces a per-step record and one episode summary with the fields
 
 A run manifest records: `env_version`, `reward_version`, `scenario_id`, seed, `episode_id`, controller variant, `policy_id`, filter config (shielded only), episode limit, `dt_s`, `goal_radius_m`, `condition_tier`, the disturbance list (empty in T1), `rules_version` and the timing boundaries.
 
-**Controller variants** (`runner.run_episode`): `reference` (deterministic controller, `reference-p1-sa-01`), `unshielded_marl` (proposal passed through with `shield_active = False`) and `shielded_marl` (HOCBF filter). Until a trained MARL policy exists, the MARL variants may run the reference controller, labeled through `policy_id`.
+**Controller variants** (`runner.run_episode`): `reference` (deterministic P-I-D controller `ReferencePolicy`, `reference-p1-sa-01-pid`), `unshielded_marl` (proposal passed through with `shield_active = False`) and `shielded_marl` (HOCBF filter). Until a trained MARL policy exists, the MARL variants may run the reference controller, labeled through `policy_id`.
 
 ## 10. Future extensions (not part of v1)
 

@@ -67,8 +67,9 @@ class Disturbances:
 
     Wind is one steady vector per episode, each component uniform in
     [-wind_max, wind_max], added to every drone's acceleration. Noise and delay
-    act on the observation delivered to the policy only; ground truth, and the
-    states the runner gives the filter, stay exact. Dropout loses each drone's
+    act on what the server receives: the policy observation and
+    ``observed_states()``, which the runner gives the filter. Ground truth stays
+    exact and is used only for dynamics and metrics. Dropout loses each drone's
     command with probability ``dropout_p`` per step.
     """
 
@@ -81,8 +82,13 @@ class Disturbances:
 
 T1 = Disturbances()
 # T2 "mild atmospheric" (SIMULATOR_NOTE section 13); w_max from Open Item 2.
-T2 = Disturbances(wind_max_mps2=1.0, obs_pos_sigma_m=0.5, obs_vel_sigma_mps=0.1, obs_delay_steps=1,
-                  dropout_p=0.05)
+# Placeholders: both T2 profiles are guesses until we have real telemetry data.
+T2_NOMINAL = Disturbances(wind_max_mps2=1.0, obs_pos_sigma_m=0.5, obs_vel_sigma_mps=0.1, obs_delay_steps=1,
+                          dropout_p=0.05)
+T2_REALISTIC = Disturbances(wind_max_mps2=1.0, obs_pos_sigma_m=1.5, obs_vel_sigma_mps=0.3, obs_delay_steps=3,
+                            dropout_p=0.1)
+PROFILES = {"ideal": T1, "nominal": T2_NOMINAL, "realistic": T2_REALISTIC}
+_PROFILE_NAMES = {d: name for name, d in PROFILES.items()}
 
 # Filter flags for an agent whose command never reached step(): nothing decided.
 _NO_ACTION = SafeAction(agent_id="none", safe_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=0, shield_active=False,
@@ -178,6 +184,21 @@ class DroneEnv:
         """Ground-truth DroneState of every active agent, sorted by agent_id."""
         return [self._drone_state(a) for a in self._active()]
 
+    def observed_states(self) -> list[DroneState]:
+        """DroneState of every active agent as the server receives it: the same noisy,
+        delayed position and velocity the policy observation uses, sorted by agent_id.
+
+        Stamped with the current time (the receive time), because the filter
+        requires state and action timestamps to match; the data is
+        ``obs_delay_steps`` steps old.
+        """
+        received = self._obs_history[0]
+        return [
+            self._drone_state(a).model_copy(update={"position_m": tuple(map(float, received[a.agent_id][1])),
+                                                    "velocity_mps": tuple(map(float, received[a.agent_id][2]))})
+            for a in self._active()
+        ]
+
     def reset(self, config: ScenarioConfig) -> tuple[dict[str, ObservationV1], dict[str, Any]]:
         """Reset from a validated ScenarioConfig; returns observations and run metadata.
 
@@ -215,7 +236,10 @@ class DroneEnv:
             np.random.default_rng(s) for s in np.random.SeedSequence(config.seed).spawn(3)
         )
         self._wind = wind_rng.uniform(-d.wind_max_mps2, d.wind_max_mps2, 3)
-        self._obs_history: deque[dict[str, ObservationV1]] = deque(maxlen=d.obs_delay_steps + 1)
+        # Per step: agent_id -> (observation, observed position, observed velocity).
+        self._obs_history: deque[dict[str, tuple[ObservationV1, np.ndarray, np.ndarray]]] = deque(
+            maxlen=d.obs_delay_steps + 1
+        )
         self._record_separation(self._active())
         observations = self._deliver_observations(self.h_min_m2())
         metadata = {
@@ -226,7 +250,8 @@ class DroneEnv:
             "episode_limit_steps": config.episode_limit_steps,
             "dt_s": DT_S,
             "goal_radius_m": GOAL_RADIUS_M,
-            "condition_tier": {T1: "T1", T2: "T2"}.get(d, "custom"),
+            "condition_tier": {T1: "T1", T2_NOMINAL: "T2", T2_REALISTIC: "T2"}.get(d, "custom"),
+            "disturbance_profile": _PROFILE_NAMES.get(d, "custom"),
             "disturbances": {**asdict(d), "wind_mps2": self._wind.tolist()},
             "hold_steps": self._hold_steps,
             "rules_version": self._rules.version if self._rules else None,
@@ -418,8 +443,9 @@ class DroneEnv:
             if speed > MAX_SPEED_MPS:
                 vel *= MAX_SPEED_MPS / speed * _SPEED_CAP_SCALE
             observed[a.agent_id] = (pos, vel)
-        self._obs_history.append({a.agent_id: self._observation(a, h_min, observed) for a in active})
-        return {a.agent_id: self._obs_history[0][a.agent_id] for a in active}
+        self._obs_history.append({a.agent_id: (self._observation(a, h_min, observed), *observed[a.agent_id])
+                                  for a in active})
+        return {a.agent_id: self._obs_history[0][a.agent_id][0] for a in active}
 
     def _observation(
         self, agent: _Agent, h_min: float | None, observed: dict[str, tuple[np.ndarray, np.ndarray]]

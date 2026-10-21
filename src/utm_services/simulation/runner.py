@@ -19,7 +19,7 @@ import numpy as np
 from shared.contracts import AirspaceRulesV1, SafeAction, ScenarioConfig
 
 from utm_services.policy.adapter import PolicyFn, run_policy
-from utm_services.policy.reference import compute_reference_action
+from utm_services.policy.reference import ReferencePolicy
 from utm_services.safety.filter import FilterConfig, apply_filter
 from utm_services.simulation.env import DroneEnv
 
@@ -52,7 +52,7 @@ def run_episode(
 ) -> EpisodeResult:
     """Run one episode; returns the manifest, episode summary and per-step records.
 
-    ``reference`` always uses the deterministic reference controller. The MARL
+    ``reference`` always uses a fresh deterministic reference controller. The MARL
     variants need ``policy``; until a trained policy exists, callers may pass the
     reference controller and must label it through ``policy_id``. ``make_env``
     selects the dynamics backend (point-mass ``DroneEnv`` by default).
@@ -60,7 +60,7 @@ def run_episode(
     if variant not in VARIANTS:
         raise ValueError(f"unknown controller variant '{variant}'")
     if variant == "reference":
-        policy, policy_id = compute_reference_action, "reference-p1-sa-01"
+        policy, policy_id = ReferencePolicy(), "reference-p1-sa-01-pid"
     elif policy is None or not policy_id:
         raise ValueError(f"variant '{variant}' requires a policy and a policy_id")
     shielded = variant == "shielded_marl"
@@ -85,15 +85,17 @@ def run_episode(
     while not env.done:
         t0 = time.perf_counter()
         ts = env.timestamp_ms
-        states = env.states()
+        states = env.states()  # ground truth: metrics and replay only
+        # What the server receives: the policy and the filter both see the disturbed data.
+        observed = env.observed_states()
         proposed = []
-        for state in states:
+        for state in observed:
             p0 = time.perf_counter()
             proposed.append(run_policy(observations[state.agent_id].root, state.agent_id, ts, policy))
             policy_ms.append((time.perf_counter() - p0) * 1000.0)
 
         if shielded:
-            returned, _ = apply_filter(states, proposed, filter_config)
+            returned, _ = apply_filter(observed, proposed, filter_config)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -121,6 +123,7 @@ def run_episode(
                     "controller_variant": variant,
                     "timestamp_ms": ts,
                     "states": [s.model_dump(mode="json") for s in states],
+                    "observed_states": [s.model_dump(mode="json") for s in observed],
                     "proposed_actions": [a.model_dump(mode="json") for a in proposed],
                     "returned_actions": [a.model_dump(mode="json") for a in returned],
                     "infos": result.infos,

@@ -77,7 +77,7 @@ These items come from Sprint 1 review. Each must be closed before any test on a 
 
 | ID | Owner | Item | Found in | Acceptance criteria |
 | --- | --- | --- | --- | --- |
-| BL-06 | TBD | The safety filter has no disturbance margin. It plans with the commanded acceleration only, ignores wind (up to 1.0 m/s² per axis in T2), sees ground-truth states, and assumes every drone receives its command. Under T2 the shielded variant can lose separation. Fix in the C+D filter PR. | Sprint 1 PR F | `test_t2_shielded_keeps_separation` passes without `xfail` for every shipped scenario and seeds 0–4, with zero fallbacks, under the T2 injectors. |
+| BL-06 | TBD | The safety filter has no disturbance margin. It plans with the commanded acceleration only, ignores wind (up to 1.0 m/s² per axis in T2), takes the noisy, delayed states it receives as exact, and assumes every drone receives its command. Under T2 the shielded variant can lose separation. Fix in the C+D filter PR. | Sprint 1 PR F | `test_t2_shielded_keeps_separation` passes without `xfail` for every shipped scenario, both T2 profiles (nominal, realistic) and seeds 0–4, with zero fallbacks. |
 
 ## Shared evaluation definitions
 

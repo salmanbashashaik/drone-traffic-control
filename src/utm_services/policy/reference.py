@@ -26,6 +26,7 @@ from typing import Sequence
 
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
+    SIMULATION_STEP_MS,
     MARLAction,
     ObservationV1,
 )
@@ -42,6 +43,13 @@ _PROPORTIONAL_GAIN: float = 0.5
 # overshoot. A braking zone that only starts near the goal cannot stop a
 # drone at 15 m/s (stopping distance ~32 m at 3.5 m/s²).
 _DAMPING_GAIN: float = 2.0 * math.sqrt(_PROPORTIONAL_GAIN)
+
+# Integral gain for ReferencePolicy. A steady wind w leaves the P-D loop at an
+# offset of w / Kp (up to 2 m per axis at w_max = 1.0), outside the 2 m goal
+# radius; the integral cancels it. Stable (Routh) while Ki < Kp * Kd = 0.707.
+_INTEGRAL_GAIN: float = 0.2
+
+_DT_S: float = SIMULATION_STEP_MS / 1000.0
 
 
 def compute_reference_action(
@@ -89,6 +97,10 @@ def compute_reference_action(
     ay = _PROPORTIONAL_GAIN * dy - _DAMPING_GAIN * vy
     az = _PROPORTIONAL_GAIN * dz - _DAMPING_GAIN * vz
 
+    return _bounded_action(agent_id, timestamp_ms, ax, ay, az)
+
+
+def _bounded_action(agent_id: str, timestamp_ms: int, ax: float, ay: float, az: float) -> MARLAction:
     # --- Clip to contract bounds ---
     raw_max = max(abs(ax), abs(ay), abs(az))
     if raw_max > MAX_ACCEL_COMPONENT_MPS2:
@@ -108,3 +120,29 @@ def compute_reference_action(
         proposed_accel_mps2=(ax, ay, az),
         timestamp_ms=timestamp_ms,
     )
+
+
+class ReferencePolicy:
+    """Reference controller with an integral term (P-I-D on goal displacement).
+
+    Same law as ``compute_reference_action`` plus ``Ki * integral(goal
+    displacement)``, so a steady disturbance such as wind leaves no position
+    offset. It keeps one integrator per agent: use a fresh instance per episode.
+    Anti-windup: the integrator runs only while the output is not saturated, and
+    each component of ``Ki * integral`` is clamped to +/- u_max. The output is
+    always scaled into the contract bound.
+    """
+
+    def __init__(self, integral_gain: float = _INTEGRAL_GAIN) -> None:
+        self._ki = integral_gain
+        self._integral: dict[str, list[float]] = {}
+
+    def __call__(self, obs: ObservationV1, agent_id: str, timestamp_ms: int) -> MARLAction:
+        v = obs.root
+        integral = self._integral.setdefault(agent_id, [0.0, 0.0, 0.0])
+        accel = [_PROPORTIONAL_GAIN * v[6 + i] - _DAMPING_GAIN * v[3 + i] + self._ki * integral[i] for i in range(3)]
+        if self._ki and max(abs(a) for a in accel) <= MAX_ACCEL_COMPONENT_MPS2:
+            limit = MAX_ACCEL_COMPONENT_MPS2 / self._ki
+            for i in range(3):
+                integral[i] = max(-limit, min(limit, integral[i] + v[6 + i] * _DT_S))
+        return _bounded_action(agent_id, timestamp_ms, *accel)

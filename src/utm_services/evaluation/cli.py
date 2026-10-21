@@ -19,11 +19,9 @@ import numpy as np
 from pydantic import ValidationError
 from shared.contracts import SAFE_SEPARATION_M, ScenarioConfig
 
-from utm_services.policy.reference import compute_reference_action
-from utm_services.simulation.env import T1, T2, DroneEnv
+from utm_services.policy.reference import ReferencePolicy
+from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import VARIANTS, run_episode
-
-TIERS = {"T1": T1, "T2": T2}
 
 
 def plot_replay(records: list[dict[str, Any]], path: Path, title: str) -> None:
@@ -63,7 +61,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="utm-run", description=__doc__.splitlines()[0])
     parser.add_argument("scenario", type=Path, help="ScenarioConfig JSON file, e.g. scenarios/head-on-40.json")
     parser.add_argument("--variant", choices=VARIANTS, default="shielded_marl")
-    parser.add_argument("--tier", choices=TIERS, default="T1", help="environment condition tier (default: T1)")
+    parser.add_argument("--profile", choices=PROFILES, default="ideal",
+                        help="disturbance profile: ideal (T1), nominal or realistic (T2 placeholders; default: ideal)")
     parser.add_argument("--out", type=Path, default=Path("runs"), help="output directory (default: runs)")
     parser.add_argument("--plot", action="store_true", help="also write replay.png (needs the 'plot' extra)")
     args = parser.parse_args(argv)
@@ -74,8 +73,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"utm-run: invalid scenario {args.scenario}: {exc}", file=sys.stderr)
         return 2
 
-    result = run_episode(config, args.variant, policy=compute_reference_action, policy_id="reference-standin",
-                         make_env=lambda rules: DroneEnv(rules, disturbances=TIERS[args.tier]))
+    result = run_episode(config, args.variant, policy=ReferencePolicy(), policy_id="reference-standin",
+                         make_env=lambda rules: DroneEnv(rules, disturbances=PROFILES[args.profile]))
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "manifest.json").write_text(json.dumps(result.manifest, indent=2, default=str))
     (args.out / "summary.json").write_text(json.dumps(result.summary, indent=2))
