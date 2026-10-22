@@ -92,6 +92,24 @@ def run_episode(
     policy_ms: list[float] = []
     d_eff = SAFE_SEPARATION_M + filter_config.margin_m
     pair_violations: dict[str, dict[str, float]] = {}
+    dt_s = SIMULATION_STEP_MS / 1000.0
+    steps_inside = 0
+
+    def record_violations(states, held_s: float) -> bool:
+        """Add depth, and held_s inside d_eff, per pair; True if any pair is inside."""
+        inside = False
+        ordered = sorted(states, key=lambda s: s.agent_id)
+        for k, s_i in enumerate(ordered):
+            for s_j in ordered[k + 1:]:
+                depth = d_eff - float(np.linalg.norm(np.subtract(s_i.position_m, s_j.position_m)))
+                if depth > 0.0:
+                    inside = True
+                    pv = pair_violations.setdefault(
+                        f"{s_i.agent_id}|{s_j.agent_id}", {"max_depth_m": 0.0, "time_inside_s": 0.0}
+                    )
+                    pv["max_depth_m"] = max(pv["max_depth_m"], depth)
+                    pv["time_inside_s"] = round(pv["time_inside_s"] + held_s, 3)
+        return inside
 
     while not env.done:
         t0 = time.perf_counter()
@@ -105,16 +123,8 @@ def run_episode(
             proposed.append(run_policy(observations[state.agent_id].root, state.agent_id, ts, policy))
             policy_ms.append((time.perf_counter() - p0) * 1000.0)
 
-        ordered = sorted(states, key=lambda s: s.agent_id)
-        for k, s_i in enumerate(ordered):
-            for s_j in ordered[k + 1:]:
-                depth = d_eff - float(np.linalg.norm(np.subtract(s_i.position_m, s_j.position_m)))
-                if depth > 0.0:
-                    pv = pair_violations.setdefault(
-                        f"{s_i.agent_id}|{s_j.agent_id}", {"max_depth_m": 0.0, "time_inside_s": 0.0}
-                    )
-                    pv["max_depth_m"] = max(pv["max_depth_m"], depth)
-                    pv["time_inside_s"] = round(pv["time_inside_s"] + SIMULATION_STEP_MS / 1000.0, 3)
+        # Each state is held for one step: it counts dt_s of time inside.
+        steps_inside += record_violations(states, dt_s)
 
         if shielded:
             returned, _ = apply_filter(observed, proposed, filter_config)
@@ -152,13 +162,17 @@ def run_episode(
                 }
             )
 
+    # The final state starts no step: it adds depth but no time.
+    record_violations(env.states(), 0.0)
+
     mean_step, p95_step = _mean_p95(step_ms)
     mean_pol, p95_pol = _mean_p95(policy_ms)
     summary = {
         "episode_id": episode_id,
         **env.summary(),
         "max_violation_depth_m": max((p["max_depth_m"] for p in pair_violations.values()), default=0.0),
-        "time_inside_d_eff_s": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
+        "time_inside_d_eff_s": round(steps_inside * dt_s, 3),
+        "pair_seconds_inside_d_eff": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
         "pair_violations": pair_violations,
         "mean_step_time_ms": mean_step,
         "p95_step_time_ms": p95_step,

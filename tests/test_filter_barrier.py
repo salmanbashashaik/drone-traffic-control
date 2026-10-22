@@ -93,7 +93,26 @@ def test_episode_reports_violation_depth_and_time_inside_d_eff() -> None:
     pairs = s["pair_violations"]
     assert set(pairs) <= {"d1|d2", "d1|d3", "d2|d3"}
     assert max(p["max_depth_m"] for p in pairs.values()) == s["max_violation_depth_m"]
-    assert sum(p["time_inside_s"] for p in pairs.values()) == pytest.approx(s["time_inside_d_eff_s"])
+    assert sum(p["time_inside_s"] for p in pairs.values()) == pytest.approx(s["pair_seconds_inside_d_eff"])
+    # Real seconds: no more than the longest pair, no less than the pair-seconds over the pair count.
+    assert max(p["time_inside_s"] for p in pairs.values()) <= s["time_inside_d_eff_s"]
+    assert s["time_inside_d_eff_s"] <= s["pair_seconds_inside_d_eff"]
+    assert s["time_inside_d_eff_s"] < s["pair_seconds_inside_d_eff"]  # several sandwich pairs overlap
+
+
+def test_violation_in_the_final_state_is_reported() -> None:
+    # PR #12 review: the state after the last step was never checked. Two
+    # drones 6 m apart closing at 10 m/s, one step: only the final state is inside d_eff.
+    drones = [
+        {"agent_id": "a", "initial_position_m": (497.0, 500.0, 100.0), "initial_velocity_mps": (5.0, 0.0, 0.0),
+         "goal_m": (900.0, 500.0, 100.0)},
+        {"agent_id": "b", "initial_position_m": (503.0, 500.0, 100.0), "initial_velocity_mps": (-5.0, 0.0, 0.0),
+         "goal_m": (100.0, 500.0, 100.0)},
+    ]
+    s = _run("final-state", drones, variant="unshielded_marl", steps=1)
+
+    assert s["min_separation_m"] < SAFE_SEPARATION_M + FilterConfig().margin_m
+    assert s["max_violation_depth_m"] > 0.0
 
 
 def test_unshielded_variant_reports_the_same_metrics() -> None:
@@ -118,10 +137,11 @@ def test_filter_reports_violation_depth_per_pair() -> None:
 
 # Best min separation over all three pairs found by direct optimisation of
 # 100 ms piecewise-constant accelerations (SLSQP, 8 starts; a lower bound on
-# the optimum). The analytic upper bound is 4.45 m (test_filter_safety_core).
+# the optimum). The optimum lies between 4.177 m and the analytic upper bound
+# of 4.446 m (test_filter_safety_core).
 # Keeping only d1|d2 and d2|d3 gives 4.441 m, but that strategy sends d1 and
 # d3 the same way laterally and they then collide; the d1|d3 pair costs 0.27 m.
-SANDWICH_BEST_FOUND_M = 4.168
+SANDWICH_BEST_FOUND_M = 4.177
 
 
 def test_sandwich_escape_uses_all_three_axes() -> None:
