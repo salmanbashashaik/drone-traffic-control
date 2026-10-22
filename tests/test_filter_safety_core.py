@@ -58,10 +58,10 @@ def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
     real_solve = filter_module._solve_hocbf_qp
     first_solves = []
 
-    def escape_fails(state_map, action_map, pairs, config, escape_signs=None):
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None):
         if escape_signs:
             return {}, {}, False
-        first_solves.append(real_solve(state_map, action_map, pairs, config))
+        first_solves.append(real_solve(state_map, action_map, pairs, config, backup=backup))
         return first_solves[-1]
 
     monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)

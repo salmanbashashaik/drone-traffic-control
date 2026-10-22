@@ -1,4 +1,4 @@
-"""Check the 6.6 s backup horizon: does truncation ever overestimate the backup's min distance?"""
+"""Check the adaptive backup horizon (66-109 steps) against a 300-step minimum: does it ever overestimate the min distance?"""
 import numpy as np
 from shared.contracts import DroneState
 from utm_services.safety import filter as F
@@ -24,9 +24,9 @@ for trial in range(M):
     sj = DroneState(agent_id="b", position_m=(500, 500, 100), velocity_mps=tuple(vj), goal_m=(900, 900, 100), timestamp_ms=0)
     st = {"a": si, "b": sj}
     orig = F._backup_steps
-    m1, r1 = F._backup_constraints(st, [("a", "b")], cfg)
+    m1, r1, *_ = F._backup_constraints(st, [("a", "b")], cfg)
     F._backup_steps = lambda c: 300
-    m2, r2 = F._backup_constraints(st, [("a", "b")], cfg)
+    m2, r2, *_ = F._backup_constraints(st, [("a", "b")], cfg)
     F._backup_steps = orig
     # rhs = m.a_first - g dt (d*-d_eff)/sens ; compare d* via rhs difference is messy -> recompute directly
     if not np.allclose(r1, r2, atol=1e-6) or not np.allclose(m1, m2, atol=1e-6):

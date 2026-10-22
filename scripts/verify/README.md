@@ -7,7 +7,7 @@ other (`fuzz`, `optbound`, `invariance`) without extra setup.
 
 | Script | What it checks | Command |
 | --- | --- | --- |
-| `fuzz.py` | Closed-loop fuzz of `apply_filter` on random 2–6 drone encounters, zero nominal acceleration. Reports fallbacks, solver errors, exceptions and runs inside d_eff. `HARD=1` uses shorter time to approach. Writes `fuzz_<barrier>_<start>_<n>[_hard].json` to `$FUZZ_OUT` (default: the current directory). | `python scripts/verify/fuzz.py 5000 backup 100 8` (runs, barrier, steps, processes, [first seed]) |
+| `fuzz.py` | Closed-loop fuzz of `apply_filter` on random 2–6 drone encounters, zero nominal acceleration. Reports fallbacks, solver errors, exceptions, runs inside d_eff, and backup rollout steps and cap hits. `HARD=1` uses shorter time to approach. Writes `fuzz_<barrier>_<start>_<n>[_hard].json` to `$FUZZ_OUT` (default: the current directory). | `python scripts/verify/fuzz.py 5000 backup 100 8` (runs, barrier, steps, processes, [first seed]) |
 | `vertical.py` | Vertical head-on (60 m and 120 m, 10 m/s each), both barriers. Any argument prints the steps inside 40 m. | `python scripts/verify/vertical.py` |
 | `vsweep.py` | Line-of-sight elevation sweep with lateral offsets and two speeds, both barriers. `*` marks min separation below d_eff, `F` a fallback. | `python scripts/verify/vsweep.py` |
 | `floor.py` | Head-on near the altitude floor, both barriers: aborts and lowest altitude. | `python scripts/verify/floor.py` |
@@ -17,5 +17,5 @@ other (`fuzz`, `optbound`, `invariance`) without extra setup.
 | `recov.py` | Whether hard fuzz seeds that entered d_eff were recoverable at all. | `python scripts/verify/recov.py 2704 252` |
 | `invariance.py` | Per-step decay and forward invariance of the backup barrier, 2 drones, serial. | `python scripts/verify/invariance.py` |
 | `inv2.py` | Parallel version of `invariance.py`. | `python scripts/verify/inv2.py 3000` |
-| `horizon.py` | Whether the 6.6 s backup horizon ever overestimates the backup's minimum distance. | `python scripts/verify/horizon.py` |
+| `horizon.py` | Whether the adaptive backup horizon (66 to 109 steps) ever overestimates the backup's minimum distance, against a 300-step minimum. | `python scripts/verify/horizon.py` |
 | `det.py` | Hashes of filtered actions for fixed scenarios. Run it in separate processes and compare the output. | `python scripts/verify/det.py` |

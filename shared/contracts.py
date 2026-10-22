@@ -164,7 +164,9 @@ class SafeAction(ContractModel):
     """Action returned by the filter adapter; the name is not a safety claim.
 
     Contract v1.1: a fallback action may have non-zero (bounded) acceleration;
-    v1.0 required zero acceleration. See INTERFACES.md.
+    v1.0 required zero acceleration. Contract v1.4: ``backup_rollout_capped``
+    is true when a backup rollout of this agent's pairs was still closing at
+    the hard cap. See INTERFACES.md.
     """
 
     agent_id: str = Field(min_length=1)
@@ -174,6 +176,7 @@ class SafeAction(ContractModel):
     h_min_m2: float | None
     qp_feasible: bool
     fallback_used: bool
+    backup_rollout_capped: bool = False
 
     @field_validator("agent_id")
     @classmethod

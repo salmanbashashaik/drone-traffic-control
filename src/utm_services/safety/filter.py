@@ -190,6 +190,12 @@ class FilterDiagnostics:
         re-solved with the escape constraint. Solver output, not a metric.
     pair_violation_depth_m:
         d_eff - d per pair (m) for pairs closer than d_eff this step.
+    backup_rollout_steps:
+        Steps each backup rollout flew this step, one per pair in the QP
+        (barrier="backup" only; empty otherwise).
+    backup_rollout_cap_pairs:
+        Pairs whose backup rollout was still closing at the hard cap; their
+        rows use the closest distance reached so far.
     """
 
     h_min_m2: float | None = None
@@ -200,6 +206,8 @@ class FilterDiagnostics:
     interventions: int = 0
     pair_slack_mps2: dict[tuple[str, str], float] = field(default_factory=dict)
     pair_violation_depth_m: dict[tuple[str, str], float] = field(default_factory=dict)
+    backup_rollout_steps: list[int] = field(default_factory=list)
+    backup_rollout_cap_pairs: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _separation_sq(state_i: DroneState, state_j: DroneState) -> float:
@@ -408,15 +416,34 @@ _BACKUP_HORIZON_MARGIN_S = 0.5
 
 
 def _backup_steps(config: FilterConfig) -> int:
-    """Backup horizon in simulator steps, derived from the speed and accel limits.
+    """Minimum backup horizon in simulator steps, derived from the speed and accel limits.
 
-    The evasive manoeuvre brakes each drone by at least u_max / sqrt(2) along
-    the line of sight (``_evasive_direction``: its x and y components are at
-    most sqrt(2), its n component at least 1). A pair closing at 2 v_max
-    therefore stops closing within sqrt(2) v_max / u_max (6.06 s at 15 m/s
-    and 3.5 m/s²). Add the actuator lag and _BACKUP_HORIZON_MARGIN_S.
+    Away from the walls the evasive manoeuvre brakes each drone by at least
+    u_max / sqrt(2) along the line of sight (``_evasive_direction``: its x and
+    y components are at most sqrt(2), its n component at least 1). A pair
+    closing at 2 v_max therefore stops closing within sqrt(2) v_max / u_max
+    (6.06 s at 15 m/s and 3.5 m/s²). Add the actuator lag and
+    _BACKUP_HORIZON_MARGIN_S. Near a wall the bound does not hold, so the
+    rollout continues past this minimum while the pair still closes, up to
+    ``_backup_max_steps`` (P2-SA-02 §5.3).
     """
     stop_s = math.sqrt(2.0) * MAX_SPEED_MPS / MAX_ACCEL_COMPONENT_MPS2
+    return math.ceil((stop_s + config.lag_s + _BACKUP_HORIZON_MARGIN_S) / (SIMULATION_STEP_MS / 1000.0))
+
+
+def _backup_max_steps(config: FilterConfig) -> int:
+    """Hard cap on the adaptive backup rollout in simulator steps (P2-SA-02 §5.3).
+
+    A loose bound, not a proof: the world-box clipping can force the
+    near-wall drone towards its neighbour for at most v_max / u_max (4.29 s),
+    until it has braked to rest along the wall normal; after that the pair is
+    assumed to stop closing within a further sqrt(2) v_max / u_max (6.06 s),
+    as in ``_backup_steps``. With the lag and _BACKUP_HORIZON_MARGIN_S this
+    is 109 steps at the defaults. A pair still closing at the cap is flagged
+    (``FilterDiagnostics.backup_rollout_cap_pairs``), so a case the bound
+    misses is visible.
+    """
+    stop_s = (1.0 + math.sqrt(2.0)) * MAX_SPEED_MPS / MAX_ACCEL_COMPONENT_MPS2
     return math.ceil((stop_s + config.lag_s + _BACKUP_HORIZON_MARGIN_S) / (SIMULATION_STEP_MS / 1000.0))
 
 
@@ -464,8 +491,9 @@ def _evasive_direction(
     instead of towards it (PR #12 review B1). Works on one (3,) vector or a
     (M, 3) stack.
 
-    known limit: a clipped component can reduce the braking along n below
-    u_max / sqrt(2), the bound ``_backup_steps`` rests on; only near a wall.
+    A clipped component can reduce the braking along n below u_max / sqrt(2),
+    the bound ``_backup_steps`` rests on; only near a wall. The backup
+    rollout therefore runs adaptively (``_backup_rollout``).
     """
     direction = n + _lateral(n)
     direction[..., 2] += up
@@ -473,49 +501,31 @@ def _evasive_direction(
     return direction if limits is None else np.clip(direction, *limits)
 
 
-def _backup_constraints(
-    states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig
-) -> tuple[np.ndarray, np.ndarray]:
-    """Backup-set barrier rows coef . (a_i - a_j) >= rhs, one per pair.
+def _backup_rollout(
+    p_i: np.ndarray, p_j: np.ndarray, v_i: np.ndarray, v_j: np.ndarray, config: FilterConfig
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Fly the evasive manoeuvre of pairs (i, j) against each other, (M, 3) inputs.
 
-    Both drones of a pair fly the evasive manoeuvre against each other from
-    the current state for ``_backup_steps`` steps of 100 ms zero-order-hold steps
-    with the simulator's trapezoid position update and speed cap, each
-    clipped to its own world-box limits: for an isolated pair this is what
-    the fallback flies. h = min |r| - d_eff over
-    that trajectory is the pair's margin, reached at step k*. The row asks
-    the trajectory that starts with the QP's acceleration instead of the
-    backup's first step to keep h_next >= (1 - gamma dt) h at k*, linearised
-    as m . r_k*(a) with m = r_k* / |r_k*| (m . r <= |r|, so the row is
-    sufficient) and d r_k* / d a = (k* + 0.5) dt^2. The row is divided by
-    that sensitivity, so it has a unit normal m and its slack is in m/s² like
-    the braking row (in metres OSQP stalls at 4000 iterations). The backup's
-    first acceleration meets the row whenever h >= 0, so an isolated pair
-    that is recoverable stays feasible. The per-step condition is only
-    approximate (in the PR #12 review fuzz it failed on 0.74 % of steps, by
-    at most 0.12 m), while forward invariance held: 0 of 1086 runs entered
-    d_eff. Returns (m (M, 3), rhs (M,)).
-
-    known limit: pairwise backup (a drone in several conflicts gets one
-    evasive per pair, not one manoeuvre: TASKS.md BL-03); only k* is
-    constrained (BL-04); the sensitivity ignores the backup's feedback and
-    the speed cap; lag_s only lengthens the horizon. Re-planned every step.
-    All must be resolved before any real flight.
+    Each pair flies at least ``_backup_steps`` steps, then until it stops
+    closing, at most ``_backup_max_steps``. Returns the relative positions
+    after each step (K, M, 3; K is the longest rollout, and steps after a
+    pair's own end are NaN), the first relative acceleration a_i - a_j
+    (M, 3), the closing speed after each pair's last step (M,; positive
+    while the pair still closes), the steps each pair flew (M,) and whether
+    it was still closing at the cap (M,).
     """
     dt = SIMULATION_STEP_MS / 1000.0
-    steps = _backup_steps(config)
-    d_eff = SAFE_SEPARATION_M + config.margin_m
-
-    def column(attr: str, k: int) -> np.ndarray:
-        return np.array([getattr(states[pair[k]], attr) for pair in pairs], dtype=np.float64)
+    min_steps = _backup_steps(config)
+    steps = max(min_steps, _backup_max_steps(config))
+    used = np.full(len(p_i), steps)
+    still = np.ones(len(p_i), dtype=bool)
+    closing = np.zeros(len(p_i))
 
     def cap(v: np.ndarray) -> np.ndarray:
         speed = np.linalg.norm(v, axis=1, keepdims=True)
         return v * np.minimum(1.0, MAX_SPEED_MPS / np.maximum(speed, 1e-9))
 
-    p_i, p_j = column("position_m", 0), column("position_m", 1)
-    v_i, v_j = column("velocity_mps", 0), column("velocity_mps", 1)
-    traj = np.empty((steps, len(pairs), 3))
+    traj = np.full((steps, len(p_i), 3), np.nan)
     for k in range(steps):
         r = p_i - p_j
         n = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-9)
@@ -529,16 +539,69 @@ def _backup_constraints(
         p_i = p_i + 0.5 * (v_i + v_i_next) * dt
         p_j = p_j + 0.5 * (v_j + v_j_next) * dt
         v_i, v_j = v_i_next, v_j_next
-        traj[k] = p_i - p_j
+        r = p_i - p_j
+        traj[k, still] = r[still]
+        rate = -np.einsum("ij,ij->i", r, v_i - v_j) / np.maximum(np.linalg.norm(r, axis=1), 1e-9)
+        closing[still] = rate[still]
+        if k + 1 >= min_steps:
+            done = still & (closing <= 0.0)
+            used[done] = k + 1
+            still &= ~done
+            if not still.any():
+                break
+    return traj[: used.max(initial=0)], a_first, closing, used, still
 
-    dist = np.linalg.norm(traj, axis=2)
+
+def _backup_constraints(
+    states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Backup-set barrier rows coef . (a_i - a_j) >= rhs, one per pair.
+
+    Both drones of a pair fly the evasive manoeuvre against each other from
+    the current state in 100 ms zero-order-hold steps with the simulator's
+    trapezoid position update and speed cap, each clipped to its own
+    world-box limits: for an isolated pair this is what the fallback flies.
+    The rollout (``_backup_rollout``) runs at least ``_backup_steps`` steps
+    and continues while the pair closes, up to ``_backup_max_steps``. A pair
+    still closing at the cap is treated conservatively: its row uses the
+    closest distance reached so far, and it is reported as capped. h = min
+    |r| - d_eff over that trajectory is the pair's margin, reached at step k*. The row asks
+    the trajectory that starts with the QP's acceleration instead of the
+    backup's first step to keep h_next >= (1 - gamma dt) h at k*, linearised
+    as m . r_k*(a) with m = r_k* / |r_k*| (m . r <= |r|, so the row is
+    sufficient) and d r_k* / d a = (k* + 0.5) dt^2. The row is divided by
+    that sensitivity, so it has a unit normal m and its slack is in m/s² like
+    the braking row (in metres OSQP stalls at 4000 iterations). The backup's
+    first acceleration meets the row whenever h >= 0, so an isolated pair
+    that is recoverable stays feasible. The per-step condition is only
+    approximate (in the PR #12 review fuzz it failed on 0.74 % of steps, by
+    at most 0.12 m), while forward invariance held: 0 of 1086 runs entered
+    d_eff. Returns (m (M, 3), rhs (M,), steps flown (M,), capped (M,)).
+
+    known limit: pairwise backup (a drone in several conflicts gets one
+    evasive per pair, not one manoeuvre: TASKS.md BL-03); only k* is
+    constrained (BL-04); the sensitivity ignores the backup's feedback and
+    the speed cap; lag_s only lengthens the horizon. Re-planned every step.
+    All must be resolved before any real flight.
+    """
+    dt = SIMULATION_STEP_MS / 1000.0
+    d_eff = SAFE_SEPARATION_M + config.margin_m
+
+    def column(attr: str, k: int) -> np.ndarray:
+        return np.array([getattr(states[pair[k]], attr) for pair in pairs], dtype=np.float64)
+
+    traj, a_first, _, used, capped = _backup_rollout(
+        column("position_m", 0), column("position_m", 1),
+        column("velocity_mps", 0), column("velocity_mps", 1), config,
+    )
+    dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
     k_star = np.argmin(dist, axis=0)
     cols = np.arange(len(pairs))
     d_star = dist[k_star, cols]
     m = traj[k_star, cols] / np.maximum(d_star, 1e-9)[:, None]
     sensitivity = (k_star + 0.5) * dt * dt
     rhs = np.einsum("ij,ij->i", m, a_first) - config.gamma * dt * (d_star - d_eff) / sensitivity
-    return m, rhs
+    return m, rhs, used, capped
 
 
 def build_hocbf_qp_matrices(
@@ -547,6 +610,7 @@ def build_hocbf_qp_matrices(
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
+    backup: tuple[np.ndarray, ...] | None = None,
 ) -> tuple[sp.csc_matrix, np.ndarray, sp.csc_matrix, np.ndarray, np.ndarray, list[str]]:
     """Build OSQP matrices for the joint HOCBF optimization problem.
 
@@ -558,7 +622,8 @@ def build_hocbf_qp_matrices(
     jointly satisfiable, so the QP is always feasible. Pairs in
     ``escape_signs`` use ``_escape_constraint`` instead, with the slack in
     metres, and get no tie-break. With barrier="backup" every other pair
-    uses ``_backup_constraints`` instead, with no tie-break.
+    uses ``_backup_constraints`` instead, with no tie-break; pass its result
+    as ``backup`` to reuse it across the solves of one step.
 
     Returns
     -------
@@ -608,7 +673,10 @@ def build_hocbf_qp_matrices(
     l_cbf = []
     u_cbf = []
 
-    backup = _backup_constraints(states, pairs_in_qp, config) if config.barrier == "backup" else None
+    if config.barrier != "backup":
+        backup = None
+    elif backup is None:
+        backup = _backup_constraints(states, pairs_in_qp, config)
     for k, (id_i, id_j) in enumerate(pairs_in_qp):
         idx_i = agent_idx[id_i]
         idx_j = agent_idx[id_j]
@@ -663,6 +731,7 @@ def _solve_hocbf_qp(
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
+    backup: tuple[np.ndarray, ...] | None = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float], bool]:
     """Solve the joint HOCBF QP over all active agents using OSQP.
 
@@ -690,7 +759,7 @@ def _solve_hocbf_qp(
 
     try:
         P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
-            states, actions, pairs_in_qp, config, escape_signs
+            states, actions, pairs_in_qp, config, escape_signs, backup
         )
         # On non-convergence retry once without over-relaxation (alpha 1.0
         # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
@@ -927,9 +996,19 @@ def apply_filter(
     diag.n_pairs_in_qp = len(pairs_in_qp)
 
     # --- QP solve ---
+    backup = None
     try:
+        if config.barrier == "backup" and pairs_in_qp:
+            backup = _backup_constraints(state_map, pairs_in_qp, config)
+            diag.backup_rollout_steps = [int(k) for k in backup[2]]
+            diag.backup_rollout_cap_pairs = [pair for pair, c in zip(pairs_in_qp, backup[3], strict=True) if c]
+            if diag.backup_rollout_cap_pairs:
+                logger.warning(
+                    "filter: backup rollout still closing at the cap at t=%d ms on %d pairs",
+                    step_ts, len(diag.backup_rollout_cap_pairs),
+                )
         safe_accels, pair_slack, qp_feasible = _solve_hocbf_qp(
-            state_map, action_map, pairs_in_qp, config
+            state_map, action_map, pairs_in_qp, config, backup=backup
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -956,7 +1035,7 @@ def apply_filter(
     if qp_feasible and escape_pairs:
         try:
             escaped, _, escape_ok = _solve_hocbf_qp(
-                state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs)
+                state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs), backup
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("filter: escape solve error at t=%d ms: %s", step_ts, exc)
@@ -994,6 +1073,7 @@ def apply_filter(
 
     # --- Build SafeAction list ---
     safe_actions: list[SafeAction] = []
+    capped_ids = {aid for pair in diag.backup_rollout_cap_pairs for aid in pair}
 
     for aid in agent_ids:
         nom = action_map[aid].proposed_accel_mps2
@@ -1014,6 +1094,7 @@ def apply_filter(
                 h_min_m2=diag.h_min_m2,
                 qp_feasible=not in_fallback,
                 fallback_used=in_fallback,
+                backup_rollout_capped=aid in capped_ids,
             )
         )
 

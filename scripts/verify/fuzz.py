@@ -12,7 +12,7 @@ from multiprocessing import Pool
 
 import numpy as np
 from shared.contracts import MAX_SPEED_MPS, DroneState, MARLAction
-from utm_services.safety.filter import FilterConfig, apply_filter
+from utm_services.safety.filter import FilterConfig, _backup_steps, apply_filter
 
 logging.disable(logging.CRITICAL)
 DT, D_EFF = 0.1, 5.5
@@ -50,7 +50,7 @@ def run(args):
     ids = [f"d{i}" for i in range(n)]
     cfg = FilterConfig(barrier=barrier)
     out = {"seed": seed, "n": n, "fallback_steps": 0, "solver_err_steps": 0, "min_sep": 1e9,
-           "exc": None, "first_inside": None, "max_depth": 0.0}
+           "exc": None, "first_inside": None, "max_depth": 0.0, "max_rollout": 0, "cap_hits": 0}
     traj = []
     for k in range(steps):
         ts = k * 100
@@ -68,6 +68,8 @@ def run(args):
             break
         out["fallback_steps"] += int(diag.fallback_used)
         out["solver_err_steps"] += int(not diag.qp_feasible)
+        out["max_rollout"] = max([out["max_rollout"], *diag.backup_rollout_steps])
+        out["cap_hits"] += len(diag.backup_rollout_cap_pairs)
         a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
         assert np.all(np.abs(a) <= 3.5 + 1e-9)
         vn = v + a * DT
@@ -97,6 +99,9 @@ if __name__ == "__main__":
     print(" by n:", {k: sum(r['n'] == k for r in ok) for k in range(2, 7)})
     print(" fallback runs:", [r["seed"] for r in ok if r["fallback_steps"]])
     print(" solver-error runs:", [r["seed"] for r in ok if r["solver_err_steps"]])
+    rollouts = [r["max_rollout"] for r in ok]
+    print(f" backup rollout steps: max {max(rollouts)}, runs past the minimum: "
+          f"{sum(k > _backup_steps(FilterConfig()) for k in rollouts)}, cap hits: {sum(r['cap_hits'] for r in ok)}")
     print(" exceptions:", [(r["seed"], r["exc"]) for r in ok if r["exc"]][:20], sum(bool(r["exc"]) for r in ok))
     bad = sorted([r for r in ok if r["min_sep"] < D_EFF], key=lambda r: r["min_sep"])
     print(f" runs inside d_eff: {len(bad)}; below 5 m: {sum(r['min_sep'] < 5.0 for r in bad)}")

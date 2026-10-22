@@ -140,7 +140,7 @@ Its cost is computation: one forward simulation and its sensitivity per active p
 
 ## 5. PR B2: the backup-set barrier as built
 
-Code: `_backup_steps`, `_evasive_direction` and `_backup_constraints` in `src/utm_services/safety/filter.py`, selected by `FilterConfig.barrier` (`"backup"`, the default since contract v1.3, or `"braking"`). Tests: `tests/test_filter_backup.py`.
+Code: `_backup_steps`, `_backup_max_steps`, `_evasive_direction`, `_backup_rollout` and `_backup_constraints` in `src/utm_services/safety/filter.py`, selected by `FilterConfig.barrier` (`"backup"`, the default since contract v1.3, or `"braking"`). Tests: `tests/test_filter_backup.py` and `tests/test_filter_backup_horizon.py`.
 
 ### 5.1 Backup controller
 
@@ -149,17 +149,23 @@ The backup controller is the evasive manoeuvre of the PR A fallback, now one fun
 Since the PR #12 review (contract v1.4) two details changed:
 
 - **Lateral direction near a vertical line of sight.** Away from vertical the lateral vector is `z × n`, normalised. That is undefined when `n` is vertical, and it swings from step to step when `n` is nearly vertical. Within 10° of vertical the filter instead uses the horizontal offset between the drones, projected perpendicular to `n`; an exactly vertical `n` uses +x (−x for a downward `n`). The two rules blend linearly between 10° and 20°. The rule is antisymmetric, so the two drones of a pair always get opposite lateral vectors, and it depends only on the relative position, so it does not rotate while the conflict lasts. The escape stage's vertical axis is `n × lateral`.
-- **World bounds.** Each drone's acceleration on each axis is limited by a barrier on its distance to each wall of the world box (x/y 0–1000 m, z 30–200 m), using the same `B(s) = sqrt(2u s + c²) − c` form as the pair barrier. These limits are hard bounds in the QP. The evasive manoeuvre is clipped to them in the backup rollout and in the fallback, so neither can drive a drone out of the box. Near a wall the clipping can reduce the braking component below `u / √2`; §5.3 assumes that bound, so the horizon may be short there. This closes BL-01.
+- **World bounds.** Each drone's acceleration on each axis is limited by a barrier on its distance to each wall of the world box (x/y 0–1000 m, z 30–200 m), using the same `B(s) = sqrt(2u s + c²) − c` form as the pair barrier. These limits are hard bounds in the QP. The evasive manoeuvre is clipped to them in the backup rollout and in the fallback, so neither can drive a drone out of the box. Near a wall the clipping can reduce the braking component below `u / √2`, the bound the minimum horizon in §5.3 rests on; the rollout is therefore adaptive (§5.3). This closes BL-01.
 
 ### 5.2 Integration step: 100 ms zero-order hold
 
 The backup trajectory is simulated with the simulator's own update: the acceleration is held for one 100 ms step, the velocity is capped at 15 m/s, and the position uses the trapezoid of the old and new velocity. With this step the first backup step is exactly what the fallback would fly, so the barrier certifies the manoeuvre the drone actually has, not a continuous-time idealisation of it. A finer step would cost proportionally more time and would no longer match the simulator.
 
-### 5.3 Horizon: derived from the limits
+### 5.3 Horizon: derived from the limits, adaptive near walls
 
 Along the line of sight `n` the evasive acceleration of one drone is at least `u / √2`. Proof: `n` and the lateral vector `l` are orthonormal, so for the x and y components `|n_x| + |l_x| ≤ √2` (and the same for y); the z component is `|n_z| + 1`, and the n-component of the unscaled sum is `1 + |n_z|`. After scaling to a largest component of `u`, the n-component is `u (1 + |n_z|) / max(√2, 1 + |n_z|) ≥ u / √2`. A test checks the bound on 10 000 random directions.
 
 A pair closing at the maximum `2 v_max = 30 m/s` therefore stops closing within `2 v_max / (2 u / √2) = √2 v_max / u = 6.06 s`. The horizon is that stopping time plus `FilterConfig.lag_s` plus a 0.5 s margin, rounded up to whole steps: 66 steps (6.6 s) at `lag_s = 0`. The margin keeps the closest approach from being cut off at the horizon end by the 100 ms hold and by the turn of the line of sight during the manoeuvre. `test_backup_horizon_covers_stopping_at_max_closing_speed` fails if the horizon is shorter than the derived value. The first prototype used 5 s, which covers only the axis-aligned head-on (relative deceleration 7 m/s², 4.3 s); that test failed on it.
+
+**The `u / √2` bound does not hold near a wall.** Since v1.4 the evasive manoeuvre is clipped to the drone's world-box limits (§5.1). When the escape direction points into a wall, the clipped component can remove most of the braking along `n`, and when the drone is moving fast towards the wall the wall barrier can even require acceleration towards the neighbour. The 66-step horizon is then not covered by the derivation above.
+
+**Scan.** A 300-step rollout was run on near-wall pairs (one drone within 1 m of the floor, the ceiling, the x = 0 wall or the y = 1000 m wall, the other 10–150 m away, both up to 15 m/s, the far drone aimed at the near one; 3000 draws per wall, both id orders), plus max-closing pairs with random lines of sight and hand-picked vertical cases. No pair was still closing after step 55 (floor 52, ceiling 55, x = 0 41, y = 1000 43, vertical 46), so the 66-step horizon was not observed to be short. The gap was in the derivation, not in a run.
+
+**Adaptive rollout.** The rollout (`_backup_rollout`) now flies every pair at least the 66 derived steps and continues while the pair still closes, up to a hard cap of 109 steps (`_backup_max_steps`). The cap is a loose bound, not a proof: the clipping can force the near-wall drone towards its neighbour for at most `v_max / u = 4.29 s`, until it has braked to rest along the wall normal; after that the pair is assumed to stop closing within a further `√2 v_max / u = 6.06 s`, as in the free case. With `lag_s` and the 0.5 s margin that is 10.85 s, 109 steps. A pair still closing at the cap is treated conservatively: its row uses the closest distance reached so far (the last step, so `k*` is the cap), both drones get `SafeAction.backup_rollout_capped = true`, the pair is listed in `FilterDiagnostics.backup_rollout_cap_pairs`, and the episode summary counts it in `rollout_cap_hits`. The summary also reports `max_backup_rollout_steps` and `p99_backup_rollout_steps`, so it is visible whether real scenarios ever need more than 66 steps. A pair that stops closing at or before step 66 gets exactly the old 66-step row, so the change does not alter any trajectory where the old horizon was enough (the random-traffic runs at N = 16 and N = 64 give the same step counts and minimum separations before and after). Tests: `tests/test_filter_backup_horizon.py` (near-wall max closing at the floor, the ceiling and an x and a y edge; the extension past the minimum; a forced cap hit with a reduced cap).
 
 ### 5.4 The constraint row
 
@@ -211,4 +217,5 @@ Each is also in the `_backup_constraints` docstring or in `TASKS.md`:
 - Only the closest-approach step `k*` is constrained. Backlog **BL-04**.
 - The sensitivity `(k* + 0.5) dt²` ignores the backup's feedback and the speed cap.
 - `lag_s` lengthens the horizon but the row does not model the actuator lag; the braking barrier's lag reserve has no backup equivalent yet.
-- One forward simulation per pair per step: about 4× the braking cost at N = 16.
+- One forward simulation per pair per step: about 4× the braking cost at N = 16. Since the adaptive rollout it is computed once per step and shared by the first and the escape solve.
+- The 109-step cap rests on a loose argument, not a proof; a pair that hits it is flagged and counted (§5.3).

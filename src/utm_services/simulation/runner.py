@@ -94,6 +94,8 @@ def run_episode(
     pair_violations: dict[str, dict[str, float]] = {}
     dt_s = SIMULATION_STEP_MS / 1000.0
     steps_inside = 0
+    rollout_steps: list[int] = []
+    rollout_cap_hits = 0
 
     def record_violations(states, held_s: float) -> bool:
         """Add depth, and held_s inside d_eff, per pair; True if any pair is inside."""
@@ -127,7 +129,9 @@ def run_episode(
         steps_inside += record_violations(states, dt_s)
 
         if shielded:
-            returned, _ = apply_filter(observed, proposed, filter_config)
+            returned, diag = apply_filter(observed, proposed, filter_config)
+            rollout_steps += diag.backup_rollout_steps
+            rollout_cap_hits += len(diag.backup_rollout_cap_pairs)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -174,6 +178,9 @@ def run_episode(
         "time_inside_d_eff_s": round(steps_inside * dt_s, 3),
         "pair_seconds_inside_d_eff": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
         "pair_violations": pair_violations,
+        "rollout_cap_hits": rollout_cap_hits,
+        "max_backup_rollout_steps": max(rollout_steps, default=None),
+        "p99_backup_rollout_steps": float(np.percentile(rollout_steps, 99)) if rollout_steps else None,
         "mean_step_time_ms": mean_step,
         "p95_step_time_ms": p95_step,
         "mean_policy_latency_ms": mean_pol,
