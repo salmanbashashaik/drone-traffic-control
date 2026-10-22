@@ -52,6 +52,27 @@ def test_sandwich_is_solved_with_slack_not_fallback() -> None:
     assert diag.pair_slack_mps2
 
 
+def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
+    # PR #12 review: a failed escape re-solve must not discard the valid first solve.
+    states, actions = _sandwich()
+    real_solve = filter_module._solve_hocbf_qp
+    first_solves = []
+
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None):
+        if escape_signs:
+            return {}, {}, False
+        first_solves.append(real_solve(state_map, action_map, pairs, config))
+        return first_solves[-1]
+
+    monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
+    safe, diag = apply_filter(states, actions)
+
+    assert first_solves and first_solves[0][2] is True
+    assert diag.qp_feasible is True
+    assert diag.fallback_used is False
+    assert {a.agent_id: a.safe_accel_mps2 for a in safe} == first_solves[0][0]
+
+
 def test_feasible_step_reports_no_slack() -> None:
     # 100 m apart, closing at 30 m/s: outside the braking curve, no conflict.
     states = [
@@ -198,10 +219,11 @@ def test_three_drone_sandwich_is_physically_unrecoverable() -> None:
     No controller can keep 5 m here under the +-3.5 m/s^2 per-axis limit.
     Take the pair that d2's x-acceleration does not help (by symmetry, any x
     action helps one pair and hurts the other, so the worse pair gets at most
-    the outer drone's own 3.5 m/s^2 of relative x deceleration):
+    the outer drone's own 3.5 m/s^2 of relative x deceleration; closing, both
+    drones can add up to 7 m/s^2 of relative acceleration):
 
-        x(t) >= 10 - 10 t - 1.75 t^2  and  x(t) <= 10 - 10 t + 1.75 t^2
-        at t = 0.8 s: |x| <= 10 - 8 + 1.12 = 3.12 m
+        x(t) >= 10 - 10 t - 3.5 t^2  and  x(t) <= 10 - 10 t + 1.75 t^2
+        at t = 0.8 s: -0.24 m <= x <= 10 - 8 + 1.12 = 3.12 m, so |x| <= 3.12 m
 
     Lateral (y, z) relative acceleration is at most 7 m/s^2 per axis
     (3.5 each drone, opposite signs), so at most 7 * sqrt(2) = 9.90 m/s^2 in

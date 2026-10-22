@@ -93,8 +93,8 @@ def test_qp_intervenes_on_head_on_converging_pair() -> None:
     # Nominal actions want them to maintain speed (zero accel).
     # HOCBF must intervene to push them apart (d1 accelerates in -x, d2 in +x).
     states = [
-        _state("d1", pos=(0.0, 0.0, 100.0), vel=(5.0, 0.0, 0.0)),
-        _state("d2", pos=(20.0, 0.0, 100.0), vel=(-5.0, 0.0, 0.0)),
+        _state("d1", pos=(400.0, 500.0, 100.0), vel=(5.0, 0.0, 0.0)),
+        _state("d2", pos=(420.0, 500.0, 100.0), vel=(-5.0, 0.0, 0.0)),
     ]
     actions = [
         _action("d1", accel=(0.0, 0.0, 0.0)),
@@ -131,8 +131,8 @@ def test_qp_passes_through_diverging_pair() -> None:
     # Two drones 20m apart flying away from each other at 5 m/s.
     # Nominal actions should pass through unchanged without intervention.
     states = [
-        _state("d1", pos=(0.0, 0.0, 100.0), vel=(-5.0, 0.0, 0.0)),
-        _state("d2", pos=(20.0, 0.0, 100.0), vel=(5.0, 0.0, 0.0)),
+        _state("d1", pos=(400.0, 500.0, 100.0), vel=(-5.0, 0.0, 0.0)),
+        _state("d2", pos=(420.0, 500.0, 100.0), vel=(5.0, 0.0, 0.0)),
     ]
     actions = [
         _action("d1", accel=(-0.5, 0.0, 0.0)),
@@ -152,8 +152,8 @@ def test_qp_passes_through_diverging_pair() -> None:
 def test_qp_passes_through_distant_stationary_pair() -> None:
     # Two drones 100m apart, zero velocity.
     states = [
-        _state("d1", pos=(0.0, 0.0, 100.0), vel=(0.0, 0.0, 0.0)),
-        _state("d2", pos=(100.0, 0.0, 100.0), vel=(0.0, 0.0, 0.0)),
+        _state("d1", pos=(400.0, 500.0, 100.0), vel=(0.0, 0.0, 0.0)),
+        _state("d2", pos=(500.0, 500.0, 100.0), vel=(0.0, 0.0, 0.0)),
     ]
     actions = [
         _action("d1", accel=(1.5, -0.5, 0.0)),
@@ -229,8 +229,8 @@ def test_lag_reserve_brakes_earlier() -> None:
 def test_qp_range_gate_pruning_removes_pair_from_qp() -> None:
     # Two drones 80m apart, range gate is 50m.
     states = [
-        _state("d1", pos=(0.0, 0.0, 100.0), vel=(5.0, 0.0, 0.0)),
-        _state("d2", pos=(80.0, 0.0, 100.0), vel=(-5.0, 0.0, 0.0)),
+        _state("d1", pos=(400.0, 500.0, 100.0), vel=(5.0, 0.0, 0.0)),
+        _state("d2", pos=(480.0, 500.0, 100.0), vel=(-5.0, 0.0, 0.0)),
     ]
     actions = [
         _action("d1", accel=(0.0, 0.0, 0.0)),
