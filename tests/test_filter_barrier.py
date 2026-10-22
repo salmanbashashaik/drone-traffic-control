@@ -187,7 +187,8 @@ def test_crossing_takes_at_most_x_percent_longer_than_unconstrained() -> None:
         _drone("a", (450.0, 500.0, 100.0), (850.0, 500.0, 100.0), vel=(15.0, 0.0, 0.0)),
         _drone("b", (500.0, 450.0, 100.0), (500.0, 850.0, 100.0), vel=(0.0, 15.0, 0.0)),
     ]
-    free = _run("crossing-90", drones, variant="reference", steps=1000)["steps"]
+    # Same policy without the filter: since #13 the reference variant uses the PID ReferencePolicy.
+    free = _run("crossing-90", drones, variant="unshielded_marl", steps=1000)["steps"]
     s = _run("crossing-90", drones, steps=1000)
     print(f"\ncrossing-90: {s['steps']} steps vs {free} unconstrained "
           f"(+{100 * (s['steps'] / free - 1):.1f} %), min_separation_m={s['min_separation_m']:.2f}")
