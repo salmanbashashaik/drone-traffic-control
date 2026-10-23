@@ -1,0 +1,4 @@
+{'filter': 'cbk', 'case': 'sandwich floor', 'min_sep': 3.205, 'inside_s': 1.2, 'fallbacks': 0, 'solver_errors': 0, 'contradictory': 0, 'reversals': 0, 'takeovers': 0, 'p50_ms': 47.1, 'p95_ms': 73.97, 'aborted': 0} None
+{'filter': 'cbk', 'case': 'sandwich ceiling', 'min_sep': 3.205, 'inside_s': 1.2, 'fallbacks': 0, 'solver_errors': 0, 'contradictory': 0, 'reversals': 0, 'takeovers': 0, 'p50_ms': 57.36, 'p95_ms': 97.12, 'aborted': 0} None
+{'filter': 'cbk', 'case': 'sandwich vertical', 'min_sep': 3.986, 'inside_s': 0.7, 'fallbacks': 0, 'solver_errors': 0, 'contradictory': 0, 'reversals': 0, 'takeovers': 0, 'p50_ms': 39.38, 'p95_ms': 57.15, 'aborted': 0} None
+{'filter': 'cbk', 'case': 'vnoise sigma=1.5', 'min_sep': 7.303, 'inside_s': 0.0, 'fallbacks': 0, 'solver_errors': 0, 'contradictory': 0, 'reversals': 0, 'takeovers': 0, 'p50_ms': 48.15, 'p95_ms': 63.75} 14
