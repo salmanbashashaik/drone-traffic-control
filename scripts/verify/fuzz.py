@@ -52,6 +52,7 @@ def run(args):
     out = {"seed": seed, "n": n, "fallback_steps": 0, "solver_err_steps": 0, "min_sep": 1e9,
            "exc": None, "first_inside": None, "max_depth": 0.0, "max_rollout": 0, "cap_hits": 0}
     traj = []
+    latch = {}  # one filter memory per run, like the episode runner
     for k in range(steps):
         ts = k * 100
         try:
@@ -62,7 +63,7 @@ def run(args):
             break
         acts = [MARLAction(agent_id=i, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=ts) for i in ids]
         try:
-            safe, diag = apply_filter(states, acts, cfg)
+            safe, diag = apply_filter(states, acts, cfg, latch=latch)
         except Exception as e:  # noqa: BLE001
             out["exc"] = f"filter@{k}: {type(e).__name__}: {e}"[:200]
             break

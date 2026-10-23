@@ -166,7 +166,11 @@ class SafeAction(ContractModel):
     Contract v1.1: a fallback action may have non-zero (bounded) acceleration;
     v1.0 required zero acceleration. Contract v1.4: ``backup_rollout_capped``
     is true when a backup rollout of this agent's pairs was still closing at
-    the hard cap. See INTERFACES.md.
+    the hard cap. ``world_limit_conflict`` is true when this agent's
+    world-box acceleration limits crossed and the nearer wall's limit was
+    kept. ``escape_failed_slack`` is true when the escape re-solve failed and
+    the kept first solve has slack on one of this agent's pairs. See
+    INTERFACES.md.
     """
 
     agent_id: str = Field(min_length=1)
@@ -177,6 +181,8 @@ class SafeAction(ContractModel):
     qp_feasible: bool
     fallback_used: bool
     backup_rollout_capped: bool = False
+    world_limit_conflict: bool = False
+    escape_failed_slack: bool = False
 
     @field_validator("agent_id")
     @classmethod

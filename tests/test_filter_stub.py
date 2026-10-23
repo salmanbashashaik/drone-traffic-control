@@ -214,8 +214,8 @@ def test_filter_config_rejects_negative_range_gate() -> None:
 
 
 def test_filter_config_accepts_valid_values() -> None:
-    cfg = FilterConfig(gamma=0.5, margin_m=1.0, tie_break_mps2=0.0, range_gate_m=200.0)
-    assert cfg.gamma == 0.5
+    cfg = FilterConfig(gamma=2.0, margin_m=1.0, tie_break_mps2=0.0, range_gate_m=200.0)
+    assert cfg.gamma == 2.0
 
 
 # ---------------------------------------------------------------------------

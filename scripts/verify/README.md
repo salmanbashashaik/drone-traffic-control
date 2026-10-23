@@ -3,7 +3,9 @@
 Independent checks of `utm_services.safety.filter`, written by the PR #12 reviewer. They are
 measurements, not tests: they print results and never fail the suite. Run them from the repository
 root after `pip install -e ".[dev]"`. Python puts this folder on `sys.path`, so the scripts import each
-other (`fuzz`, `optbound`, `invariance`) without extra setup.
+other (`fuzz`, `optbound`, `invariance`, `probe`) without extra setup. The closed-loop scripts (`fuzz.py`,
+`probe.py`, `vnoise.py`, `hnoise.py`) pass one `latch` dict per run to `apply_filter`, as the episode
+runner does.
 
 | Script | What it checks | Command |
 | --- | --- | --- |
@@ -18,4 +20,8 @@ other (`fuzz`, `optbound`, `invariance`) without extra setup.
 | `invariance.py` | Per-step decay and forward invariance of the backup barrier, 2 drones, serial. | `python scripts/verify/invariance.py` |
 | `inv2.py` | Parallel version of `invariance.py`. | `python scripts/verify/inv2.py 3000` |
 | `horizon.py` | Whether the adaptive backup horizon (66 to 109 steps) ever overestimates the backup's minimum distance, against a 300-step minimum. | `python scripts/verify/horizon.py` |
+| `probe.py` | Re-review probes: world-limit sweep (`limits`), single drone pushed into walls and corners (`walls`), pairs squeezed against walls (`squeeze`), vertical line of sight (`vertical`), determinism (`det`). | `python scripts/verify/probe.py [section]` |
+| `squeeze2.py` | More floor, ceiling and corner squeezes, a three-drone floor stack and a pair under downward wind, both barriers. Imports `probe.py`. | `python scripts/verify/squeeze2.py` |
+| `vnoise.py` | Vertical head-on with position noise σ 0, 0.5 and 1.5 m, 20 seeds each, both barriers: worst min separation, runs below d_eff and d_safe, and sideways-direction reversals. Passes one filter latch per run, like the episode runner. | `python scripts/verify/vnoise.py` |
+| `hnoise.py` | Horizontal control for `vnoise.py`: the same head-on along x. | `python scripts/verify/hnoise.py` |
 | `det.py` | Hashes of filtered actions for fixed scenarios. Run it in separate processes and compare the output. | `python scripts/verify/det.py` |

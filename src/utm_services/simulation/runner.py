@@ -96,6 +96,9 @@ def run_episode(
     steps_inside = 0
     rollout_steps: list[int] = []
     rollout_cap_hits = 0
+    world_limit_conflicts = 0
+    escape_failures_with_slack = 0
+    filter_latch: dict = {}  # per-pair sideways frames, kept across the episode's steps
 
     def record_violations(states, held_s: float) -> bool:
         """Add depth, and held_s inside d_eff, per pair; True if any pair is inside."""
@@ -129,9 +132,11 @@ def run_episode(
         steps_inside += record_violations(states, dt_s)
 
         if shielded:
-            returned, diag = apply_filter(observed, proposed, filter_config)
+            returned, diag = apply_filter(observed, proposed, filter_config, latch=filter_latch)
             rollout_steps += diag.backup_rollout_steps
             rollout_cap_hits += len(diag.backup_rollout_cap_pairs)
+            world_limit_conflicts += len(diag.world_limit_conflict_agents)
+            escape_failures_with_slack += len(diag.escape_failed_slack_pairs)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -179,6 +184,8 @@ def run_episode(
         "pair_seconds_inside_d_eff": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
         "pair_violations": pair_violations,
         "rollout_cap_hits": rollout_cap_hits,
+        "world_limit_conflicts": world_limit_conflicts,
+        "escape_failures_with_slack": escape_failures_with_slack,
         "max_backup_rollout_steps": max(rollout_steps, default=None),
         "p99_backup_rollout_steps": float(np.percentile(rollout_steps, 99)) if rollout_steps else None,
         "mean_step_time_ms": mean_step,

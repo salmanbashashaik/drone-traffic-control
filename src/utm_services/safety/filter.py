@@ -86,10 +86,13 @@ class FilterConfig:
     gamma:
         Linear class-K gain on the braking barrier (1/s). Larger values let
         the pair approach the braking curve faster. See formulation §6.
+        At least 1: below that the world-box limits can cross.
     margin_m:
         Separation buffer added to d_safe inside the barrier. Absorbs the
         100 ms sample-and-hold error and small actuator lag (PR #5 review).
-        Reported h_min_m2 still uses d_safe.
+        Reported h_min_m2 still uses d_safe. Also the standoff from each wall
+        of the world box; at most half the smallest box extent less the
+        stopping distance from v_max (48.57 m at the defaults).
     tie_break_mps2:
         Lateral bias added to the nominal of both agents in a pair whose
         nominal violates the constraint (both turn right about +z). Breaks the
@@ -141,10 +144,23 @@ class FilterConfig:
     barrier: str = "backup"
 
     def __post_init__(self) -> None:
-        if not self.gamma > 0.0:
-            raise ValueError(f"gamma must be positive, got {self.gamma}")
+        # gamma >= 1 and the margin_m bound keep the world-box limits from
+        # crossing (low <= high) for every state in the box at |v| <= v_max:
+        # checked on a z / v_z grid for gamma 1 and 10 and c 0.1 to 5, not
+        # proven. Below gamma 1 they cross even at margin 0 (gamma 0.1, c 0.1).
+        # The bound leaves room for a drone at v_max to stop from mid-box.
+        # _world_accel_limits still guards against a crossing at runtime.
+        if not self.gamma >= 1.0:
+            raise ValueError(f"gamma must be at least 1, got {self.gamma}")
         if not self.margin_m >= 0.0:
             raise ValueError(f"margin_m must be non-negative, got {self.margin_m}")
+        c = self.barrier_offset_mps
+        max_margin = (min(WORLD_XY_MAX_M - WORLD_XY_MIN_M, WORLD_Z_MAX_M - WORLD_Z_MIN_M) / 2.0
+                      - ((MAX_SPEED_MPS + c) ** 2 - c * c) / (2.0 * MAX_ACCEL_COMPONENT_MPS2))
+        if self.margin_m > max_margin:
+            raise ValueError(
+                f"margin_m must be at most {max_margin:.2f} m for barrier_offset_mps {c}, got {self.margin_m}"
+            )
         if not 0.0 <= self.tie_break_mps2 <= MAX_ACCEL_COMPONENT_MPS2:
             raise ValueError(f"tie_break_mps2 must be in [0, u_max], got {self.tie_break_mps2}")
         if not self.lag_s >= 0.0:
@@ -196,6 +212,13 @@ class FilterDiagnostics:
     backup_rollout_cap_pairs:
         Pairs whose backup rollout was still closing at the hard cap; their
         rows use the closest distance reached so far.
+    world_limit_conflict_agents:
+        Agents whose world-box acceleration limits crossed this step; the
+        nearer wall's limit was kept (``_world_accel_limits``).
+    escape_failed_slack_pairs:
+        Pairs with slack in the first solve when the escape re-solve failed
+        and that first solve was kept: their barrier is violated and the
+        escape constraint did not act this step.
     """
 
     h_min_m2: float | None = None
@@ -208,6 +231,8 @@ class FilterDiagnostics:
     pair_violation_depth_m: dict[tuple[str, str], float] = field(default_factory=dict)
     backup_rollout_steps: list[int] = field(default_factory=list)
     backup_rollout_cap_pairs: list[tuple[str, str]] = field(default_factory=list)
+    world_limit_conflict_agents: list[str] = field(default_factory=list)
+    escape_failed_slack_pairs: list[tuple[str, str]] = field(default_factory=list)
 
 
 def _separation_sq(state_i: DroneState, state_j: DroneState) -> float:
@@ -279,9 +304,17 @@ def _relative(s_i: DroneState, s_j: DroneState) -> tuple[np.ndarray, np.ndarray,
 # Line-of-sight angle from vertical (as sin) below which the sideways direction
 # is the pair's horizontal offset, and above which it is z x n; blended between.
 _NEAR_VERTICAL_SIN = (math.sin(math.radians(10.0)), math.sin(math.radians(20.0)))
+# Horizontal offset (m) below which a near-vertical pair starting a conflict
+# takes the plumb rule (+x for the upper drone) instead of its offset, and
+# the predicted miss beyond d_eff (m) under which a pair is in conflict. The
+# pair's relative position error is sqrt(2) sigma per axis; its horizontal
+# size is Rayleigh, 99th percentile 3.03 sqrt(2) sigma = 6.4 m at the
+# realistic profile (sigma 1.5 m; 2.1 m at nominal 0.5 m). A smaller offset
+# is mostly noise there, so its direction would be a coin toss.
+_PLUMB_OFFSET_M = 6.5
 
 
-def _lateral(n: np.ndarray) -> np.ndarray:
+def _lateral(n: np.ndarray, plumb_sin: np.ndarray | float = 1e-9) -> np.ndarray:
     """Unit sideways direction perpendicular to unit vector(s) n.
 
     Away from vertical it is z x n (a right turn about +z). Near vertical,
@@ -291,6 +324,8 @@ def _lateral(n: np.ndarray) -> np.ndarray:
     rotate it, so it stays fixed while the conflict lasts. An exactly vertical
     n uses +x (-x for downward n). The two are orthogonal and blend between
     10 and 20 degrees from vertical, so the result never vanishes or jumps.
+    The plumb rule also replaces an offset with sine below ``plumb_sin``,
+    within 10 degrees of vertical only (where the turn has no weight).
     _lateral(-n) = -_lateral(n), so the two drones of a pair move apart.
     Works on one (3,) vector or a (M, 3) stack.
     """
@@ -300,23 +335,136 @@ def _lateral(n: np.ndarray) -> np.ndarray:
     offset = n * (1.0, 1.0, 0.0)
     plumb = np.zeros_like(n)
     plumb[..., 0] = np.where(n[..., 2] >= 0.0, 1.0, -1.0)
-    offset = np.where(horizontal < 1e-9, plumb, offset)
+    lo, hi = _NEAR_VERTICAL_SIN
+    offset = np.where(horizontal < np.minimum(np.maximum(plumb_sin, 1e-9), lo), plumb, offset)
     offset = offset - np.sum(offset * n, axis=-1, keepdims=True) * n
     offset /= np.maximum(np.linalg.norm(offset, axis=-1, keepdims=True), 1e-12)
-    lo, hi = _NEAR_VERTICAL_SIN
     weight = np.clip((horizontal - lo) / (hi - lo), 0.0, 1.0)
     lateral = weight * turn + (1.0 - weight) * offset
     return lateral / np.linalg.norm(lateral, axis=-1, keepdims=True)
 
 
-def _escape_axes(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+@dataclass
+class _PairLatch:
+    """Sideways frame of a pair, fixed when its conflict starts (PR #12 re-review).
+
+    axis: unit rotation axis w = n0 x L0 of the line of sight n0 and the
+    sideways direction L0 at the start; the sideways direction is then w x n,
+    which stays continuous as the pair turns about w. signs: the
+    ``_escape_axes`` sign normalisation of (L, V) at the start. up: the
+    evasive z direction of the pair's first (lower id) drone at the start,
+    by the same rule as before (away in z; level: the lower id climbs).
+    escape: the escape signs (s_L, s_V), fixed the first step the pair needs them.
+    """
+
+    axis: np.ndarray
+    signs: tuple[float, float]
+    up: float
+    escape: tuple[float, float] | None = None
+
+
+def _frame_lateral(n: np.ndarray, axis: np.ndarray) -> np.ndarray:
+    """Sideways unit vector(s) w x n for rotation axis (axes) w, (3,) or (M, 3).
+
+    A zero axis (no latch), or n within 30 degrees of w, gives ``_lateral(n)``.
+    """
+    lateral = np.cross(axis, n)
+    norm = np.linalg.norm(lateral, axis=-1, keepdims=True)
+    return np.where(norm > 0.5, lateral / np.maximum(norm, 1e-12), _lateral(n))
+
+
+def _new_latch(n: np.ndarray, dist: float, escape: tuple[float, float] = (0.0, 0.0)) -> _PairLatch:
+    """Latch for a pair entering conflict along n.
+
+    ``escape`` holds the unlatched escape signs (s_L, s_V) of the pair's
+    conflict cluster (``_escape_signs``, miss or 2-colouring) on the axes of
+    ``_escape_axes(n)``. A non-zero sign orients the latched sideways
+    direction, or the latched up, so the backup and the escape that follow
+    the latch move agent i the way the colouring chose. With zero signs the
+    latch keeps ``_lateral(n)``: both drones turn right (z x n).
+    """
+    lateral = _lateral(n, _PLUMB_OFFSET_M / max(dist, 1e-9))
+    up = math.copysign(1.0, n[2]) if abs(n[2]) > 1e-3 else 1.0
+    lateral_e, vertical_e = _escape_axes(n)
+    along = escape[0] * float(lateral_e @ lateral)
+    if abs(along) > 0.5:
+        lateral = math.copysign(1.0, along) * lateral
+    if escape[1] != 0.0 and abs(float(vertical_e[2])) > _NEAR_VERTICAL_SIN[0]:
+        up = math.copysign(1.0, escape[1] * float(vertical_e[2]))
+    axes = (lateral, np.cross(n, lateral))
+    signs = tuple(1.0 if a[int(np.argmax(np.abs(a)))] > 0.0 else -1.0 for a in axes)
+    return _PairLatch(axis=np.cross(n, lateral), signs=signs, up=up)
+
+
+def _update_latches(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig,
+    latch: dict[tuple[str, str], _PairLatch],
+) -> dict[tuple[str, str], _PairLatch]:
+    """Latch the sideways frame of each pair entering conflict; drop it after.
+
+    A pair enters conflict when its distance, or its constant-velocity
+    predicted miss at t*, is below d_eff + _PLUMB_OFFSET_M: within the
+    realistic profile's noise of d_eff. It leaves only when both are above
+    that and it no longer closes, so a noisy miss crossing the limit while
+    the pair still closes does not release and re-latch it with another
+    frame. Pairs entering conflict take their orientation from the
+    unlatched escape signs of the whole conflict set (``_new_latch``): the
+    predicted miss when it is clear, else the 2-colouring, but the
+    colouring only in clusters of three or more drones. A two-drone
+    conflict with no clear miss keeps the turn-right rule (z x n), the
+    aviation head-on convention, which needs no knowledge of the cluster.
+    From then on the backup and the escape follow the latch. Returns the
+    latches of ``pairs``.
+    """
+    limit = SAFE_SEPARATION_M + config.margin_m + _PLUMB_OFFSET_M
+    entering = []
+    for pair in pairs:
+        r, v, n, t_star = _relative(state_map[pair[0]], state_map[pair[1]])
+        if min(float(np.linalg.norm(r)), float(np.linalg.norm(r + v * t_star))) < limit:
+            if pair not in latch:
+                entering.append(pair)
+        elif float(r @ v) >= 0.0:
+            latch.pop(pair, None)
+    for pair in set(latch) - set(pairs):
+        del latch[pair]
+    if entering:
+        # Colour the whole conflict set, so a drone squeezed between two
+        # neighbours gets opposite latches towards them.
+        conflict = sorted(set(latch) | set(entering))
+        escape = _escape_signs(state_map, conflict)
+        miss_only = _escape_signs(state_map, conflict, colouring=False)
+        cluster = {aid: {aid} for pair in conflict for aid in pair}
+        for id_i, id_j in conflict:
+            if cluster[id_i] is not cluster[id_j]:
+                merged = cluster[id_i] | cluster[id_j]
+                for aid in merged:
+                    cluster[aid] = merged
+        for pair in entering:
+            r = _relative(state_map[pair[0]], state_map[pair[1]])[0]
+            dist = float(np.linalg.norm(r))
+            sign = escape[pair] if len(cluster[pair[0]]) >= 3 else miss_only[pair]
+            latch[pair] = _new_latch(r / max(dist, 1e-9), dist, sign)
+    return dict(latch)
+
+
+def _latch_axis(frames: dict[tuple[str, str], _PairLatch] | None, pair: tuple[str, str]) -> np.ndarray:
+    frame = (frames or {}).get(pair)
+    return np.zeros(3) if frame is None else frame.axis
+
+
+def _escape_axes(n: np.ndarray, frame: _PairLatch | None = None) -> tuple[np.ndarray, np.ndarray]:
     """Sideways L and vertical V unit vectors perpendicular to n.
 
     L is ``_lateral(n)``; V = n x L completes the frame (z minus its n
     component for horizontal n). Each is sign-normalised so its largest
     component is positive, which gives pairs on opposite sides of a drone the
-    same axes and does not flip under small drifts.
+    same axes and does not flip under small drifts. With a latched ``frame``
+    L is w x n and both keep the signs chosen when the conflict started.
     """
+    if frame is not None:
+        lateral = _frame_lateral(n, frame.axis)
+        vertical = np.cross(n, lateral)
+        return frame.signs[0] * lateral, frame.signs[1] * vertical / np.linalg.norm(vertical)
     lateral = _lateral(n)
     vertical = np.cross(n, lateral)
     axes = []
@@ -327,7 +475,8 @@ def _escape_axes(n: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 
 
 def _escape_signs(
-    state_map: dict[str, DroneState], escape_pairs: list[tuple[str, str]]
+    state_map: dict[str, DroneState], escape_pairs: list[tuple[str, str]],
+    frames: dict[tuple[str, str], _PairLatch] | None = None, colouring: bool = True,
 ) -> dict[tuple[str, str], tuple[float, float]]:
     """Lateral and vertical escape signs (s_L, s_V) per escape pair.
 
@@ -339,7 +488,13 @@ def _escape_signs(
     The lateral colouring takes the closest pairs first; a pair left with
     equal colours (odd cycle) gets sign 0 on that axis. The vertical
     colouring takes those pairs first, so they split vertically instead.
+    A pair with a latched frame instead escapes along its latched backup
+    direction, fixed from its first escape step: s_L makes the sideways part
+    +L, and s_V follows the latched up (0 when V is within 10 degrees of
+    horizontal). With ``colouring`` false, an axis without a clear miss
+    gets sign 0.
     """
+    frames = frames or {}
     by_distance = sorted(
         escape_pairs, key=lambda p: (_separation_sq(state_map[p[0]], state_map[p[1]]), p)
     )
@@ -348,12 +503,27 @@ def _escape_signs(
 
     signs = {}
     for id_i, id_j in escape_pairs:
+        frame = frames.get((id_i, id_j))
+        if frame is not None and frame.escape is not None:
+            signs[(id_i, id_j)] = frame.escape
+            continue
         r, v, n, t_star = _relative(state_map[id_i], state_map[id_j])
+        if frame is not None:
+            # Follow the latched backup direction (+L sideways, the latched up in
+            # z for agent i), so the escape cannot flip against the backup rows
+            # and the tie-break on a noisy miss (PR #12 re-review).
+            # Near a vertical line of sight V is almost horizontal, and the
+            # sign of its small z part is noise: no vertical escape then.
+            v_z = frame.up * float(_escape_axes(n, frame)[1][2])
+            frame.escape = signs[(id_i, id_j)] = (
+                frame.signs[0], math.copysign(1.0, v_z) if abs(v_z) > _NEAR_VERTICAL_SIN[0] else 0.0,
+            )
+            continue
         miss = r + v * t_star
         miss -= float(miss @ n) * n
         signs[(id_i, id_j)] = tuple(
             math.copysign(1.0, float(miss @ axis)) if abs(float(miss @ axis)) > _MISS_CLEAR_M
-            else (colour[id_i] if colour[id_i] != colour[id_j] else 0.0)
+            else (colour[id_i] if colouring and colour[id_i] != colour[id_j] else 0.0)
             for axis, colour in zip(_escape_axes(n), (lateral, vertical), strict=True)
         )
     return signs
@@ -386,7 +556,8 @@ def _two_colour(edges: list[tuple[str, str]]) -> dict[str, float]:
 
 
 def _escape_constraint(
-    s_i: DroneState, s_j: DroneState, sign: tuple[float, float], config: FilterConfig
+    s_i: DroneState, s_j: DroneState, sign: tuple[float, float], config: FilterConfig,
+    frame: _PairLatch | None = None,
 ) -> tuple[np.ndarray, float]:
     """Predicted-separation constraint coef . (a_i - a_j) >= rhs, in metres.
 
@@ -402,7 +573,7 @@ def _escape_constraint(
     (docs/formulation/P2-SA-02-lateral-escape.md).
     """
     r, v, n, t_star = _relative(s_i, s_j)
-    lateral, vertical = _escape_axes(n)
+    lateral, vertical = _escape_axes(n, frame)
     m = n + sign[0] * lateral + sign[1] * vertical
     m /= np.linalg.norm(m)
     d_eff = SAFE_SEPARATION_M + config.margin_m
@@ -451,19 +622,18 @@ _WORLD_MIN_M = np.array((WORLD_XY_MIN_M, WORLD_XY_MIN_M, WORLD_Z_MIN_M))
 _WORLD_MAX_M = np.array((WORLD_XY_MAX_M, WORLD_XY_MAX_M, WORLD_Z_MAX_M))
 
 
-def _world_accel_limits(
+def _raw_world_limits(
     pos: np.ndarray, vel: np.ndarray, config: FilterConfig
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Per-component acceleration limits (low, high) that keep a drone in the world box.
+    """Per-component world-box acceleration limits (low, high) before the guard.
 
     One braking barrier per axis and wall, like the pair barrier but for one
     drone braking at u_max: h = B(s) - w, with s the distance to the wall
     less margin_m, w the speed towards it and B(s) = sqrt(2 u_max s + c^2) - c
     (linear inside the margin). dh/dt >= -gamma h asks for at least
-    -gamma h + B'(s) w of acceleration away from the wall. Clipped to the
-    box, so the limits never make the QP infeasible: low <= high because the
-    floor and ceiling (and the x and y walls) are far apart. Works on (3,)
-    or (N, 3) arrays.
+    -gamma h + B'(s) w of acceleration away from the wall, clipped to the
+    box. FilterConfig's margin_m and gamma bounds keep low <= high for every
+    state in the box at |v| <= v_max (checked on a grid, not proven).
     """
     u_max = MAX_ACCEL_COMPONENT_MPS2
     c = config.barrier_offset_mps
@@ -479,12 +649,37 @@ def _world_accel_limits(
     return low, high
 
 
+def _world_accel_limits(
+    pos: np.ndarray, vel: np.ndarray, config: FilterConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-component acceleration limits (low, high) that keep a drone in the world box.
+
+    ``_raw_world_limits`` with a runtime guard: if the limits ever cross on
+    an axis, the nearer wall's limit wins, so the drone is never driven into
+    the closer wall and the QP stays feasible (an OSQP setup error before).
+    ``_world_limit_conflicts`` reports where the guard acted. Works on (3,)
+    or (N, 3) arrays.
+    """
+    low, high = _raw_world_limits(pos, vel, config)
+    nearer_min = (pos - _WORLD_MIN_M) <= (_WORLD_MAX_M - pos)
+    crossed = low > high
+    return np.where(crossed & ~nearer_min, high, low), np.where(crossed & nearer_min, low, high)
+
+
+def _world_limit_conflicts(pos: np.ndarray, vel: np.ndarray, config: FilterConfig) -> np.ndarray:
+    """Per drone (N,): whether its raw world limits crossed on any axis."""
+    low, high = _raw_world_limits(pos, vel, config)
+    return np.any(low > high, axis=-1)
+
+
 def _evasive_direction(
-    n: np.ndarray, up: np.ndarray | float, limits: tuple[np.ndarray, np.ndarray] | None = None
+    n: np.ndarray, up: np.ndarray | float, limits: tuple[np.ndarray, np.ndarray] | None = None,
+    axis: np.ndarray | None = None,
 ) -> np.ndarray:
     """Evasive acceleration for the agent at the head of unit vector(s) n.
 
     Sums n (away from the neighbour), the sideways unit vector ``_lateral(n)``
+    (``_frame_lateral(n, axis)`` with latched axes; zero rows have no latch)
     and ``up`` in z, scaled so the largest component is u_max. With
     ``limits`` (``_world_accel_limits`` of the drone) each component is then
     clipped to them, so near a wall the drone brakes or turns away from it
@@ -495,16 +690,20 @@ def _evasive_direction(
     the bound ``_backup_steps`` rests on; only near a wall. The backup
     rollout therefore runs adaptively (``_backup_rollout``).
     """
-    direction = n + _lateral(n)
+    direction = n + (_lateral(n) if axis is None else _frame_lateral(n, axis))
     direction[..., 2] += up
     direction = direction * (MAX_ACCEL_COMPONENT_MPS2 / np.max(np.abs(direction), axis=-1, keepdims=True))
     return direction if limits is None else np.clip(direction, *limits)
 
 
 def _backup_rollout(
-    p_i: np.ndarray, p_j: np.ndarray, v_i: np.ndarray, v_j: np.ndarray, config: FilterConfig
+    p_i: np.ndarray, p_j: np.ndarray, v_i: np.ndarray, v_j: np.ndarray, config: FilterConfig,
+    axis: np.ndarray | None = None, up_latched: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Fly the evasive manoeuvre of pairs (i, j) against each other, (M, 3) inputs.
+
+    ``axis`` (M, 3) and ``up_latched`` (M,) hold each pair's latched
+    rotation axis and z direction (zero: none).
 
     Each pair flies at least ``_backup_steps`` steps, then until it stops
     closing, at most ``_backup_max_steps``. Returns the relative positions
@@ -531,8 +730,10 @@ def _backup_rollout(
         n = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-9)
         # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
         up = np.where(np.abs(n[:, 2]) > 1e-3, np.sign(n[:, 2]), 1.0)
-        a_i = _evasive_direction(n, up, _world_accel_limits(p_i, v_i, config))
-        a_j = _evasive_direction(-n, -up, _world_accel_limits(p_j, v_j, config))
+        if up_latched is not None:
+            up = np.where(up_latched != 0.0, up_latched, up)
+        a_i = _evasive_direction(n, up, _world_accel_limits(p_i, v_i, config), axis)
+        a_j = _evasive_direction(-n, -up, _world_accel_limits(p_j, v_j, config), axis)
         if k == 0:
             a_first = a_i - a_j
         v_i_next, v_j_next = cap(v_i + a_i * dt), cap(v_j + a_j * dt)
@@ -553,7 +754,8 @@ def _backup_rollout(
 
 
 def _backup_constraints(
-    states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig
+    states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig,
+    frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Backup-set barrier rows coef . (a_i - a_j) >= rhs, one per pair.
 
@@ -593,6 +795,8 @@ def _backup_constraints(
     traj, a_first, _, used, capped = _backup_rollout(
         column("position_m", 0), column("position_m", 1),
         column("velocity_mps", 0), column("velocity_mps", 1), config,
+        np.array([_latch_axis(frames, pair) for pair in pairs]).reshape(-1, 3),
+        np.array([(frames or {})[pair].up if pair in (frames or {}) else 0.0 for pair in pairs]),
     )
     dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
     k_star = np.argmin(dist, axis=0)
@@ -611,6 +815,7 @@ def build_hocbf_qp_matrices(
     config: FilterConfig,
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
     backup: tuple[np.ndarray, ...] | None = None,
+    frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> tuple[sp.csc_matrix, np.ndarray, sp.csc_matrix, np.ndarray, np.ndarray, list[str]]:
     """Build OSQP matrices for the joint HOCBF optimization problem.
 
@@ -623,7 +828,8 @@ def build_hocbf_qp_matrices(
     ``escape_signs`` use ``_escape_constraint`` instead, with the slack in
     metres, and get no tie-break. With barrier="backup" every other pair
     uses ``_backup_constraints`` instead, with no tie-break; pass its result
-    as ``backup`` to reuse it across the solves of one step.
+    as ``backup`` to reuse it across the solves of one step. ``frames`` holds
+    the latched sideways frames of pairs in conflict (``_update_latches``).
 
     Returns
     -------
@@ -676,14 +882,16 @@ def build_hocbf_qp_matrices(
     if config.barrier != "backup":
         backup = None
     elif backup is None:
-        backup = _backup_constraints(states, pairs_in_qp, config)
+        backup = _backup_constraints(states, pairs_in_qp, config, frames)
     for k, (id_i, id_j) in enumerate(pairs_in_qp):
         idx_i = agent_idx[id_i]
         idx_j = agent_idx[id_j]
         row = np.zeros(dim, dtype=np.float64)
         if backup is not None or (id_i, id_j) in escape_signs:
             if (id_i, id_j) in escape_signs:
-                coef, rhs = _escape_constraint(states[id_i], states[id_j], escape_signs[(id_i, id_j)], config)
+                coef, rhs = _escape_constraint(
+                    states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
+                )
             else:
                 coef, rhs = backup[0][k], float(backup[1][k])
             row[3 * idx_i : 3 * idx_i + 3] = coef
@@ -701,7 +909,7 @@ def build_hocbf_qp_matrices(
         # nominal would violate the constraint, bias both agents apart
         # sideways (``_lateral``: right turn about +z away from vertical).
         if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < rhs:
-            lateral = config.tie_break_mps2 * _lateral(n_ij)
+            lateral = config.tie_break_mps2 * _frame_lateral(n_ij, _latch_axis(frames, (id_i, id_j)))
             target[3 * idx_i : 3 * idx_i + 3] += lateral
             target[3 * idx_j : 3 * idx_j + 3] -= lateral
 
@@ -732,6 +940,7 @@ def _solve_hocbf_qp(
     config: FilterConfig,
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
     backup: tuple[np.ndarray, ...] | None = None,
+    frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float], bool]:
     """Solve the joint HOCBF QP over all active agents using OSQP.
 
@@ -750,16 +959,20 @@ def _solve_hocbf_qp(
         return {}, {}, True
 
     if not pairs_in_qp:
-        # No active pairs to constrain; nominal actions are already valid
-        safe_accels = {
-            aid: actions[aid].proposed_accel_mps2
-            for aid in actions
-        }
+        # No active pairs to constrain; the nominal only needs the world-box
+        # limits the QP would apply (PR #12 re-review: a lone drone left the box).
+        safe_accels = {}
+        for aid in actions:
+            state = states[aid]
+            limits = _world_accel_limits(
+                np.array(state.position_m, dtype=np.float64), np.array(state.velocity_mps, dtype=np.float64), config
+            )
+            safe_accels[aid] = tuple(float(c) for c in np.clip(actions[aid].proposed_accel_mps2, *limits))
         return safe_accels, {}, True
 
     try:
         P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
-            states, actions, pairs_in_qp, config, escape_signs, backup
+            states, actions, pairs_in_qp, config, escape_signs, backup, frames
         )
         # On non-convergence retry once without over-relaxation (alpha 1.0
         # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
@@ -816,6 +1029,7 @@ def _evasive_accel(
     state_map: dict[str, DroneState],
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
+    frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> tuple[float, float, float]:
     """Fallback manoeuvre away from the most critical neighbour.
 
@@ -842,7 +1056,10 @@ def _evasive_accel(
         return (0.0, 0.0, 0.0)
     other = best[1]
     n, _, _ = _pair_constraint(state_map[aid], state_map[other], config)
-    if abs(n[2]) > 1e-3:
+    frame = (frames or {}).get(tuple(sorted((aid, other))))
+    if frame is not None:
+        up = frame.up if aid < other else -frame.up
+    elif abs(n[2]) > 1e-3:
         up = math.copysign(1.0, n[2])
     else:
         up = 1.0 if aid < other else -1.0
@@ -850,7 +1067,7 @@ def _evasive_accel(
     limits = _world_accel_limits(
         np.array(state.position_m, dtype=np.float64), np.array(state.velocity_mps, dtype=np.float64), config
     )
-    direction = _evasive_direction(n, up, limits)
+    direction = _evasive_direction(n, up, limits, _latch_axis(frames, tuple(sorted((aid, other)))))
     return tuple(float(c) for c in np.clip(direction, -u_max, u_max))
 
 
@@ -859,6 +1076,7 @@ def _fallback_cluster(
     action_map: dict[str, MARLAction],
     pairs_in_qp: list[tuple[str, str]],
     config: FilterConfig,
+    frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> dict[str, tuple[float, float, float]]:
     """Evasive accelerations for the conflict cluster after a solver error.
 
@@ -888,13 +1106,14 @@ def _fallback_cluster(
             return evasive
         cluster |= grow
         for aid in grow:
-            evasive[aid] = _evasive_accel(aid, state_map, pairs_in_qp, config)
+            evasive[aid] = _evasive_accel(aid, state_map, pairs_in_qp, config, frames)
 
 
 def apply_filter(
     states: Sequence[DroneState],
     actions: Sequence[MARLAction],
     config: FilterConfig | None = None,
+    latch: dict | None = None,
 ) -> tuple[list[SafeAction], FilterDiagnostics]:
     """Apply the HOCBF safety filter to one step.
 
@@ -908,6 +1127,11 @@ def apply_filter(
         One per agent, timestamps must all match the state timestamps.
     config:
         Filter configuration. Uses defaults if None.
+    latch:
+        The caller's per-episode filter memory: pass the same empty dict on
+        every step of one episode. Each pair keeps the sideways escape frame
+        and escape signs it had when its conflict started, so observation
+        noise cannot flip them. None: every step starts fresh (stateless).
 
     Returns
     -------
@@ -994,12 +1218,25 @@ def apply_filter(
     diag.h_min_m2 = h_min
     diag.n_pairs_total = n_pairs_total
     diag.n_pairs_in_qp = len(pairs_in_qp)
+    conflicts = _world_limit_conflicts(
+        np.array([state_map[aid].position_m for aid in agent_ids], dtype=np.float64),
+        np.array([state_map[aid].velocity_mps for aid in agent_ids], dtype=np.float64),
+        config,
+    )
+    diag.world_limit_conflict_agents = [aid for aid, c in zip(agent_ids, conflicts, strict=True) if c]
+    if diag.world_limit_conflict_agents:
+        logger.warning(
+            "filter: world-box limits crossed at t=%d ms for %s; kept the nearer wall's limit",
+            step_ts, diag.world_limit_conflict_agents,
+        )
+
+    frames = _update_latches(state_map, pairs_in_qp, config, {} if latch is None else latch)
 
     # --- QP solve ---
     backup = None
     try:
         if config.barrier == "backup" and pairs_in_qp:
-            backup = _backup_constraints(state_map, pairs_in_qp, config)
+            backup = _backup_constraints(state_map, pairs_in_qp, config, frames)
             diag.backup_rollout_steps = [int(k) for k in backup[2]]
             diag.backup_rollout_cap_pairs = [pair for pair, c in zip(pairs_in_qp, backup[3], strict=True) if c]
             if diag.backup_rollout_cap_pairs:
@@ -1008,7 +1245,7 @@ def apply_filter(
                     step_ts, len(diag.backup_rollout_cap_pairs),
                 )
         safe_accels, pair_slack, qp_feasible = _solve_hocbf_qp(
-            state_map, action_map, pairs_in_qp, config, backup=backup
+            state_map, action_map, pairs_in_qp, config, backup=backup, frames=frames
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -1035,7 +1272,8 @@ def apply_filter(
     if qp_feasible and escape_pairs:
         try:
             escaped, _, escape_ok = _solve_hocbf_qp(
-                state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs), backup
+                state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs, frames), backup,
+                frames,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("filter: escape solve error at t=%d ms: %s", step_ts, exc)
@@ -1043,7 +1281,11 @@ def apply_filter(
         if escape_ok:
             safe_accels = escaped
         else:
-            logger.warning("filter: escape solve failed at t=%d ms, keeping the first solve", step_ts)
+            diag.escape_failed_slack_pairs = sorted(pair_slack)
+            logger.warning(
+                "filter: escape solve failed at t=%d ms, keeping the first solve with slack on %d pairs",
+                step_ts, len(pair_slack),
+            )
 
     diag.qp_feasible = qp_feasible
     diag.pair_slack_mps2 = pair_slack
@@ -1060,7 +1302,7 @@ def apply_filter(
     # be heading out of the world).
     evasive: dict[str, tuple[float, float, float]] = {}
     if not qp_feasible:
-        evasive = _fallback_cluster(state_map, action_map, pairs_in_qp, config)
+        evasive = _fallback_cluster(state_map, action_map, pairs_in_qp, config, frames)
         safe_accels = {}
         for aid in agent_ids:
             state = state_map[aid]
@@ -1074,6 +1316,7 @@ def apply_filter(
     # --- Build SafeAction list ---
     safe_actions: list[SafeAction] = []
     capped_ids = {aid for pair in diag.backup_rollout_cap_pairs for aid in pair}
+    escape_failed_ids = {aid for pair in diag.escape_failed_slack_pairs for aid in pair}
 
     for aid in agent_ids:
         nom = action_map[aid].proposed_accel_mps2
@@ -1095,6 +1338,8 @@ def apply_filter(
                 qp_feasible=not in_fallback,
                 fallback_used=in_fallback,
                 backup_rollout_capped=aid in capped_ids,
+                world_limit_conflict=aid in diag.world_limit_conflict_agents,
+                escape_failed_slack=aid in escape_failed_ids,
             )
         )
 

@@ -58,10 +58,10 @@ def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
     real_solve = filter_module._solve_hocbf_qp
     first_solves = []
 
-    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None):
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None):
         if escape_signs:
             return {}, {}, False
-        first_solves.append(real_solve(state_map, action_map, pairs, config, backup=backup))
+        first_solves.append(real_solve(state_map, action_map, pairs, config, backup=backup, frames=frames))
         return first_solves[-1]
 
     monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
@@ -71,6 +71,31 @@ def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
     assert {a.agent_id: a.safe_accel_mps2 for a in safe} == first_solves[0][0]
+    # PR #12 re-review: the kept first solve carries slack, so it is flagged.
+    assert diag.pair_slack_mps2
+    assert diag.escape_failed_slack_pairs == sorted(diag.pair_slack_mps2)
+    flagged = {aid for pair in diag.pair_slack_mps2 for aid in pair}
+    assert {a.agent_id for a in safe if a.escape_failed_slack} == flagged
+
+
+def test_escape_failures_with_slack_are_counted_in_the_summary(monkeypatch) -> None:
+    drones = [
+        _drone("d1", (490.0, 500.0, 100.0), (900.0, 500.0, 100.0), vel=(10.0, 0.0, 0.0)),
+        _drone("d2", (500.0, 500.0, 100.0), (500.0, 900.0, 100.0)),
+        _drone("d3", (510.0, 500.0, 100.0), (100.0, 500.0, 100.0), vel=(-10.0, 0.0, 0.0)),
+    ]
+    assert _run("sandwich-3", drones, steps=60)["escape_failures_with_slack"] == 0
+
+    real_solve = filter_module._solve_hocbf_qp
+
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None):
+        return ({}, {}, False) if escape_signs else real_solve(state_map, action_map, pairs, config, backup=backup, frames=frames)
+
+    monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
+    s = _run("sandwich-3", drones, steps=60)
+
+    assert s["escape_failures_with_slack"] > 0
+    assert s["fallback_events"] == 0
 
 
 def test_feasible_step_reports_no_slack() -> None:
