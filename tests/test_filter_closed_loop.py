@@ -22,6 +22,7 @@ def _run(config):
     ).summary
 
 
+@pytest.mark.slow
 def test_four_way_corner_swap_holds_separation() -> None:
     corners = [(400.0, 400.0), (600.0, 400.0), (600.0, 600.0), (400.0, 600.0)]
     drones = [
@@ -35,6 +36,7 @@ def test_four_way_corner_swap_holds_separation() -> None:
 
 
 @pytest.mark.parametrize("gap", [80.0, 100.0, 150.0])
+@pytest.mark.slow
 def test_head_on_at_max_speed_holds_separation_and_completes(gap) -> None:
     # 30 m/s closing; 80 m is inside the pure-braking envelope (≈64 m + margin).
     x0 = 500.0 - gap / 2

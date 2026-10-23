@@ -59,6 +59,7 @@ def test_head_on_near_floor_or_ceiling_stays_in_the_world(z0, barrier) -> None:
 
 
 @pytest.mark.parametrize("z0", [30.5, 35.0, 40.0, 195.0, 199.5])
+@pytest.mark.slow
 def test_forced_fallback_head_on_near_floor_or_ceiling_stays_in_the_world(z0, monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
     s = _run(_head_on_at(z0), "backup")
@@ -69,6 +70,7 @@ def test_forced_fallback_head_on_near_floor_or_ceiling_stays_in_the_world(z0, mo
 
 @pytest.mark.parametrize("barrier", BARRIERS)
 @pytest.mark.parametrize("y0", [0.5, 999.5])
+@pytest.mark.slow
 def test_head_on_along_a_world_edge_stays_in_the_world(y0, barrier) -> None:
     drones = [_drone("a", (480, y0, 100), (900, y0, 100), (15, 0, 0)),
               _drone("b", (520, y0, 100), (100, y0, 100), (-15, 0, 0))]
@@ -137,6 +139,7 @@ def test_crossed_world_limits_keep_the_nearer_wall_and_are_flagged() -> None:
 
 
 @pytest.mark.parametrize("n_drones", [1, 2])
+@pytest.mark.slow
 def test_crossed_world_limits_keep_the_drone_in_the_world(n_drones) -> None:
     drones = [_drone("a", (500, 500, 75), (500, 500, 190), (0, 0, 15)),
               _drone("b", (600, 500, 115), (600, 500, 40), (0, 0, -15))][:n_drones]
@@ -169,6 +172,7 @@ _VERTICAL_SANDWICH = [_drone("a", (500, 500, 90), (500, 500, 190), (0, 0, 10)),
     (_sandwich_at(199.5), "backup", 3.15), (_sandwich_at(199.5), "braking", 3.15),
     (_VERTICAL_SANDWICH, "backup", 2.61), (_VERTICAL_SANDWICH, "braking", 2.69),
 ], ids=["floor-backup", "floor-braking", "ceiling-backup", "ceiling-braking", "vertical-backup", "vertical-braking"])
+@pytest.mark.slow
 def test_sandwich_keeps_its_regression_floor(drones, barrier, floor_m) -> None:
     s = _run(drones, barrier)
 
@@ -243,6 +247,7 @@ def _noise_rows(sigma, barrier):
                             "entry; needs tracked (Kalman) state"))
     for sigma in (0.0, 0.5, 1.5) for barrier in BARRIERS
 ])
+@pytest.mark.slow
 def test_vertical_head_on_under_noise_keeps_one_sideways_direction(sigma, barrier) -> None:
     vertical, horizontal = _noise_rows(sigma, barrier)
 
@@ -252,6 +257,7 @@ def test_vertical_head_on_under_noise_keeps_one_sideways_direction(sigma, barrie
 
 @pytest.mark.parametrize("barrier", BARRIERS)
 @pytest.mark.parametrize("sigma", [0.0, 0.5, 1.5])
+@pytest.mark.slow
 def test_vertical_head_on_under_noise_no_worse_than_horizontal(sigma, barrier) -> None:
     # Compared by runs below d_eff: the worst minimum differs at sigma 0 from
     # geometry alone (vertical escapes sideways only), all above d_eff.
@@ -262,6 +268,7 @@ def test_vertical_head_on_under_noise_no_worse_than_horizontal(sigma, barrier) -
 
 @pytest.mark.parametrize("barrier", BARRIERS)
 @pytest.mark.parametrize("elevation_deg", np.arange(80.0, 90.01, 0.5).tolist())
+@pytest.mark.slow
 def test_near_vertical_head_on_keeps_d_eff(elevation_deg, barrier) -> None:
     # 80 m apart, 20 m/s closing along a line of sight elevation_deg above horizontal: recoverable.
     centre = np.array([500.0, 500.0, 110.0])

@@ -43,6 +43,7 @@ def _summary(seed: int, variant: str) -> dict:
 
 
 @pytest.mark.parametrize("seed", SEEDS)
+@pytest.mark.slow
 def test_shielded_dense_random_traffic_is_safe_and_completes(seed) -> None:
     s = _summary(seed, "shielded_marl")
     assert s["min_separation_m"] >= SAFE_SEPARATION_M
