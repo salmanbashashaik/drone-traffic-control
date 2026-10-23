@@ -29,11 +29,11 @@ for name, ds in SC.items():
 # fuzz seeds: closed loop, hash every action with hashlib (not hash())
 for seed in (3, 17, 101, 9002, 9003):
     p, v = fuzz.encounter(seed)
-    n = len(p); ids = [f"d{i}" for i in range(n)]; h = hashlib.sha256()
+    n = len(p); ids = [f"d{i}" for i in range(n)]; h = hashlib.sha256(); latch = {}
     for k in range(100):
         st = [DroneState(agent_id=ids[i], position_m=tuple(p[i]), velocity_mps=tuple(v[i]), goal_m=(900.0, 900.0, 100.0), timestamp_ms=k * 100) for i in range(n)]
         ac = [MARLAction(agent_id=i, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=k * 100) for i in ids]
-        safe, _ = apply_filter(st, ac, FilterConfig())
+        safe, _ = apply_filter(st, ac, FilterConfig(), latch=latch)
         a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
         h.update(a.tobytes())
         vn = v + a * 0.1; sp = np.linalg.norm(vn, axis=1)

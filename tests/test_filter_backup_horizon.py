@@ -109,7 +109,7 @@ def test_rollout_cap_hit_uses_min_distance_so_far_and_is_flagged(monkeypatch) ->
     assert np.isclose(rhs[0], expected)
     assert capped_c[0] and steps_c[0] == 10
 
-    safe, diag = F.apply_filter(states, actions, CFG)
+    safe, diag = F.apply_filter(states, actions, CFG, latch={})
     assert all(a.backup_rollout_capped for a in safe)
     assert diag.backup_rollout_cap_pairs == [("a", "b")]
     assert diag.backup_rollout_steps == [10]

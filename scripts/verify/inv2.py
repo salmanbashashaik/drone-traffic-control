@@ -21,11 +21,12 @@ def trial(t):
     nom = [tuple(np.r_[rng.uniform(-3.5, 3.5, 2), rng.uniform(-0.5, 0.5)]) for _ in range(2)]
     cfg = FilterConfig()
     n_tests = n_viol = 0; worst = 0.0; entered = None; minsep = 1e9
+    latch = {}  # one per trial, as the runner keeps one per episode
     for k in range(80):
         try:
             st = [DroneState(agent_id=f"d{i}", position_m=tuple(p_[i]), velocity_mps=tuple(v_[i]), goal_m=(900, 900, 100), timestamp_ms=k * 100) for i in range(2)]
             ac = [MARLAction(agent_id=f"d{i}", proposed_accel_mps2=nom[i], timestamp_ms=k * 100) for i in range(2)]
-            safe, diag = apply_filter(st, ac, cfg)
+            safe, diag = apply_filter(st, ac, cfg, latch=latch)
         except Exception:
             break
         a = [np.array(s.safe_accel_mps2) for s in sorted(safe, key=lambda s: s.agent_id)]

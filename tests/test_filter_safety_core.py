@@ -43,7 +43,7 @@ def _sandwich():
 
 def test_sandwich_is_solved_with_slack_not_fallback() -> None:
     states, actions = _sandwich()
-    safe, diag = apply_filter(states, actions)
+    safe, diag = apply_filter(states, actions, latch={})
 
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
@@ -65,7 +65,7 @@ def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
         return first_solves[-1]
 
     monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
-    safe, diag = apply_filter(states, actions)
+    safe, diag = apply_filter(states, actions, latch={})
 
     assert first_solves and first_solves[0][2] is True
     assert diag.qp_feasible is True
@@ -104,7 +104,7 @@ def test_feasible_step_reports_no_slack() -> None:
         _state("d1", (450.0, 500.0, 100.0), (15.0, 0.0, 0.0)),
         _state("d2", (550.0, 500.0, 100.0), (-15.0, 0.0, 0.0)),
     ]
-    _, diag = apply_filter(states, [_action("d1"), _action("d2")])
+    _, diag = apply_filter(states, [_action("d1"), _action("d2")], latch={})
 
     assert diag.qp_feasible is True
     assert diag.pair_slack_mps2 == {}
@@ -153,7 +153,7 @@ def _head_on_plus_bystander():
 def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
     states, actions = _head_on_plus_bystander()
-    safe, diag = apply_filter(states, actions)
+    safe, diag = apply_filter(states, actions, latch={})
     by_id = {a.agent_id: a for a in safe}
     a1 = np.array(by_id["d1"].safe_accel_mps2)
     a2 = np.array(by_id["d2"].safe_accel_mps2)
@@ -174,7 +174,7 @@ def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
 def test_solver_error_fallback_is_per_cluster(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
     states, actions = _head_on_plus_bystander()
-    safe, _ = apply_filter(states, actions)
+    safe, _ = apply_filter(states, actions, latch={})
     bystander = {a.agent_id: a for a in safe}["d3"]
 
     assert bystander.fallback_used is False

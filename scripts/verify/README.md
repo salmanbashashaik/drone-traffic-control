@@ -3,9 +3,10 @@
 Independent checks of `utm_services.safety.filter`, written by the PR #12 reviewer. They are
 measurements, not tests: they print results and never fail the suite. Run them from the repository
 root after `pip install -e ".[dev]"`. Python puts this folder on `sys.path`, so the scripts import each
-other (`fuzz`, `optbound`, `invariance`, `probe`) without extra setup. The closed-loop scripts (`fuzz.py`,
-`probe.py`, `vnoise.py`, `hnoise.py`) pass one `latch` dict per run to `apply_filter`, as the episode
-runner does.
+other (`fuzz`, `optbound`, `invariance`, `probe`) without extra setup. `apply_filter` requires a `latch`
+dict (UTM-077). The closed-loop scripts (`fuzz.py`, `probe.py`, `vnoise.py`, `hnoise.py`, `invariance.py`,
+`inv2.py`, `det.py`) pass one per run or trial, as the episode runner does; `inv_ablate.py none` passes a
+fresh one every step.
 
 | Script | What it checks | Command |
 | --- | --- | --- |

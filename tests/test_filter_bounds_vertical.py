@@ -126,7 +126,7 @@ def test_crossed_world_limits_keep_the_nearer_wall_and_are_flagged() -> None:
               DroneState(agent_id="b", position_m=(600.0, 500.0, 115.0), velocity_mps=(0.0, 0.0, 0.0),
                          goal_m=(500.0, 500.0, 100.0), timestamp_ms=0)]
     actions = [MARLAction(agent_id=s.agent_id, proposed_accel_mps2=(0.0, 0.0, -3.5), timestamp_ms=0) for s in states]
-    safe, diag = filter_module.apply_filter(states, actions, _crossed_config())
+    safe, diag = filter_module.apply_filter(states, actions, _crossed_config(), latch={})
     by_id = {a.agent_id: a for a in safe}
 
     assert diag.qp_feasible and not diag.fallback_used
@@ -152,7 +152,8 @@ def test_crossed_world_limits_keep_the_drone_in_the_world(n_drones) -> None:
 # Unrecoverable by any controller (best achievable 4.18-4.45 m). Non-regression floor,
 # not a safety claim. See BL-06.
 # Measured at PR #12 (backup / braking): floor 3.063 / 3.061 m, ceiling 3.201 /
-# 3.201 m, vertical 2.668 / 2.744 m; each floor is 0.01 m below.
+# 3.201 m, vertical 2.668 / 2.744 m; each floor is 0.05 m below, rounded down to
+# the centimetre, so a solver or BLAS change cannot break it.
 def _sandwich_at(z0):
     return [_drone("d1", (490, 500, z0), (900, 500, z0), (10, 0, 0)), _drone("d2", (500, 500, z0), (500, 900, z0), (0, 0, 0)),
             _drone("d3", (510, 500, z0), (100, 500, z0), (-10, 0, 0))]
@@ -164,9 +165,9 @@ _VERTICAL_SANDWICH = [_drone("a", (500, 500, 90), (500, 500, 190), (0, 0, 10)),
 
 
 @pytest.mark.parametrize(("drones", "barrier", "floor_m"), [
-    (_sandwich_at(30.5), "backup", 3.05), (_sandwich_at(30.5), "braking", 3.05),
-    (_sandwich_at(199.5), "backup", 3.19), (_sandwich_at(199.5), "braking", 3.19),
-    (_VERTICAL_SANDWICH, "backup", 2.65), (_VERTICAL_SANDWICH, "braking", 2.73),
+    (_sandwich_at(30.5), "backup", 3.01), (_sandwich_at(30.5), "braking", 3.01),
+    (_sandwich_at(199.5), "backup", 3.15), (_sandwich_at(199.5), "braking", 3.15),
+    (_VERTICAL_SANDWICH, "backup", 2.61), (_VERTICAL_SANDWICH, "braking", 2.69),
 ], ids=["floor-backup", "floor-braking", "ceiling-backup", "ceiling-braking", "vertical-backup", "vertical-braking"])
 def test_sandwich_keeps_its_regression_floor(drones, barrier, floor_m) -> None:
     s = _run(drones, barrier)

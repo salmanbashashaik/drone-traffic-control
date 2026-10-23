@@ -51,7 +51,7 @@ def _action(agent_id: str, accel=(0.5, 0.0, 0.0), ts=0) -> MARLAction:
 def test_single_agent_returns_one_safe_action() -> None:
     states = [_state("d1")]
     actions = [_action("d1")]
-    result, diag = apply_filter(states, actions)
+    result, diag = apply_filter(states, actions, latch={})
     assert len(result) == 1
     assert isinstance(result[0], SafeAction)
     assert result[0].agent_id == "d1"
@@ -60,7 +60,7 @@ def test_single_agent_returns_one_safe_action() -> None:
 def test_two_agents_return_two_safe_actions() -> None:
     states = [_state("d1", pos=(100.0, 100.0, 80.0)), _state("d2", pos=(200.0, 100.0, 80.0))]
     actions = [_action("d1"), _action("d2")]
-    result, diag = apply_filter(states, actions)
+    result, diag = apply_filter(states, actions, latch={})
     assert len(result) == 2
     agent_ids = {r.agent_id for r in result}
     assert agent_ids == {"d1", "d2"}
@@ -69,7 +69,7 @@ def test_two_agents_return_two_safe_actions() -> None:
 def test_safe_action_timestamp_matches_input() -> None:
     states = [_state("d1", ts=500)]
     actions = [_action("d1", ts=500)]
-    result, _ = apply_filter(states, actions)
+    result, _ = apply_filter(states, actions, latch={})
     assert result[0].timestamp_ms == 500
 
 
@@ -77,14 +77,14 @@ def test_stub_passes_nominal_action_through() -> None:
     # Stub does not modify actions.
     states = [_state("d1")]
     actions = [_action("d1", accel=(1.0, -0.5, 0.2))]
-    result, _ = apply_filter(states, actions)
+    result, _ = apply_filter(states, actions, latch={})
     assert result[0].safe_accel_mps2 == (1.0, -0.5, 0.2)
 
 
 def test_stub_qp_feasible_true() -> None:
     states = [_state("d1")]
     actions = [_action("d1")]
-    result, diag = apply_filter(states, actions)
+    result, diag = apply_filter(states, actions, latch={})
     assert result[0].qp_feasible is True
     assert result[0].fallback_used is False
 
@@ -96,7 +96,7 @@ def test_stub_qp_feasible_true() -> None:
 def test_no_barrier_for_single_agent() -> None:
     states = [_state("d1")]
     actions = [_action("d1")]
-    _, diag = apply_filter(states, actions)
+    _, diag = apply_filter(states, actions, latch={})
     assert diag.h_min_m2 is None
     assert diag.n_pairs_total == 0
 
@@ -108,7 +108,7 @@ def test_barrier_value_correct_for_pair() -> None:
         _state("d2", pos=(120.0, 100.0, 80.0)),
     ]
     actions = [_action("d1"), _action("d2")]
-    _, diag = apply_filter(states, actions)
+    _, diag = apply_filter(states, actions, latch={})
     assert diag.h_min_m2 is not None
     assert abs(diag.h_min_m2 - 375.0) < 1e-6
 
@@ -120,7 +120,7 @@ def test_barrier_negative_when_inside_dsafe() -> None:
         _state("d2", pos=(103.0, 100.0, 80.0)),
     ]
     actions = [_action("d1"), _action("d2")]
-    _, diag = apply_filter(states, actions)
+    _, diag = apply_filter(states, actions, latch={})
     assert diag.h_min_m2 is not None
     assert diag.h_min_m2 < 0.0
 
@@ -131,7 +131,7 @@ def test_h_min_reported_in_safe_action() -> None:
         _state("d2", pos=(120.0, 100.0, 80.0)),
     ]
     actions = [_action("d1"), _action("d2")]
-    result, diag = apply_filter(states, actions)
+    result, diag = apply_filter(states, actions, latch={})
     for sa in result:
         assert sa.h_min_m2 == diag.h_min_m2
 
@@ -139,7 +139,7 @@ def test_h_min_reported_in_safe_action() -> None:
 def test_h_min_none_in_safe_action_single_agent() -> None:
     states = [_state("d1")]
     actions = [_action("d1")]
-    result, _ = apply_filter(states, actions)
+    result, _ = apply_filter(states, actions, latch={})
     assert result[0].h_min_m2 is None
 
 
@@ -151,35 +151,35 @@ def test_raises_on_duplicate_state_agent_ids() -> None:
     states = [_state("d1"), _state("d1")]
     actions = [_action("d1"), _action("d2")]
     with pytest.raises(ValueError, match="Duplicate"):
-        apply_filter(states, actions)
+        apply_filter(states, actions, latch={})
 
 
 def test_raises_on_duplicate_action_agent_ids() -> None:
     states = [_state("d1"), _state("d2")]
     actions = [_action("d1"), _action("d1")]
     with pytest.raises(ValueError, match="Duplicate"):
-        apply_filter(states, actions)
+        apply_filter(states, actions, latch={})
 
 
 def test_raises_on_mismatched_agent_ids() -> None:
     states = [_state("d1")]
     actions = [_action("d2")]
     with pytest.raises(ValueError, match="do not match"):
-        apply_filter(states, actions)
+        apply_filter(states, actions, latch={})
 
 
 def test_raises_on_mixed_action_timestamps() -> None:
     states = [_state("d1", ts=0), _state("d2", ts=0)]
     actions = [_action("d1", ts=0), _action("d2", ts=100)]
     with pytest.raises(ValueError, match="timestamp"):
-        apply_filter(states, actions)
+        apply_filter(states, actions, latch={})
 
 
 def test_raises_on_state_action_timestamp_mismatch() -> None:
     states = [_state("d1", ts=100)]
     actions = [_action("d1", ts=200)]
     with pytest.raises(ValueError, match="timestamp"):
-        apply_filter(states, actions)
+        apply_filter(states, actions, latch={})
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +190,7 @@ def test_shield_inactive_when_pass_through() -> None:
     # Stub passes through, so shield should never be active.
     states = [_state("d1"), _state("d2", pos=(200.0, 100.0, 80.0))]
     actions = [_action("d1", accel=(1.0, 0.0, 0.0)), _action("d2", accel=(-1.0, 0.0, 0.0))]
-    result, _ = apply_filter(states, actions)
+    result, _ = apply_filter(states, actions, latch={})
     for sa in result:
         assert sa.shield_active is False
 
@@ -230,7 +230,7 @@ def test_range_gate_excludes_distant_pair() -> None:
     ]
     actions = [_action("d1"), _action("d2")]
     cfg = FilterConfig(range_gate_m=100.0)
-    _, diag = apply_filter(states, actions, config=cfg)
+    _, diag = apply_filter(states, actions, config=cfg, latch={})
     assert diag.n_pairs_total == 1
     assert diag.n_pairs_in_qp == 0
 
@@ -242,11 +242,11 @@ def test_range_gate_includes_nearby_pair() -> None:
     ]
     actions = [_action("d1"), _action("d2")]
     cfg = FilterConfig(range_gate_m=200.0)
-    _, diag = apply_filter(states, actions, config=cfg)
+    _, diag = apply_filter(states, actions, config=cfg, latch={})
     assert diag.n_pairs_in_qp == 1
 
 
 def test_no_active_agents_returns_empty() -> None:
-    safe_actions, diag = apply_filter([], [])
+    safe_actions, diag = apply_filter([], [], latch={})
     assert safe_actions == []
     assert diag == FilterDiagnostics()

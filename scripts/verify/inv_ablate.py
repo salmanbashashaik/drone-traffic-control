@@ -103,7 +103,7 @@ for trial in range(N):
             smap = {s.agent_id: s for s in st}
             frames = F._update_latches(smap, [PAIR], cfg, copy.deepcopy(latch) if latch is not None else {})
             hf = h_filter(p_[0], p_[1], v_[0], v_[1], frames)
-            safe, diag = apply_filter(st, ac, cfg, latch=latch)
+            safe, diag = apply_filter(st, ac, cfg, latch=latch if latch is not None else {})
         except Exception:
             break
         a = [np.array(s.safe_accel_mps2) for s in safe]

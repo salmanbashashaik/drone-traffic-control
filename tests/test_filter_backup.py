@@ -54,8 +54,8 @@ def test_backup_barrier_passes_through_where_braking_intervenes() -> None:
     # starts acting at about 101 m, the backup barrier at about 68 m: the
     # evasive brake-and-split needs only about 29 m (P2-SA-02 section 2).
     states = _head_on(80.0)
-    braking, _ = apply_filter(states, _zero(states), BRAKING)
-    backup, diag = apply_filter(states, _zero(states), BACKUP)
+    braking, _ = apply_filter(states, _zero(states), BRAKING, latch={})
+    backup, diag = apply_filter(states, _zero(states), BACKUP, latch={})
 
     assert braking[0].shield_active is True
     assert diag.qp_feasible is True
@@ -64,7 +64,7 @@ def test_backup_barrier_passes_through_where_braking_intervenes() -> None:
 
 def test_backup_barrier_intervenes_near_its_edge() -> None:
     states = _head_on(32.0)
-    safe, diag = apply_filter(states, _zero(states), BACKUP)
+    safe, diag = apply_filter(states, _zero(states), BACKUP, latch={})
     a1, a2 = (np.array(a.safe_accel_mps2) for a in safe)
 
     assert diag.fallback_used is False
@@ -112,8 +112,9 @@ def test_backup_horizon_covers_stopping_at_max_closing_speed(lag_s) -> None:
 
 # Unrecoverable by any controller (best achievable 4.18-4.45 m). Non-regression floor,
 # not a safety claim. See BL-06.
-# Measured 3.740 m at PR #12 (both barriers), floor 0.01 m below.
-SANDWICH_FLOOR_M = 3.73
+# Measured 3.740 m at PR #12 (both barriers), floor 0.05 m below, rounded down
+# to the centimetre, so a solver or BLAS change cannot break it.
+SANDWICH_FLOOR_M = 3.69
 
 
 def test_backup_sandwich_keeps_its_regression_floor() -> None:

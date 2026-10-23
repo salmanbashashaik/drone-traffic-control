@@ -101,8 +101,11 @@ def test_qp_intervenes_on_head_on_converging_pair() -> None:
         _action("d2", accel=(0.0, 0.0, 0.0)),
     ]
 
-    safe_actions, diag = apply_filter(states, actions, BRAKING)
+    latch: dict = {}
+    safe_actions, diag = apply_filter(states, actions, BRAKING, latch=latch)
 
+    # The head-on with no miss takes the latched turn-right path.
+    assert latch[("d1", "d2")].origin == "turn_right"
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
     assert diag.interventions == 2
@@ -139,7 +142,7 @@ def test_qp_passes_through_diverging_pair() -> None:
         _action("d2", accel=(0.5, 0.0, 0.0)),
     ]
 
-    safe_actions, diag = apply_filter(states, actions)
+    safe_actions, diag = apply_filter(states, actions, latch={})
 
     assert diag.qp_feasible is True
     assert diag.fallback_used is False
@@ -160,7 +163,7 @@ def test_qp_passes_through_distant_stationary_pair() -> None:
         _action("d2", accel=(-1.5, 0.5, 0.0)),
     ]
 
-    safe_actions, diag = apply_filter(states, actions)
+    safe_actions, diag = apply_filter(states, actions, latch={})
 
     assert diag.qp_feasible is True
     assert diag.interventions == 0
@@ -190,7 +193,7 @@ def test_qp_three_drone_symmetric_convergence() -> None:
         states.append(_state(aid, pos=pos, vel=vel))
         actions.append(_action(aid, accel=(0.0, 0.0, 0.0)))
 
-    safe_actions, diag = apply_filter(states, actions)
+    safe_actions, diag = apply_filter(states, actions, latch={})
 
     assert diag.qp_feasible is True
     assert diag.interventions == 3
@@ -214,8 +217,8 @@ def test_lag_reserve_brakes_earlier() -> None:
     ]
     actions = [_action("d1"), _action("d2")]
 
-    ideal, _ = apply_filter(states, actions, BRAKING)
-    lagged, diag = apply_filter(states, actions, FilterConfig(barrier="braking", lag_s=0.5))
+    ideal, _ = apply_filter(states, actions, BRAKING, latch={})
+    lagged, diag = apply_filter(states, actions, FilterConfig(barrier="braking", lag_s=0.5), latch={})
 
     assert ideal[0].shield_active is False
     assert diag.qp_feasible is True
@@ -238,7 +241,7 @@ def test_qp_range_gate_pruning_removes_pair_from_qp() -> None:
     ]
     cfg = FilterConfig(range_gate_m=50.0)
 
-    safe_actions, diag = apply_filter(states, actions, config=cfg)
+    safe_actions, diag = apply_filter(states, actions, config=cfg, latch={})
 
     assert diag.n_pairs_total == 1
     assert diag.n_pairs_in_qp == 0

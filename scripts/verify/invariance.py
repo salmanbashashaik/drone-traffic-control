@@ -77,12 +77,13 @@ for trial in range(3000):
     h = h0
     tested_inv += 1
     failed = False
+    latch = {}  # one per trial, as the runner keeps one per episode
     for k in range(80):
         try:
             st = [DroneState(agent_id=f"d{i}", position_m=tuple(p_[i]), velocity_mps=tuple(v_[i]),
                              goal_m=(900, 900, 100), timestamp_ms=k * 100) for i in range(2)]
             ac = [MARLAction(agent_id=f"d{i}", proposed_accel_mps2=nom[i], timestamp_ms=k * 100) for i in range(2)]
-            safe, diag = apply_filter(st, ac, cfg)
+            safe, diag = apply_filter(st, ac, cfg, latch=latch)
         except Exception:
             break  # left the world box
         a = [np.array(s.safe_accel_mps2) for s in safe]

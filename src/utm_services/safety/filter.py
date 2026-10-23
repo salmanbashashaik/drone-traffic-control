@@ -355,12 +355,17 @@ class _PairLatch:
     evasive z direction of the pair's first (lower id) drone at the start,
     by the same rule as before (away in z; level: the lower id climbs).
     escape: the escape signs (s_L, s_V), fixed the first step the pair needs them.
+    origin: "turn_right" when a two-drone conflict without a clear miss chose
+    the sideways direction, which may be re-oriented once (``_update_latches``);
+    "none" when a 2-colouring left it at turn-right (odd cycle), so it does not
+    seed later colourings; else "fixed".
     """
 
     axis: np.ndarray
     signs: tuple[float, float]
     up: float
     escape: tuple[float, float] | None = None
+    origin: str = "fixed"
 
 
 def _frame_lateral(n: np.ndarray, axis: np.ndarray) -> np.ndarray:
@@ -408,13 +413,18 @@ def _update_latches(
     that and it no longer closes, so a noisy miss crossing the limit while
     the pair still closes does not release and re-latch it with another
     frame. Pairs entering conflict take their orientation from the
-    unlatched escape signs of the whole conflict set (``_new_latch``): the
+    unlatched escape signs of the conflict set (``_new_latch``): the
     predicted miss when it is clear, else the 2-colouring, but the
     colouring only in clusters of three or more drones. A two-drone
-    conflict with no clear miss keeps the turn-right rule (z x n), the
-    aviation head-on convention, which needs no knowledge of the cluster.
-    From then on the backup and the escape follow the latch. Returns the
-    latches of ``pairs``.
+    conflict with no clear miss keeps the turn-right rule (z x n), which
+    needs no knowledge of the cluster. The colouring of a cluster is
+    seeded with the sideways directions already latched in it and takes
+    every pair of its drones, closest first, so new pairs fit the existing
+    latches (PR #12 review B1). A turn-right latch whose escape sign in
+    that colouring is opposite is re-oriented, once, the step its cluster
+    reaches three drones; after that no latch flips. From then on the
+    backup and the escape follow the latch. Returns the latches of
+    ``pairs``.
     """
     limit = SAFE_SEPARATION_M + config.margin_m + _PLUMB_OFFSET_M
     entering = []
@@ -431,7 +441,6 @@ def _update_latches(
         # Colour the whole conflict set, so a drone squeezed between two
         # neighbours gets opposite latches towards them.
         conflict = sorted(set(latch) | set(entering))
-        escape = _escape_signs(state_map, conflict)
         miss_only = _escape_signs(state_map, conflict, colouring=False)
         cluster = {aid: {aid} for pair in conflict for aid in pair}
         for id_i, id_j in conflict:
@@ -439,11 +448,35 @@ def _update_latches(
                 merged = cluster[id_i] | cluster[id_j]
                 for aid in merged:
                     cluster[aid] = merged
+        coloured = [pair for pair in conflict if len(cluster[pair[0]]) >= 3]
+        seed = {}
+        for pair in coloured:
+            frame = latch.get(pair)
+            if frame is not None and frame.origin != "none":
+                n = _relative(state_map[pair[0]], state_map[pair[1]])[2]
+                along = float(_escape_axes(n)[0] @ _frame_lateral(n, frame.axis))
+                if abs(along) > 0.5:
+                    seed[pair] = (math.copysign(1.0, along), 1 if frame.origin == "turn_right" else 2)
+        graph = [pair for pair in pairs if len(cluster.get(pair[0], ())) >= 3 and pair[1] in cluster[pair[0]]]
+        escape = _escape_signs(
+            state_map, [p for p in coloured if p not in latch or latch[p].origin == "turn_right"],
+            graph=graph, seed=seed,
+        )
+        for pair in coloured:
+            frame = latch.get(pair)
+            if frame is not None and frame.origin == "turn_right":
+                if pair in seed and escape[pair][0] * seed[pair][0] < 0.0:
+                    # Mirror the sideways direction; the vertical escape stays.
+                    latch[pair] = _PairLatch(axis=-frame.axis, signs=(-frame.signs[0], -frame.signs[1]), up=frame.up)
+                else:
+                    frame.origin = "fixed"
         for pair in entering:
             r = _relative(state_map[pair[0]], state_map[pair[1]])[0]
             dist = float(np.linalg.norm(r))
             sign = escape[pair] if len(cluster[pair[0]]) >= 3 else miss_only[pair]
-            latch[pair] = _new_latch(r / max(dist, 1e-9), dist, sign)
+            frame = latch[pair] = _new_latch(r / max(dist, 1e-9), dist, sign)
+            if sign[0] == 0.0:
+                frame.origin = "none" if len(cluster[pair[0]]) >= 3 else "turn_right"
     return dict(latch)
 
 
@@ -477,6 +510,8 @@ def _escape_axes(n: np.ndarray, frame: _PairLatch | None = None) -> tuple[np.nda
 def _escape_signs(
     state_map: dict[str, DroneState], escape_pairs: list[tuple[str, str]],
     frames: dict[tuple[str, str], _PairLatch] | None = None, colouring: bool = True,
+    graph: list[tuple[str, str]] | None = None,
+    seed: dict[tuple[str, str], tuple[float, int]] | None = None,
 ) -> dict[tuple[str, str], tuple[float, float]]:
     """Lateral and vertical escape signs (s_L, s_V) per escape pair.
 
@@ -492,13 +527,17 @@ def _escape_signs(
     direction, fixed from its first escape step: s_L makes the sideways part
     +L, and s_V follows the latched up (0 when V is within 10 degrees of
     horizontal). With ``colouring`` false, an axis without a clear miss
-    gets sign 0.
+    gets sign 0. ``graph`` (default the escape pairs) is the edge set
+    coloured, and ``seed`` holds latched lateral colours (``_two_colour``),
+    whose edges are coloured first, highest rank first.
     """
     frames = frames or {}
+    seed = seed or {}
     by_distance = sorted(
-        escape_pairs, key=lambda p: (_separation_sq(state_map[p[0]], state_map[p[1]]), p)
+        escape_pairs if graph is None else graph,
+        key=lambda p: (-seed.get(p, (0.0, 0))[1], _separation_sq(state_map[p[0]], state_map[p[1]]), p),
     )
-    lateral = _two_colour(by_distance)
+    lateral = _two_colour(by_distance, seed)
     vertical = _two_colour(sorted(by_distance, key=lambda p: lateral[p[0]] != lateral[p[1]]))
 
     signs = {}
@@ -529,25 +568,46 @@ def _escape_signs(
     return signs
 
 
-def _two_colour(edges: list[tuple[str, str]]) -> dict[str, float]:
+def _two_colour(
+    edges: list[tuple[str, str]], seed: dict[tuple[str, str], tuple[float, int]] | None = None,
+) -> dict[str, float]:
     """Greedy +-1 colouring that gives each edge, in order, opposite colours
-    when the edges before it allow; the lowest id of each component is +1."""
+    when the edges before it allow; the lowest id of each component is +1.
+
+    ``seed`` maps an edge to (colour of its first drone, rank > 0) for a
+    latched direction. A seeded edge that starts a component takes that
+    colour, a component keeps the highest rank of its edges and is not
+    renormalised, and of two components that meet with equal colours the
+    one of lower rank flips (equal ranks: the second, but never rank 2)."""
+    seed = seed or {}
     colour: dict[str, float] = {}
     component: dict[str, int] = {}
-    for id_i, id_j in edges:
+    rank: dict[int, int] = {}
+    for edge in edges:
+        id_i, id_j = edge
+        first, r = seed.get(edge, (1.0, 0))
         if id_i not in colour and id_j not in colour:
-            colour[id_i], colour[id_j] = 1.0, -1.0
-            component[id_i] = component[id_j] = len(component)
+            colour[id_i], colour[id_j] = first, -first
+            component[id_i] = component[id_j] = len(rank)
+            rank[len(rank)] = r
         elif id_j not in colour:
             colour[id_j], component[id_j] = -colour[id_i], component[id_i]
+            rank[component[id_i]] = max(rank[component[id_i]], r)
         elif id_i not in colour:
             colour[id_i], component[id_i] = -colour[id_j], component[id_j]
+            rank[component[id_j]] = max(rank[component[id_j]], r)
         elif component[id_i] != component[id_j]:
-            old, flip = component[id_j], colour[id_i] == colour[id_j]
+            keep, old = component[id_i], component[id_j]
+            if rank[old] > rank[keep]:
+                keep, old = old, keep
+            flip = colour[id_i] == colour[id_j] and rank[old] < 2
             for aid in [a for a, c in component.items() if c == old]:
-                component[aid] = component[id_i]
+                component[aid] = keep
                 colour[aid] = -colour[aid] if flip else colour[aid]
+            rank[keep] = max(rank[keep], rank[old], r)
     for comp in set(component.values()):
+        if rank[comp] > 0:
+            continue
         lowest = min(a for a, c in component.items() if c == comp)
         if colour[lowest] < 0.0:
             for aid in [a for a, c in component.items() if c == comp]:
@@ -1113,7 +1173,8 @@ def apply_filter(
     states: Sequence[DroneState],
     actions: Sequence[MARLAction],
     config: FilterConfig | None = None,
-    latch: dict | None = None,
+    *,
+    latch: dict,
 ) -> tuple[list[SafeAction], FilterDiagnostics]:
     """Apply the HOCBF safety filter to one step.
 
@@ -1131,7 +1192,8 @@ def apply_filter(
         The caller's per-episode filter memory: pass the same empty dict on
         every step of one episode. Each pair keeps the sideways escape frame
         and escape signs it had when its conflict started, so observation
-        noise cannot flip them. None: every step starts fresh (stateless).
+        noise cannot flip them. Required (UTM-077): a fresh dict on every
+        step does not give the latched behaviour.
 
     Returns
     -------
@@ -1150,7 +1212,11 @@ def apply_filter(
         timestamp mismatches, or agent ID mismatches between states
         and actions. These must be caught by the step loop before
         calling this function.
+    TypeError
+        When ``latch`` is not a dict.
     """
+    if not isinstance(latch, dict):
+        raise TypeError(f"latch must be the caller's per-episode dict (UTM-077), got {type(latch).__name__}")
     if config is None:
         config = FilterConfig()
 
@@ -1230,7 +1296,7 @@ def apply_filter(
             step_ts, diag.world_limit_conflict_agents,
         )
 
-    frames = _update_latches(state_map, pairs_in_qp, config, {} if latch is None else latch)
+    frames = _update_latches(state_map, pairs_in_qp, config, latch)
 
     # --- QP solve ---
     backup = None

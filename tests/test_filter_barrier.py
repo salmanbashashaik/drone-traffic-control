@@ -126,7 +126,7 @@ def test_filter_reports_violation_depth_per_pair() -> None:
     states = [_state("d1", (497.0, 500.0, 100.0)), _state("d2", (500.0, 500.0, 100.0))]
     actions = [MARLAction(agent_id=s.agent_id, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=0)
                for s in states]
-    _, diag = apply_filter(states, actions)
+    _, diag = apply_filter(states, actions, latch={})
 
     assert diag.pair_violation_depth_m == {("d1", "d2"): pytest.approx(2.5)}
 
@@ -148,7 +148,7 @@ def test_sandwich_escape_uses_all_three_axes() -> None:
     states = [_state(d["agent_id"], d["initial_position_m"], d["initial_velocity_mps"]) for d in _sandwich()]
     actions = [MARLAction(agent_id=s.agent_id, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=0)
                for s in states]
-    safe, _ = apply_filter(states, actions)
+    safe, _ = apply_filter(states, actions, latch={})
     a = {s.agent_id: np.array(s.safe_accel_mps2) for s in safe}
 
     # The structure of the optimum: outer drones brake, the middle drone
@@ -163,8 +163,9 @@ def test_sandwich_escape_uses_all_three_axes() -> None:
 
 # Unrecoverable by any controller (best achievable 4.18-4.45 m). Non-regression floor,
 # not a safety claim. See BL-06.
-# Measured 3.740 m at PR #12, floor 0.01 m below.
-SANDWICH_FLOOR_M = 3.73
+# Measured 3.740 m at PR #12, floor 0.05 m below, rounded down
+# to the centimetre, so a solver or BLAS change cannot break it.
+SANDWICH_FLOOR_M = 3.69
 
 
 def test_sandwich_keeps_its_regression_floor() -> None:

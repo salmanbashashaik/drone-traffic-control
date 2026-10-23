@@ -1,6 +1,17 @@
 # PR #12 final verification report (2026-10-23)
 
-## Summary
+## Final state at merge (B1 round)
+
+This section supersedes the numbers below, which describe 489a2a0. Per-seed results are in `docs/results/pr12-b1-2026-10-23.jsonl`; decisions are in `docs/DECISIONS.md` under "2026-10-23 (PR #12, B1 fix)".
+
+- `fuzz.py 5000 backup 100 8`: 0 runs inside d_eff (worst 5.534 m), 0 fallbacks, 0 solver errors, 0 exceptions, 0 rollout cap hits.
+- `HARD=1 fuzz.py 5000 backup 100 8`: 13 runs inside d_eff against the bar of 14 (founder-approved, replaces ≤ 21), 0 fallbacks, 0 solver errors, 0 exceptions, 0 rollout cap hits.
+- The latch is a required argument of `apply_filter` (UTM-077), so no caller gets the per-step behaviour described at the end of this report.
+- Sandwich tests are non-regression floors 0.05 m below the measured values, rounded down to the centimetre (not 0.01 m as below).
+- Known limits accepted by the founder: the seeded colouring keeps a squeezed drone on one side only in collinear geometry (bent sandwich: contradictory latches, worst 5.993 m, never inside d_eff; BL-10, superseded by BL-03), and the 45° staged sandwich dropped from 6.169 m to 5.751 m (BL-11). LOW findings of the re-review are BL-12. Review report: `docs/results/pr12-b1-review-2026-10-23.md`.
+- No full run after the re-review (founder decision).
+
+## Summary at 489a2a0
 
 1. **Acceptance bar met.** Hard fuzz 5000 has 14 runs inside d_eff (bar ≤ 21; same seed list as v2), 0 fallbacks, 0 solver errors, 0 exceptions. Fuzz 5000 has 0 runs inside d_eff and 0 fallbacks, solver errors or exceptions. The head-on and crossing tests are unchanged against HEAD.
 2. **Full suite:** 252 passed, 1 skipped, 1 xfailed, 1 failed. The failure was the strict xfail on `keeps_one_sideways_direction[1.5-braking]` passing (XPASS). Per the founder's rule that xfail was removed; the reversal tests then gave 5 passed, 1 xfailed (backup σ 1.5 m stays a strict xfail).
