@@ -161,7 +161,17 @@ class MARLAction(ContractModel):
 
 
 class SafeAction(ContractModel):
-    """Action returned by the filter adapter; the name is not a safety claim."""
+    """Action returned by the filter adapter; the name is not a safety claim.
+
+    Contract v1.1: a fallback action may have non-zero (bounded) acceleration;
+    v1.0 required zero acceleration. Contract v1.4: ``backup_rollout_capped``
+    is true when a backup rollout of this agent's pairs was still closing at
+    the hard cap. ``world_limit_conflict`` is true when this agent's
+    world-box acceleration limits crossed and the nearer wall's limit was
+    kept. ``escape_failed_slack`` is true when the escape re-solve failed and
+    the kept first solve has slack on one of this agent's pairs. See
+    INTERFACES.md.
+    """
 
     agent_id: str = Field(min_length=1)
     safe_accel_mps2: Vec3
@@ -170,6 +180,9 @@ class SafeAction(ContractModel):
     h_min_m2: float | None
     qp_feasible: bool
     fallback_used: bool
+    backup_rollout_capped: bool = False
+    world_limit_conflict: bool = False
+    escape_failed_slack: bool = False
 
     @field_validator("agent_id")
     @classmethod
@@ -187,8 +200,6 @@ class SafeAction(ContractModel):
             raise ValueError("an infeasible QP requires fallback_used=true")
         if self.qp_feasible and self.fallback_used:
             raise ValueError("fallback_used=true requires qp_feasible=false")
-        if self.fallback_used and any(component != 0.0 for component in self.safe_accel_mps2):
-            raise ValueError("the v1 fallback action must have zero acceleration")
         return self
 
 

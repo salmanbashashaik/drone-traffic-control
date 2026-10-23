@@ -24,3 +24,6 @@ LEDGER.md
 
 # utm-run default output directory
 runs/
+
+# scripts/verify/fuzz.py raw output
+fuzz_*.json

@@ -3,9 +3,12 @@
 Every variant gets the same scenario, dynamics and episode limit; only the
 policy and the presence of the safety filter differ. Unshielded variants wrap
 the proposed action unchanged into a SafeAction (shield_active=False). The
-shielded variant calls the HOCBF filter, whose infeasible path returns the
-zero-acceleration fallback. That fallback is unverified: it is not a hover and
-does not guarantee separation.
+shielded variant calls the HOCBF filter. Every variant reports violation of
+the filter's effective separation d_eff = d_safe + margin from the states:
+depth in metres and time inside d_eff in seconds, per pair and per episode.
+On a solver error the filter's evasive fallback applies
+to the conflict cluster; that fallback is unverified and does not guarantee
+separation.
 """
 
 from __future__ import annotations
@@ -16,7 +19,13 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 import numpy as np
-from shared.contracts import AirspaceRulesV1, SafeAction, ScenarioConfig
+from shared.contracts import (
+    SAFE_SEPARATION_M,
+    SIMULATION_STEP_MS,
+    AirspaceRulesV1,
+    SafeAction,
+    ScenarioConfig,
+)
 
 from utm_services.policy.adapter import PolicyFn, run_policy
 from utm_services.policy.reference import ReferencePolicy
@@ -81,6 +90,31 @@ def run_episode(
     records: list[dict[str, Any]] = []
     step_ms: list[float] = []
     policy_ms: list[float] = []
+    d_eff = SAFE_SEPARATION_M + filter_config.margin_m
+    pair_violations: dict[str, dict[str, float]] = {}
+    dt_s = SIMULATION_STEP_MS / 1000.0
+    steps_inside = 0
+    rollout_steps: list[int] = []
+    rollout_cap_hits = 0
+    world_limit_conflicts = 0
+    escape_failures_with_slack = 0
+    filter_latch: dict = {}  # per-pair sideways frames, kept across the episode's steps
+
+    def record_violations(states, held_s: float) -> bool:
+        """Add depth, and held_s inside d_eff, per pair; True if any pair is inside."""
+        inside = False
+        ordered = sorted(states, key=lambda s: s.agent_id)
+        for k, s_i in enumerate(ordered):
+            for s_j in ordered[k + 1:]:
+                depth = d_eff - float(np.linalg.norm(np.subtract(s_i.position_m, s_j.position_m)))
+                if depth > 0.0:
+                    inside = True
+                    pv = pair_violations.setdefault(
+                        f"{s_i.agent_id}|{s_j.agent_id}", {"max_depth_m": 0.0, "time_inside_s": 0.0}
+                    )
+                    pv["max_depth_m"] = max(pv["max_depth_m"], depth)
+                    pv["time_inside_s"] = round(pv["time_inside_s"] + held_s, 3)
+        return inside
 
     while not env.done:
         t0 = time.perf_counter()
@@ -94,8 +128,15 @@ def run_episode(
             proposed.append(run_policy(observations[state.agent_id].root, state.agent_id, ts, policy))
             policy_ms.append((time.perf_counter() - p0) * 1000.0)
 
+        # Each state is held for one step: it counts dt_s of time inside.
+        steps_inside += record_violations(states, dt_s)
+
         if shielded:
-            returned, _ = apply_filter(observed, proposed, filter_config)
+            returned, diag = apply_filter(observed, proposed, filter_config, latch=filter_latch)
+            rollout_steps += diag.backup_rollout_steps
+            rollout_cap_hits += len(diag.backup_rollout_cap_pairs)
+            world_limit_conflicts += len(diag.world_limit_conflict_agents)
+            escape_failures_with_slack += len(diag.escape_failed_slack_pairs)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -130,11 +171,23 @@ def run_episode(
                 }
             )
 
+    # The final state starts no step: it adds depth but no time.
+    record_violations(env.states(), 0.0)
+
     mean_step, p95_step = _mean_p95(step_ms)
     mean_pol, p95_pol = _mean_p95(policy_ms)
     summary = {
         "episode_id": episode_id,
         **env.summary(),
+        "max_violation_depth_m": max((p["max_depth_m"] for p in pair_violations.values()), default=0.0),
+        "time_inside_d_eff_s": round(steps_inside * dt_s, 3),
+        "pair_seconds_inside_d_eff": round(sum(p["time_inside_s"] for p in pair_violations.values()), 3),
+        "pair_violations": pair_violations,
+        "rollout_cap_hits": rollout_cap_hits,
+        "world_limit_conflicts": world_limit_conflicts,
+        "escape_failures_with_slack": escape_failures_with_slack,
+        "max_backup_rollout_steps": max(rollout_steps, default=None),
+        "p99_backup_rollout_steps": float(np.percentile(rollout_steps, 99)) if rollout_steps else None,
         "mean_step_time_ms": mean_step,
         "p95_step_time_ms": p95_step,
         "mean_policy_latency_ms": mean_pol,

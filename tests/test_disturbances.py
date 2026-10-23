@@ -185,9 +185,9 @@ def test_filter_receives_the_disturbed_states_the_policy_sees(monkeypatch) -> No
     seen = []
     real = runner.apply_filter
 
-    def spy(states, proposed, cfg):
+    def spy(states, proposed, cfg, **kwargs):
         seen.append(states)
-        return real(states, proposed, cfg)
+        return real(states, proposed, cfg, **kwargs)
 
     monkeypatch.setattr(runner, "apply_filter", spy)
     d = Disturbances(obs_pos_sigma_m=0.5, obs_delay_steps=2)
