@@ -1,13 +1,26 @@
 # P3-SA-02 — Consistent Backup (CBK): One Backup per Drone, Chosen Jointly
 
+## Summary
+
+1. CBK gives each drone one backup manoeuvre, chosen jointly with its neighbours (CSA 2021, TBC 2022), instead of main's per-pair escapes, so a drone can no longer be given two opposite escapes.
+2. On the 13 hard seeds where main enters `d_eff`, CBK is better on every seed (+0.05 to +0.77 m) and keeps 6 of them outside `d_eff`; the staged sandwiches improve by up to 0.95 m.
+3. CBK is worse than main by more than 0.05 m in 15 cases (rings, vertical head-on, simultaneous sandwiches, bent 10° and 20°, horizontal noise, vertical noise σ = 1.5), by 0.12 to 1.29 m; 14 of the 15 stay above `d_eff`.
+4. Safety regression: at vertical noise σ = 1.5, 2 of 20 CBK runs enter `d_eff` (lowest 5.094 m) while main keeps all 20 outside; CBK switches candidates under noise (σ = 1.5: 16 reversals against main's 1 vertical, 10 against 0 horizontal).
+5. Fallbacks: 0 for both filters, after adding an OSQP retry at rho 10 to CBK.
+6. Latency (idle machine, dense state, p50 / p95 per step): full CBK does not meet 100 ms at N = 16 (273 / 296 ms, 5.2× main's 53 ms) and does not meet it at N = 64 (4276 / 4776 ms; main 366 / 388 ms).
+7. `cbk-lite` (12 options per drone instead of 54) meets 100 ms at N = 16 (66 / 77 ms, 1.25× main) but not at N = 64 (1290 / 1664 ms); in the N = 16 timing state its minimum separation was 0.59 m below full CBK, and it has not been run on the §6.2 cases.
+8. Decentralised version, an estimate and not a measurement: about 24 ms per drone with 6 neighbours in range and 39 ms with 15 (full library), 15 to 16 ms with the lite library; the sequential broadcast of CSA Algorithm 1 is not included and multiplies the selection part by the ordering depth.
+9. Against the founder's bar: items 1, 2 and 4 fail, item 3 holds. Recommendation: **adapt, do not adopt** (§8): keep the one-backup-per-drone structure, fix the hysteresis rule and noise switching, decide the barrier clamp, then run the full fuzz sweeps.
+10. Open questions for Salman are in §9; the protocol requirement for a decentralised version (each drone broadcasts its chosen backup candidate and clock) is in §5.
+
 | Field | Value |
 |---|---|
 | Task | Research lane, backlog BL-03 (with BL-04, BL-08, BL-10, BL-11) |
 | Status | Prototype and measurements for review by Salman. Nothing here changes `src/utm_services/safety/`. |
 | Date | 2026-10-23 |
 | Builds on | [`P3-SA-01-literature.md`](./P3-SA-01-literature.md), [`P2-SA-02-lateral-escape.md`](./P2-SA-02-lateral-escape.md) §4–§5, `docs/results/pr12-final-report.md`, `docs/results/pr12-b1-review-2026-10-23.md` |
-| Code | `research/consistent_backup/cbk.py` (filter), `harness.py` (closed-loop runners), `evaluate.py` (cases and table) |
-| Results | `research/consistent_backup/results/runs_main_cbk.jsonl`, `table_main_cbk.md`, `rerun_fallbacks.txt`, `scale_main_cbk_cbk-lite.md` |
+| Code | `research/consistent_backup/cbk.py` (filter), `harness.py` (closed-loop runners), `evaluate.py` (cases and table), `scale.py` (latency) |
+| Results | `research/consistent_backup/results/runs_main_cbk.jsonl`, `table_main_cbk.md`, `rerun_fallbacks.txt`, `scale.md` |
 
 ## 1. Problem
 
@@ -194,7 +207,41 @@ Latencies in `table_main_cbk.md` were measured on a shared CPU and are not timin
 
 ### 6.3 Latency at N = 6, 16 and 64
 
-Pending: `scale.py` is a timing run and waits for an idle machine.
+Source: `research/consistent_backup/results/scale.md` (`scale.py`). Run on 2026-10-23 at 22:07, after the speed lane's baseline had finished and with no other Python process running. One configuration at a time (the parent and one child process). Each configuration starts from a dense mid-encounter state, flies 5 warm-up filter steps and then 20 timed closed-loop steps with zero nominal, with a hard limit of 10 minutes; no configuration reached it. The exact prune is on for both CBK variants. One run per configuration, so p95 is the 19th of 20 values.
+
+The start state is a random crowd aimed at one point, advanced in free flight to the moment with the most pairs within 20 m while every pair is at least `d_eff + 1` = 6.5 m apart. At N = 6, 16 and 64 it has 10, 27 and 56 pairs within 20 m (3.3, 3.4 and 1.8 per drone). Denser N = 64 states with 6.5 m gaps were not found.
+
+| N | Filter | p50 / p95 (ms) | Mean (ms) | × main (p50) | Min sep over 25 steps (m) | Fallbacks |
+|---|---|---|---|---|---|---|
+| 6 | main | 37 / 38 | 37 | 1.0 | 6.580 | 0 |
+| 6 | cbk-lite | 21 / 24 | 21 | 0.6 | 6.988 | 0 |
+| 6 | CBK | 49 / 53 | 50 | 1.3 | 6.958 | 0 |
+| 16 | main | 53 / 57 | 53 | 1.0 | 5.198 | 0 |
+| 16 | cbk-lite | 66 / 77 | 67 | 1.25 | 4.636 | 0 |
+| 16 | CBK | 273 / 296 | 279 | 5.2 | 5.223 | 0 |
+| 64 | main | 366 / 388 | 366 | 1.0 | 5.615 | 0 |
+| 64 | cbk-lite | 1290 / 1664 | 1310 | 3.5 | 5.647 | 0 |
+| 64 | CBK | 4276 / 4776 | 4407 | 11.7 | 5.520 | 0 |
+
+**Does CBK meet 100 ms?**
+
+- Full CBK does **not** meet 100 ms at N = 16 (p50 273 ms, p95 296 ms).
+- Full CBK does **not** meet 100 ms at N = 64 (p50 4276 ms, p95 4776 ms).
+- `cbk-lite` meets 100 ms at N = 16 (p50 66 ms, p95 77 ms). It does not meet it at N = 64 (p50 1290 ms, p95 1664 ms).
+- Main meets 100 ms at N = 16 (53 / 57 ms). It does not meet it at N = 64 (366 / 388 ms), so N = 64 is out of reach for both designs in this centralised Python form.
+
+**Bar item 4 (within 2× of main at N = 16):** fails for full CBK (5.2×). It holds for `cbk-lite` (1.25×).
+
+**The lite trade-off in minimum separation.** In the three timing states, `cbk-lite` ends 0.03 m above full CBK at N = 6, 0.59 m below it at N = 16 (4.636 against 5.223 m) and 0.13 m above it at N = 64. At N = 16 it is also 0.56 m below main (5.198 m). These states were chosen for density, not for safety: they start 6.5 m apart with closing speeds up to 30 m/s, and at N = 16 all three filters end inside `d_eff`. Whether that state is recoverable at all was not checked, so these values are not a safety evaluation. They do show that the lite library can choose a clearly worse joint backup. It has not been run on the §6.2 cases, so its trade-off there is unknown. The N = 16 result is lower than main on a safety metric and is reported to the founder.
+
+**Decentralised per-drone cost (ESTIMATE, not a measurement of a decentralised filter).** In the decentralised version (§5), each drone handles only its neighbours in range. Its cost is its own option and finite-difference rollouts, one margin matrix per neighbour, and a one-drone QP with 5 rows per neighbour. `scale.py` times these pieces at the N = 16 state; the estimate adds them for an **assumed 6 neighbours in range per drone (typical) and 15 (dense)**. The densest timing state has 3.4 neighbours within 20 m per drone, so 6 and 15 are deliberately above it.
+
+| Library | Options | Own rollouts (ms) | One neighbour's margins (ms) | QP, 6 / 15 neighbours (ms) | Per drone, 6 neighbours (ms) | Per drone, 15 neighbours (ms) |
+|---|---|---|---|---|---|---|
+| full | 54 | 11.7 | 1.62 | 3.0 / 3.3 | ≈ 24 | ≈ 39 |
+| lite | 12 | 11.3 | 0.10 | 2.6 / 3.0 | ≈ 15 | ≈ 16 |
+
+The estimate leaves out the selection scans, messaging and its delay, and the order of CSA Algorithm 1. In that algorithm a drone selects only after the neighbours before it in the order have broadcast their choice. The selection part therefore runs once per level of the order, and the wall time grows with the depth of that order times the per-drone selection time plus one message delay. The rollouts and the QP can run in parallel on every drone. On this estimate the per-drone compute fits in 100 ms; whether the whole step does depends on the ordering depth and the link delay, which are not measured.
 
 ## 7. Limits
 
@@ -202,3 +249,28 @@ Pending: `scale.py` is a timing run and waits for an idle machine.
 - The selection is a heuristic local search, not the exact joint optimum. Its only guarantee is that the global minimum of the clipped margins never drops below the warm start's.
 - Disturbance (BL-06), lag (BL-05) and the world-box wind budget (BL-07) are not modelled beyond main's lag allowance in the horizon.
 - The margins come from observed states. Under noise, a drone may switch candidates when the band of 0.5 m is not enough.
+- CBK has not run the 5000-run normal and hard fuzz sweeps (§6.2, selection bias); `cbk-lite` has not run the §6.2 cases.
+- Latency is from one run per configuration in one start state each, in Python on one CPU. The decentralised cost is an estimate from timed pieces, not a decentralised implementation.
+
+## 8. Recommendation
+
+**Adapt, do not adopt.** CBK fails items 1, 2 and 4 of the bar and has one safety regression (vertical noise σ = 1.5, §6.2). It is not a drop-in replacement for main's filter.
+
+The structure is still worth keeping. One backup per drone removes the contradictory per-pair escapes by construction, it is the only change that cleared six hard seeds of `d_eff`, and it is what makes a decentralised filter with a feasibility argument possible (§5). Before CBK is evaluated against the bar again:
+
+1. Change the hysteresis to TBC Algorithm 2: leave an uncertified candidate for any certified one, and keep the 0.5 m band only between certified candidates (§2.3 item 4).
+2. Reduce candidate switching under noise, for example by filtering the margins or by a longer hold, and re-measure reversals at σ 0.5 and 1.5.
+3. Decide the barrier term with Salman: clamped as now, or unclamped like main (§2.4).
+4. Find why CBK lets drones come closer in two-drone and ring encounters (§6.2 item 1 hypothesis), and test line-of-sight-frame candidates frozen at selection.
+5. Save `min_margin_m` per step, then run the full normal and hard fuzz sweeps for CBK.
+6. Make latency fit: full CBK is 5.2× main at N = 16. `cbk-lite` fits but must first pass the §6.2 cases; otherwise compute the margins only for pairs whose rows are active, or move to the decentralised form.
+
+## 9. Open questions for Salman
+
+1. Should CBK rows clamp the barrier term at 0 (only "no worse than the backup" when the backup is uncertified) or keep main's unclamped recovery term (§2.4)?
+2. Is TBC Algorithm 2's switching rule (switch whenever the held candidate is uncertified) the right hysteresis, given the noise reversals?
+3. Is candidate switching under σ = 1.5 noise acceptable at all, or must the backup be frozen for a minimum time?
+4. Is a minimum separation lower than main's but above `d_eff` acceptable (14 of the 15 item-1 cases), or must CBK match main everywhere?
+5. Are line-of-sight-frame candidates frozen at selection worth adding to the world-frame library?
+6. For the decentralised version: is the sequential broadcast of CSA Algorithm 1 acceptable for latency, and what ordering depth and link delay should we design for?
+7. Should the backup broadcast (candidate index, clock, timestamp; §5) go into the contract now, ahead of the centralised or decentralised ADR?

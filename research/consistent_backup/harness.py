@@ -141,7 +141,8 @@ def kinematic(name: str, p, v, steps: int, sigma: float | None = None, seed: int
         t0 = time.perf_counter()
         safe, diag = filt(st, acts, cfg, latch=latch)
         ms = (time.perf_counter() - t0) * 1000.0
-        a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
+        by_id = {s.agent_id: s.safe_accel_mps2 for s in safe}
+        a = np.array([by_id[i] for i in ids])
         tally.filter_step(diag, latch, name, a, p, ms)
         vn = v + a * DT
         speed = np.linalg.norm(vn, axis=1, keepdims=True)
@@ -173,7 +174,8 @@ def env_episode(name: str, drones: list[dict], steps: int = 400, rules: Airspace
         t0 = time.perf_counter()
         safe, diag = filt(observed, proposed, cfg, latch=latch)
         ms = (time.perf_counter() - t0) * 1000.0
-        a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
+        by_id = {s.agent_id: s.safe_accel_mps2 for s in safe}
+        a = np.array([by_id[i] for i in tally.ids])
         nom = np.array([x.proposed_accel_mps2 for x in sorted(proposed, key=lambda x: x.agent_id)])
         tally.filter_step(diag, latch, name, a - nom, truth, ms)
         observations = env.step(safe).observations
