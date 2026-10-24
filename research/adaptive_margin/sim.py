@@ -250,7 +250,7 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) ->
     # The drone starts trimmed: thrust cancels the drag at its velocity.
     a = -D[:, None] * (wind(0) - v)
     c_now = a.copy()
-    # Ground station's wind knowledge: forecast U and turbulence class (P3-SA-03 §4.2).
+    # Ground station's wind knowledge: forecast U and turbulence class (P3-SA-03 §4.3).
     q = np.maximum(2.0 * sig_g**2 / tau_g, 1e-6)
     p_ww0 = np.maximum(cond.wind_mps**2 + sig_g**2, 1e-2)
     z0 = [measure(i, wind(0)[i])[0] for i in range(n)]
@@ -301,7 +301,7 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) ->
                 res = margin(preds, t + P_TICKS + A_TICKS)
                 monitor(preds, res, t)
                 states = [_state(aid, pr.x[:3], pr.x[3:6], t) for aid, pr in preds.items()]
-                # Raise the margin no faster than the barrier absorbs (P3-SA-03 §3.6).
+                # Raise the margin no faster than the barrier absorbs (P3-SA-03 §3.9).
                 m_star = absorbable(states, latch, F.FilterConfig(margin_m=m_prev))
                 m_app = min(res.margin_m, max(m_star, m_prev))
                 deficit = res.margin_m - m_app

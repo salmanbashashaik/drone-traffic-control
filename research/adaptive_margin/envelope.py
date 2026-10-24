@@ -126,8 +126,8 @@ class Airframe:
 
 
 # DJI spec pages (retrieved 2026-10-24). A type without all three figures
-# cannot register: DJI Agras T40 publishes no tilt angle (wind 6 m/s, speed
-# 10 m/s); Garuda Agri Kisan GA-AD publishes neither (rated speed 5 m/s).
+# cannot register: DJI Agras T40 publishes no tilt angle and no top speed (wind
+# 6 m/s); Garuda Agri Kisan GA-AD publishes neither (rated speed 5 m/s).
 FLEET = (
     Airframe("dji_m350_rtk", 12.0, 30.0, 23.0, "enterprise.dji.com/matrice-350-rtk/specs"),
     Airframe("dji_m30", 12.0, 35.0, 23.0, "enterprise.dji.com/matrice-30/specs"),

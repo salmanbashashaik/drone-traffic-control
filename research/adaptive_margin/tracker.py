@@ -242,7 +242,7 @@ class Tracker:
     def floored(self, P: np.ndarray) -> np.ndarray:
         """No credit for averaging GNSS position: P_pp is raised to at least R_p per axis.
 
-        The sources give no error correlation time (P3-SA-03 §3.4), so a
+        The sources give no error correlation time (P3-SA-03 §2.1, §4.3), so a
         constant receiver bias cannot be ruled out.
         """
         P = P.copy()

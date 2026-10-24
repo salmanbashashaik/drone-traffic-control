@@ -19,7 +19,7 @@ and T the backup's stopping time:
 
 with d = D (w - v) the drag acceleration left after the feedforward. The
 filter takes one margin, the largest over all pairs, and raises it no
-faster than the barrier can absorb (``absorbable``, P3-SA-03 §3.6).
+faster than the barrier can absorb (``absorbable``, P3-SA-03 §3.9).
 """
 
 from __future__ import annotations
@@ -180,7 +180,7 @@ def monitor(preds: dict[str, Pred], res: Result, tick_now: int) -> set[str]:
 
 
 def absorbable(states: list[DroneState], latch: dict, cfg: F.FilterConfig) -> float:
-    """m*: the largest margin the states still satisfy under main's backup barrier (P3-SA-03 §3.6).
+    """m*: the largest margin the states still satisfy under main's backup barrier (P3-SA-03 §3.9).
 
     Main's barrier for a pair is h = min |r| over the backup rollout -
     (SAFE_SEPARATION_M + margin), so h >= 0 for every pair exactly when the

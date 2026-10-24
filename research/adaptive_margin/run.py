@@ -42,7 +42,9 @@ def _git() -> dict:
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout.strip()
     return {"git": git("rev-parse", "--short=12", "HEAD"),
-            "dirty": bool(git("status", "--porcelain", "--", "research/adaptive_margin"))}
+            # The run's own output files are not code changes.
+            "dirty": bool(git("status", "--porcelain", "--", "research/adaptive_margin",
+                              ":(exclude)research/adaptive_margin/results"))}
 
 
 def _key(j: dict) -> tuple:
