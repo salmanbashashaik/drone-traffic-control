@@ -1,0 +1,31 @@
+{
+  "scenario_id": "city24",
+  "seed": 24,
+  "episode_limit_steps": 1000,
+  "drones": [
+    {"agent_id": "c00", "initial_position_m": [240.0, 380.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [760.0, 380.0, 40.0]},
+    {"agent_id": "c01", "initial_position_m": [180.0, 380.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [700.0, 380.0, 40.0]},
+    {"agent_id": "c02", "initial_position_m": [760.0, 380.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [240.0, 380.0, 40.0]},
+    {"agent_id": "c03", "initial_position_m": [240.0, 460.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [760.0, 460.0, 40.0]},
+    {"agent_id": "c04", "initial_position_m": [180.0, 460.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [700.0, 460.0, 40.0]},
+    {"agent_id": "c05", "initial_position_m": [760.0, 460.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [240.0, 460.0, 40.0]},
+    {"agent_id": "c06", "initial_position_m": [240.0, 540.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [760.0, 540.0, 40.0]},
+    {"agent_id": "c07", "initial_position_m": [180.0, 540.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [700.0, 540.0, 40.0]},
+    {"agent_id": "c08", "initial_position_m": [760.0, 540.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [240.0, 540.0, 40.0]},
+    {"agent_id": "c09", "initial_position_m": [240.0, 620.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [760.0, 620.0, 40.0]},
+    {"agent_id": "c10", "initial_position_m": [180.0, 620.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [700.0, 620.0, 40.0]},
+    {"agent_id": "c11", "initial_position_m": [760.0, 620.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [240.0, 620.0, 40.0]},
+    {"agent_id": "c12", "initial_position_m": [380.0, 240.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [380.0, 760.0, 40.0]},
+    {"agent_id": "c13", "initial_position_m": [380.0, 180.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [380.0, 700.0, 40.0]},
+    {"agent_id": "c14", "initial_position_m": [380.0, 760.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [380.0, 240.0, 40.0]},
+    {"agent_id": "c15", "initial_position_m": [460.0, 240.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [460.0, 760.0, 50.0]},
+    {"agent_id": "c16", "initial_position_m": [460.0, 180.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [460.0, 700.0, 50.0]},
+    {"agent_id": "c17", "initial_position_m": [460.0, 760.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [460.0, 240.0, 50.0]},
+    {"agent_id": "c18", "initial_position_m": [540.0, 240.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [540.0, 760.0, 40.0]},
+    {"agent_id": "c19", "initial_position_m": [540.0, 180.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [540.0, 700.0, 40.0]},
+    {"agent_id": "c20", "initial_position_m": [540.0, 760.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [540.0, 240.0, 40.0]},
+    {"agent_id": "c21", "initial_position_m": [620.0, 240.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [620.0, 760.0, 50.0]},
+    {"agent_id": "c22", "initial_position_m": [620.0, 180.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [620.0, 700.0, 50.0]},
+    {"agent_id": "c23", "initial_position_m": [620.0, 760.0, 50.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [620.0, 240.0, 50.0]}
+  ]
+}

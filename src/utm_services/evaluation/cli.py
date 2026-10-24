@@ -9,6 +9,7 @@ reference controller as a labelled stand-in until a trained policy exists.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import sys
 from itertools import combinations
@@ -19,9 +20,11 @@ import numpy as np
 from pydantic import ValidationError
 from shared.contracts import SAFE_SEPARATION_M, ScenarioConfig
 
+from utm_services.evaluation.decision_log import ReplayMismatch, sha256_json, write_decision_log
 from utm_services.policy.reference import ReferencePolicy
 from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import VARIANTS, run_episode
+from utm_services.training.provenance import git_state
 
 
 def plot_replay(records: list[dict[str, Any]], path: Path, title: str) -> None:
@@ -65,16 +68,22 @@ def main(argv: list[str] | None = None) -> int:
                         help="disturbance profile: ideal (T1), nominal or realistic (T2 placeholders; default: ideal)")
     parser.add_argument("--out", type=Path, default=Path("runs"), help="output directory (default: runs)")
     parser.add_argument("--plot", action="store_true", help="also write replay.png (needs the 'plot' extra)")
+    parser.add_argument("--decision-log", action="store_true",
+                        help="also write decisions.jsonl for utm-viz-rerun and utm-viz-cesium")
     args = parser.parse_args(argv)
 
     try:
-        config = ScenarioConfig.model_validate_json(args.scenario.read_text())
+        raw = args.scenario.read_bytes()
+        config = ScenarioConfig.model_validate_json(raw)
     except (OSError, ValidationError) as exc:
         print(f"utm-run: invalid scenario {args.scenario}: {exc}", file=sys.stderr)
         return 2
 
     result = run_episode(config, args.variant, policy=ReferencePolicy(), policy_id="reference-standin",
                          make_env=lambda rules: DroneEnv(rules, disturbances=PROFILES[args.profile]))
+    # scenario: the file as given; script: what the drones are told, independent of formatting.
+    result.manifest.update(scenario_file=str(args.scenario), scenario_sha256=hashlib.sha256(raw).hexdigest(),
+                           script_sha256=sha256_json(config.model_dump(mode="json")), code=git_state())
     args.out.mkdir(parents=True, exist_ok=True)
     (args.out / "manifest.json").write_text(json.dumps(result.manifest, indent=2, default=str))
     (args.out / "summary.json").write_text(json.dumps(result.summary, indent=2))
@@ -83,6 +92,12 @@ def main(argv: list[str] | None = None) -> int:
             f.write(json.dumps(rec) + "\n")
     if args.plot:
         plot_replay(result.records, args.out / "replay.png", result.manifest["episode_id"])
+    if args.decision_log:
+        try:
+            write_decision_log(args.out)
+        except ReplayMismatch as exc:
+            print(f"utm-run: decision log not written: {exc}", file=sys.stderr)
+            return 1
 
     print(json.dumps(result.summary, indent=2))
     return 0

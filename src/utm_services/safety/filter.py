@@ -46,9 +46,11 @@ A9  Joint solve over all active pairs required.
 
 from __future__ import annotations
 
+import contextvars
 import logging
 import math
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -72,6 +74,28 @@ from shared.contracts import (
 )
 
 logger = logging.getLogger(__name__)
+
+# The list ``capture_internals`` records into; None (the default) records nothing.
+_CAPTURE: contextvars.ContextVar[list[dict] | None] = contextvars.ContextVar("filter_capture", default=None)
+
+
+@contextmanager
+def capture_internals() -> Iterator[list[dict]]:
+    """Record internals of every ``apply_filter`` call in this context, for the decision log.
+
+    Off by default. Each call appends one dict: ``timestamp_ms``, ``pairs_in_qp``,
+    ``latches`` (pair -> copies of its ``_PairLatch`` fields) and ``escape_pairs``.
+    Recording only copies values the filter already computed, after its outputs
+    are fixed, so outputs are bit-identical with capture on and off
+    (tests/test_filter_capture.py). Not part of the contract.
+    """
+    calls: list[dict] = []
+    token = _CAPTURE.set(calls)
+    try:
+        yield calls
+    finally:
+        _CAPTURE.reset(token)
+
 
 # Default range gate: None means include all pairs (correct for small N).
 # Set to a positive float (metres) to exclude distant pairs from the QP.
@@ -1624,6 +1648,19 @@ def apply_filter(
             "filter: barrier violated at t=%d ms on %d pairs (%d escaping)",
             step_ts, len(pair_slack), len(escape_pairs),
         )
+
+    captured = _CAPTURE.get()
+    if captured is not None:
+        captured.append({
+            "timestamp_ms": step_ts,
+            "pairs_in_qp": list(pairs_in_qp),
+            "latches": {
+                pair: {"axis": frame.axis.tolist(), "up": frame.up, "signs": frame.signs,
+                       "escape": frame.escape, "origin": frame.origin}
+                for pair, frame in frames.items()
+            },
+            "escape_pairs": list(escape_pairs),
+        })
 
     logger.debug(
         "filter: t=%d ms pairs=%d/%d h_min=%.3f m² interventions=%d fallback=%s",

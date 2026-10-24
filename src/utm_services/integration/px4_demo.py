@@ -28,6 +28,7 @@ from pathlib import Path
 
 from shared.contracts import SAFE_SEPARATION_M
 
+from utm_services.evaluation.decision_log import sha256_json
 from utm_services.integration.px4_bridge import (
     ALT_OFFSET_M,
     TELEMETRY_STALE_MS,
@@ -128,6 +129,8 @@ def main(argv: list[str] | None = None) -> int:
             "mavsdk_version": version("mavsdk"),
             "px4_params": fleet.params(PX4_FLOAT_PARAMS, PX4_INT_PARAMS),
             "encounter": asdict(enc),
+            # what the drones are told; --filter off flies other altitudes, so its script hash differs
+            "script_sha256": sha256_json(asdict(enc)),
             "agent_ids": list(enc.agent_ids),
             "goals_m": [list(g) for g in enc.goals_m],
             "frame": {"world_origin_xy": WORLD_ORIGIN_XY, "alt_offset_m": ALT_OFFSET_M,
