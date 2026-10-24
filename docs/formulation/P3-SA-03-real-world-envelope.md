@@ -2,16 +2,16 @@
 
 ## Summary
 
-Main's filter keeps every pair at least `5 m + margin_m` apart. Today `margin_m` is a fixed 0.5 m, and the filter acts on states that it assumes are exact and current. This note replaces that fixed number with a margin computed every 100 ms from live quantities: the tracker's error along the lines of sight of each pair's backup manoeuvre, a worst-case stopping time per pair, a constant cover for one lost command per drone, and a backup rollout flown through each drone's actuator lag, drag and thrust limit. The margin is sized for a risk per pair-hour, at 10⁻⁵ and at 10⁻⁷ (founder B6). Each drone flies no faster than a cleared cruise speed for its airframe and the forecast wind, and a scenario is cleared only if its states already satisfy the margin it needs. The margin may rise only as fast as the barrier can absorb. An envelope monitor states, for each condition, the limit inside which the margin is valid and the safe response outside it. Every physical input is either a cited published value (§2) or measured live. The founder's decisions of 2026-10-24 are applied: 1–7, four on the interim report, and B1–B6 and N1 on the Fable review. The remaining choices are listed in §8.
+Main's filter keeps every pair at least `5 m + margin_m` apart. Today `margin_m` is a fixed 0.5 m, and the filter acts on states that it assumes are exact and current. This note replaces that fixed number with a margin computed every 100 ms from live quantities. The terms are: the tracker's error along the lines of sight of each pair's backup manoeuvre, a worst-case stopping time per pair, a cover for one lost command per drone, and a backup rollout flown through each drone's actuator lag, drag and thrust limit. The lost-command cover is carried through the drag and bounded by the filter's own command box. The margin is sized for a risk per pair-hour, at 10⁻⁵ and at 10⁻⁷ (founder B6). Each drone flies no faster than a cleared cruise speed for its airframe and the forecast wind, and a scenario is cleared only if its states already satisfy the margin it needs. The margin may rise only as fast as the barrier can absorb. An envelope monitor states, for each condition, the limit inside which the margin is valid and the safe response outside it. Every physical input is either a cited published value (§2) or measured live. The founder's decisions of 2026-10-24 are applied: 1–7, four on the interim report, B1–B6 and N1 on the Fable review, and 3(a)–(c) on the Fable re-review. The remaining choices are listed in §8.
 
-Findings (details in §6; all in simulation, in-model; 2336 rows at commit `b6139175fdb3`; the two targets give the same picture):
+Findings (details in §6; all in simulation, in-model; 2336 rows at commit `e06d9414dd95`, compared with the previous matrix at `a5b5264`; the two targets give the same picture):
 
-1. **No loss of separation in any admissible in-limit run, at either target.** 218 runs at 10⁻⁵ and 203 at 10⁻⁷ (three GNSS grades, calm and India wind), and 131 takeoff runs at each target. On the same scenarios, main as configured today lost separation in 89 of 218 and 88 of 203 runs.
-2. **The margin is now tens of metres for every grade.** The constant lost-command term alone is 22–27 m per pair: one lost 100 ms command, held open loop for the worst-case stopping time T ≈ 6.3 s. With RTK the median margin is 25 m in calm air and 35–36 m in the India wind. SBAS and GPS SPS need 54–67 m. That is above the 48.57 m that main's filter can express, so the `margin` alarm fires in every SBAS and SPS run and the margin in force is 48.57 m. For those grades the risk target is not met by construction, and their zero losses measure a 48.57 m margin, not the claim.
-3. **Corridor capacity is zero for every grade at both targets.** In the 100 m × 30 m reference corridor, with each lane at least one margin from each wall, no lane fits. One RTK layer needs a corridor at least 69–72 m tall; at the SBAS and SPS cap it needs 97 m. The earlier figures (12 400, 280 and 66 drones per km) came from the K = 4.033 rows, which were per check only. They are withdrawn.
-4. **Admissibility removes many encounters.** Of the 47 recoverable scenarios per condition, RTK clears 43–45. SBAS and SPS clear 39–40 in calm air but only 14–29 in the India wind; most of the rest are rings and random encounters.
-5. **Every fault in B1–B5 raised its alarm in every run; the doubled lag (B6) was found in only 8–10 of 16 runs.** The N1 regressor (an offset and a trend per axis) removed the lag false alarms (B1: 15 of 16 runs before, none now), but it costs detection power: with an offset only, the same runs find the lag in 14–16 of 16 (scratch diagnostic, §6.2). No beyond-limit case lost separation. That includes B8 under SBAS (2 losses before), because the capped margin covers a 5σ bias there. B8 remains a stated limit.
-6. **`headroom` still fires in calm air at the cleared speed** (22–25 runs per grade, from the first monitored cycle on, and it recurs), because the calm-air cleared speed leaves no reserve for the tracker's drag uncertainty. In the India wind it fires in no in-limit run. It is a safety alarm (B3). No loss followed.
+1. **No loss of separation in any admissible in-limit run, at either target.** 259 runs at 10⁻⁵ and 248 at 10⁻⁷ (three GNSS grades, calm and India wind), and 135 and 132 takeoff runs. On the same scenarios main as configured today lost separation in 110 and 107 runs.
+2. **The tighter lost-command term cut the margin by 15–17 m.** Carried through the drag (re-review 3a) and bounded by the filter's box plus the drag trim (3b), the term is 7.5–7.7 m per pair, against 22.1–26.8 m. With RTK the median margin is 8.0 m in calm air and 18.1 / 19.2 m in the India wind (25 and 35–36 m before). SBAS now fits main's 48.57 m bound at both targets: median 39–44 m, requested at clearance 38–43 m. GPS SPS still requests 45–52 m and runs at the cap in most runs.
+3. **The station's own commands never came near the new bound.** The largest difference between consecutive commands was 0.78 of the bound, and the new `dc` alarm fired in no run.
+4. **Main's QP now falls back in 6 admissible in-limit runs** (2 SBAS calm ring6 scenarios and 1 SPS India crossing, at both targets), against none before. OSQP stopped at its iteration limit for one cycle, with the predicted separation within about 1 m of d_eff. No loss followed. This is a safety metric that got worse, so it is reported for a founder decision (§8), not tuned.
+5. **Capacity is zero in the 100 m × 30 m reference corridor in the India wind, at both targets.** One RTK layer needs 36–38 m of height, and a corridor that tall gives 3 lanes (about 120–130 drones per km). In calm air RTK fits 14 lanes, 1064 drones per km. The old per-check figures (12 400 / 280 / 66) stay withdrawn.
+6. **The beyond-limit results did not change in kind.** No case lost separation. B1–B5 raised their alarm in every run. The doubled lag (B6) was found in 5–13 of 16 runs (8–10 before). B7 and B8 have no warning of their own, and B8 is still masked by margins wider than a 5 σ bias.
 
 | Field | Value |
 |---|---|
@@ -20,7 +20,7 @@ Findings (details in §6; all in simulation, in-model; 2336 rows at commit `b613
 | Date | 2026-10-24 |
 | Builds on | P3-SA-01 (literature), P2-SA-02 (backup filter), PR #12 (`EPS_LIN`, latch) |
 | Code | `research/adaptive_margin/` (`envelope.py`, `tracker.py`, `margin.py`, `rollout.py`, `sim.py`, `run.py`, `check.py`) |
-| Results | `research/adaptive_margin/results/runs3-{0..3}.jsonl` (2336 rows, commit `b6139175fdb3`, clean tree), `research/adaptive_margin/results/summary.md`. Earlier rows, kept as a record and not used: `runs2-*.jsonl` (K = 4.033, per check only), `partial-b375131-*.jsonl` (laptop start of this matrix); interim report `docs/results/p3-sa-03-interim-2026-10-24.md`; review `docs/results/p3-sa-03-fable-review-2026-10-24.md` (branch `review/adaptive-margin`) |
+| Results | `research/adaptive_margin/results/runs4-{0..3}.jsonl` (2336 rows, commit `e06d9414dd95`, clean tree), `results/summary.md`. Previous matrix: `runs3-{0..3}.jsonl` (`b6139175fdb3`, the a5b5264 results; `ideal_min_sep` re-recorded at `d602f592d04e`, R1) and `results/summary-runs3.md`. Older rows, kept as a record and not used: `runs2-*.jsonl` (K = 4.033, per check only), `partial-b375131-*.jsonl`. Reviews on `review/adaptive-margin`: `docs/results/p3-sa-03-fable-review-2026-10-24.md`, `p3-sa-03-fable-rereview-2026-10-24.md` |
 
 ## 1. Problem
 
@@ -358,7 +358,7 @@ A falling m_req is applied at once. A rising one is applied only up to m*, and n
 
 **SBAS does not qualify for the margin's time to alert.** An integrity bound is useful to the margin only if the receiver alerts before the bound can be exceeded for the length of the horizon over which the margin relies on it, so the time to alert must be shorter than T. SBAS APV-I specifies a time to alert of 10 s (Kim et al. 2016, Table 2, ICAO SARPs). T is 6.45–6.52 s (§3.3). A 10 s alert can arrive after the backup has run its course, so SBAS APV-I does not meet the rule. The previous version of this section said SBAS qualified; that was wrong.
 
-**No positioning grade qualifies for dense corridors today.** SBAS fails the time to alert. The ZED-F9P's protection level is a 5 % bound per epoch (§2.5). Integrity RTK exists only as vendor claims. A corridor whose lane spacing rests on a GNSS margin therefore has no positioning grade whose integrity was verified against this rule. See founder items 2 and 6 (§8).
+**No positioning grade qualifies for dense corridors today.** SBAS fails the time to alert. The ZED-F9P's protection level is a 5 % bound per epoch (§2.5). Integrity RTK exists only as vendor claims. A corridor whose lane spacing rests on a GNSS margin therefore has no positioning grade whose integrity was verified against this rule. See founder items 3 and 8 (§8).
 
 **How a protection level would enter the margin.** A PL is stated with an integrity risk per approach or per hour, not per check. Two ways keep the budget honest:
 
@@ -460,27 +460,29 @@ Each would need a measurement that the ground station does not have (§7).
 
 ## 6. Results
 
-Setup (`sim.py`, `run.py`): six encounter families (head-on, crossing, climbing, rings of 4 and 6, random), 8 seeds each, 22 s episodes with the encounter at t = 12 s, a 10 ms plant and a 100 ms ground-station cycle. The plant has linear drag D (w − v) with each drone's registered D, a first-order actuator lag and the tilt-authority clip (§3.3). Every scenario is flown at the cleared cruise speeds (§3.3), scaled so that the drones meet at the same point and time as in the uncleared scenario. Every job runs at both risk targets: 10⁻⁵ per pair-hour (K1 = 6.31, K2 = 6.63) and 10⁻⁷ (K1 = 6.99, K2 = 7.30).
+Setup (`sim.py`, `run.py`): six encounter families (head-on, crossing, climbing, rings of 4 and 6, random), 8 seeds each, 22 s episodes with the encounter at t = 12 s, a 10 ms plant and a 100 ms ground-station cycle. The plant has linear drag D (w − v) with each drone's registered D, a first-order actuator lag and the tilt-authority clip (§3.3). Every scenario is flown at the cleared cruise speeds (§3.3), scaled so that the drones meet at the same point and time as in the uncleared scenario. Every job runs at both risk targets: 10⁻⁵ per pair-hour (K1 = 6.31, K2 = 6.63, K3 = 6.89) and 10⁻⁷ (K1 = 6.99, K2 = 7.30, K3 = 7.54).
 
-**Provenance.** The matrix has 2336 rows: per target, 864 in-limit (6 families × 8 seeds × 6 conditions × 3 modes), 160 beyond-limit and 144 takeoff. All of them were written at commit `b6139175fdb3` with a clean tree (`git` and `dirty` in every row), on one machine (Linux, 4 cores, Python 3.13, NumPy 2.5.4, SciPy 1.18.1, OSQP 0.6.7.post3), in four shards (`--shard k --of 4`, one per core). The research code at that commit is the code of `b375131`. Per-run rows are in `research/adaptive_margin/results/runs3-{0..3}.jsonl`; the tables are in `research/adaptive_margin/results/summary.md`. The 157 rows written on the laptop at `b375131` before the handover are kept as `partial-b375131-*.jsonl` and not used. This run reproduces all of them exactly in every field except `ideal_min_sep` (below) and the wall time.
+**Provenance.** The current matrix (`runs4`) has 2336 rows: per target, 864 in-limit (6 families × 8 seeds × 6 conditions × 3 modes), 160 beyond-limit and 144 takeoff. All were written at commit `e06d9414dd95` with a clean tree, on one machine (Linux, 4 cores, Python 3.13, NumPy 2.5.4, SciPy 1.18.1, OSQP 0.6.7.post3), in four shards (`--shard k --of 4`). It differs from the previous matrix (`runs3`, commit `b6139175fdb3`, the results of `a5b5264`) only in the lost-command term (§3.6, re-review 3a and 3b), the `dc` check, and the recoverability fix below. Same scenarios, seeds and random streams. The baseline rows are identical to `runs3`'s in every field. Per-run rows are in `results/runs4-{0..3}.jsonl`, the tables in `results/summary.md`; the `runs3` tables are in `results/summary-runs3.md`.
 
-**Recoverability.** One scenario of the 48 (random, seed 4) is not recoverable even for main on exact, current states: its drones are inside 5 m at the start, at every cleared speed (minimum 2.2–3.5 m). It is left out everywhere. *Harness defect, found in this run:* `sim.recoverable` runs main's filter while `rollout.CTX` still holds the previous adaptive episode's drones, so the recoverability check flew a stale lagged rollout. The recorded `ideal_min_sep` therefore depends on which job ran before it in the shard, by up to 4.35 m. Recomputed with `CTX` empty for all 144 scenario variants (scratch script, not committed), no scenario changes class: random seed 4 is the only one below 5 m in both. The in-limit sets and every count below are unaffected. The fix is one line (clear `CTX` in `recoverable`). It is not applied, so that the rows and the code stay at one commit (§8).
+**Medians.** Every p50 in this section is `run.table`'s median: for an even number of runs, the upper of the two middle values. Up to 0.12 m of the earlier version's requested-margin medians used the mean of the two (Fable re-review N-a); they are restated here in `run.table`'s convention.
 
-**Admissibility (review B2).** At the first cycle after the 2 s track convergence, a scenario is admissible if the backup rollout from its states already keeps every pair 5 m + m_req apart (§3.9). The requested margin is unclamped, so under SBAS and SPS the test asks for 54–67 m, more than the filter can then enforce. Inadmissible scenarios are left out of the in-limit set in every mode.
+**Recoverability (re-review R1).** `sim.recoverable` used to run main's filter while `rollout.CTX` still held the previous adaptive episode's drones. When that episode had fewer drones, the lagged rollout raised a `KeyError` and main flew its evasive fallback; otherwise it flew another scenario's airframes and wind. `recoverable` now clears `CTX` first (commit `d602f592d04e`). `run.py --rerecord` recomputed `ideal_min_sep` in the `runs3` rows at that commit, stamped `ideal_git`, without rerunning anything else. 1443 of 2336 rows (1036 of 1184 adaptive) changed, by up to 4.35 m. **No scenario changed class:** random seed 4 is the only one below 5 m (2.24–3.49 m), and the closest in-limit scenario is at 5.58 m. The `runs3` tables regenerated from the corrected rows are identical to the `a5b5264` tables. The column now depends on the scenario only. The re-review counted 895 differing adaptive rows and a closest in-limit value of 5.51–5.54 m on its laptop; the difference was not investigated (a second platform with NumPy 1.26, a different tolerance in the count, or both).
 
-| condition | admissible of 47, 10⁻⁵ | 10⁻⁷ | not admissible at 10⁻⁵, by family |
-|---|---|---|---|
-| RTK, calm | 45 | 45 | random 2 |
-| RTK, India wind | 43 | 43 | random 4 |
-| SBAS, calm | 40 | 39 | ring6 3, random 4 |
-| SBAS, India wind | 29 | 23 | ring6 8, random 7, ring4 2, cross2 1 |
-| GPS SPS, calm | 39 | 39 | ring6 3, random 4, ring4 1 |
-| GPS SPS, India wind | 22 | 14 | ring6 8, random 7, ring4 7, cross2 3 |
-| takeoff, RTK / SBAS / SPS (India) | 45 / 43 / 43 | 45 / 43 / 43 | random 2 / 4 / 4 |
+**Admissibility (review B2).** At the first cycle after the 2 s track convergence, a scenario is admissible if the backup rollout from its states already keeps every pair 5 m + m_req apart (§3.9). With the smaller lost-command term far more scenarios clear:
 
-The India wind removes more encounters than calm air because a track started at cruise has the full wind prior at clearance (§4.4), and the wind uncertainty enters the GNSS term through the drag. The takeoff tracks, which have converged by the encounter run's t = 0, lose only the random encounters.
+| condition | admissible of 47, 10⁻⁵ (`a5b5264`) | 10⁻⁷ (`a5b5264`) |
+|---|---|---|
+| RTK, calm | 47 (45) | 47 (45) |
+| RTK, India wind | 45 (43) | 44 (43) |
+| SBAS, calm | 44 (40) | 43 (39) |
+| SBAS, India wind | 43 (29) | 43 (23) |
+| GPS SPS, calm | 43 (39) | 42 (39) |
+| GPS SPS, India wind | 37 (22) | 29 (14) |
+| takeoff, RTK / SBAS / SPS (India) | 46 / 45 / 44 (45 / 43 / 43) | 45 / 44 / 43 (45 / 43 / 43) |
 
-**Counting.** "Warning" means any alarm from the track-convergence time on, except `absorb` and `margin` (founder B2): those two say that the margin in force is short of the requested one, not that a fault is present. `headroom` counts as a warning from the first monitored cycle on (founder B3). "Silent" means no warning at all. "Wind at t0" (the prior, decision 2c) is in `summary.md`.
+23 and 34 recoverable in-limit runs are not admissible, against 64 and 79 before.
+
+**Counting.** "Warning" means any alarm from the track-convergence time on, except `absorb` and `margin` (founder B2), which say that the margin in force is short of the requested one, not that a fault is present. `headroom` counts from the first monitored cycle (founder B3); `dc` counts (§3.6). "No warning" means no alarm other than `absorb` or `margin`.
 
 ### 6.1 Inside the limits
 
@@ -488,120 +490,114 @@ Admissible encounters only. Each cell gives 10⁻⁵ / 10⁻⁷.
 
 | condition | mode | runs | LoS | runs with a warning (kinds) | margin in force p50 (m) | requested at clearance p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) |
 |---|---|---|---|---|---|---|---|---|
-| RTK, calm | adaptive | 45 / 45 | **0 / 0** | 31 / 31 (headroom 25, wall 15) | 24.89 / 24.97 | 27.03 / 27.34 | 0.28 / 24.47 — 0.31 / 24.52 | 27.56 / 27.64 |
-| RTK, calm | baseline | 45 / 45 | 17 / 17 | – | 0.5 | – | – | 3.84 / 3.84 |
-| RTK, India wind | adaptive | 43 / 43 | **0 / 0** | 3 / 6 (nis 3 / 6, wall 1 / 1) | 34.68 / 35.83 | 34.57 / 35.73 | 10.07 / 24.47 — 11.17 / 24.52 | 36.59 / 37.60 |
-| RTK, India wind | baseline | 43 / 43 | 1 / 1 | – | 0.5 | – | – | 4.79 / 4.86 |
-| SBAS, calm | adaptive | 40 / 39 | **0 / 0** | 32 / 32 (wall 24, headroom 22, lag 1) | 48.57 (cap) | 54.08 / 57.28 | 30.62 / 24.65 — 33.91 / 24.72 | 43.40 / 43.40 |
-| SBAS, calm | baseline | 40 / 39 | 33 / 32 | – | 0.5 | – | – | 0.28 / 0.28 |
-| SBAS, India wind | adaptive | 29 / 23 | **0 / 0** | 16 / 9 (wall) | 48.57 (cap) | 55.97 / 59.45 | 31.96 / 24.65 — 35.28 / 24.72 | 45.69 / 45.88 |
-| SBAS, India wind | baseline | 29 / 23 | 2 / 2 | – | 0.5 | – | – | 2.54 / 2.49 |
-| GPS SPS, calm | adaptive | 39 / 39 | **0 / 0** | 36 / 36 (wall 30, headroom 22) | 48.57 (cap) | 61.29 / 65.52 | 46.76 / 24.65 — 51.78 / 24.72 | 32.20 / 32.20 |
-| GPS SPS, calm | baseline | 39 / 39 | 35 / 35 | – | 0.5 | – | – | 0.09 / 0.09 |
-| GPS SPS, India wind | adaptive | 22 / 14 | **0 / 0** | 12 / 7 (wall) | 48.57 (cap) | 63.52 / 66.82 | 44.60 / 24.65 — 46.43 / 24.72 | 40.55 / 44.28 |
-| GPS SPS, India wind | baseline | 22 / 14 | 1 / 1 | – | 0.5 | – | – | 2.54 / 4.99 |
+| RTK, calm | adaptive | 47 / 47 | **0 / 0** | 29 / 29 (headroom 27, wall 4, lag 1) | 8.03 / 8.06 | 10.18 / 10.45 | 0.29 / 7.55 — 0.32 / 7.56 | 12.83 / 12.91 |
+| RTK, calm | baseline | 47 / 47 | 18 / 18 | – | 0.5 | – | – | 3.51 / 3.51 |
+| RTK, India wind | adaptive | 45 / 44 | **0 / 0** | 5 / 7 (nis 5 / 7, saturation 0 / 1) | 18.07 / 19.22 | 17.78 / 18.92 | 10.26 / 7.63 — 11.47 / 7.65 | 22.81 / 23.91 |
+| RTK, India wind | baseline | 45 / 44 | 1 / 1 | – | 0.5 | – | – | 4.79 / 4.86 |
+| SBAS, calm | adaptive | 44 / 43 | **0 / 0** | 35 / 34 (wall 26, headroom 24, saturation 1 / 2, lag 1 / 0) | 39.44 / 42.23 | 37.51 / 40.55 | 31.80 / 7.55 — 34.51 / 7.56 | 31.17 / 34.17 |
+| SBAS, calm | baseline | 44 / 43 | 37 / 36 | – | 0.5 | – | – | 0.28 / 0.28 |
+| SBAS, India wind | adaptive | 43 / 43 | **0 / 0** | 15 / 20 (wall 15 / 20, saturation 1) | 40.75 / 43.94 | 39.84 / 43.24 | 32.74 / 7.67 — 36.17 / 7.69 | 33.98 / 36.99 |
+| SBAS, India wind | baseline | 43 / 43 | 10 / 11 | – | 0.5 | – | – | 1.50 / 1.39 |
+| GPS SPS, calm | adaptive | 43 / 42 | **0 / 0** | 39 / 38 (wall 33 / 32, headroom 24 / 23, lag 1) | 48.57 (cap) | 45.24 / 48.54 | 46.76 / 7.56 — 51.78 / 7.57 | 32.20 / 32.20 |
+| GPS SPS, calm | baseline | 43 / 42 | 39 / 38 | – | 0.5 | – | – | 0.09 / 0.09 |
+| GPS SPS, India wind | adaptive | 37 / 29 | **0 / 0** | 23 / 17 (wall 23 / 17, saturation 1, lag 1 / 0) | 48.57 (cap) | 48.86 / 51.88 | 45.21 / 7.67 — 49.20 / 7.69 | 37.28 / 37.05 |
+| GPS SPS, India wind | baseline | 37 / 29 | 5 / 3 | – | 0.5 | – | – | 1.84 / 2.49 |
 
-`baseline_lag` (main with `lag_s` = 0.25 s) gave the same result as `baseline` in 572 of 576 run pairs. The other 4 differ by at most 0.15 m in minimum separation and in no loss, so the table shows `baseline` only. On all 47 recoverable scenarios per condition, admissible or not, the baseline lost separation in 18, 1, 40, 13 / 14, 43 and 12 / 13 runs (rows in table order).
+`baseline_lag` gave the same result as `baseline` in 572 of 576 run pairs (the other 4 within 0.15 m, no loss), so the table shows `baseline` only.
 
-**Pass criterion 1 is met, in-model, at both targets:** no loss of separation in 218 admissible adaptive runs at 10⁻⁵ and 203 at 10⁻⁷. 88 and 82 of them raised no warning at all. Only the 88 RTK runs per target ran with the margin the target asks for. In the SBAS and SPS rows the requested margin exceeded the filter's 48.57 m bound in every run, so the margin in force was the bound and the risk claim was not in force. For the claim itself the evidence is therefore 0 losses in 88 runs per target, which bounds the per-run loss rate below about 3.4 % at 95 % confidence (rule of three). The tracker's model is the plant's model, so this is an in-model check (§7).
+**Pass criterion 1 is met, in-model, at both targets:** no loss of separation in 259 admissible adaptive runs at 10⁻⁵ and 248 at 10⁻⁷. 113 and 103 of them raised no warning other than `absorb` or `margin`. The RTK and SBAS rows (179 and 177 runs) ran with the margin the target asks for in every cycle: the requested margin never exceeded the filter's 48.57 m bound. In the SPS rows it exceeded the bound in 71 of 80 and 71 of 71 runs, so those rows are results for a 48.57 m margin. For the claim itself, 0 losses in 179 runs bounds the per-run loss rate below about 1.7 % at 95 % confidence (rule of three).
 
-What the rows show:
+Against `a5b5264`:
 
-- **The lost-command term sets the RTK margin.** It is 22–27 m per pair (§3.6: 0.1 · 2√2 a_phys · (AGE_S + T) per drone, T ≈ 6.3 s). The GNSS term is 0.3 m in calm air and 10–11 m in the India wind, where the wind uncertainty, carried through the drag over T, dominates the receiver's centimetres.
-- **SBAS and SPS cannot be served by main's filter at either target.** Their GNSS term alone (31–52 m along the line of sight) is close to the 48.57 m bound, and with the lost-command term the request is 54–67 m. The `margin` alarm fires in every run. The rows show that a 48.57 m margin kept these encounters apart, not that the risk target was met.
-- **`absorb` is now small and rare.** It fires only under RTK in the India wind (11 and 15 of 43 runs, deficit at most 0.13 m), against deficits of up to 16 m before. With T and the lost term constant per pair (B2) and inadmissible scenarios left out, the requested margin barely moves during an encounter.
-- **`headroom` fires in calm air, not in wind.** In 22–25 runs per grade it fires from the first monitored cycle (2.0 s) on and recurs: in the 16 runs at 10⁻⁵ where it is the only alarm, it is up in 26–65 of about 200 cycles. At the calm-air cleared speed the inequality of §3.3 holds with equality (no forecast gust reserve), so the K2 σ of the tracker's drag estimate trips it. In the India wind the cleared speed keeps K2 σ_u of gust in reserve (about 6.8 m/s at 10⁻⁵), which covers the tracker's uncertainty, and `headroom` fires in no in-limit run. No loss followed, but the calm-air clearance and the alarm disagree (§8).
-- **`wall` fires as the margin grows** (RTK calm 15, SBAS 9–24, SPS 7–30 runs). A 25–49 m keep-out pushes drones towards the world-box edges, where the backup's √2 u_max is not guaranteed.
-- **False alarms fell.** `lag` fired in one in-limit run of 218 (SBAS calm), against 1–6 per condition before, and `nis` in 3 and 6 RTK India runs, where one drone's wind estimate is still converging at the end of the entry period (the probe finding of `b375131`).
-- **The baseline still loses separation.** Main as configured lost 17 of 45 RTK calm runs (17 of 47 before) and 33–35 of the SBAS and SPS calm runs. In the India wind it lost only 1–2 per condition, because the cleared speeds are about half the calm ones.
-- Main's QP failed and used its fallback in 5 adaptive runs, all in scenarios that were not admissible. No admissible run used the fallback.
+- **The lost-command term fell from 22.1–26.8 m to 7.5–7.7 m per pair.** Re-review 3a (the drag decay) cuts it by a factor 2.1–2.6. 3b (the box bound, dc_i = 12.5–13.6 m/s² against 16.0–19.4 m/s²) cuts it by a further factor 1.2–1.5. The GNSS terms are unchanged.
+- **The RTK margin fell by 15–17 m:** 8.0 m in calm air (24.9 before), 18.1 / 19.2 m in the India wind (34.7 / 35.8). In the wind the GNSS term (10–11 m, the wind uncertainty through the drag over T) is now the larger part.
+- **SBAS fits the filter's bound at both targets.** The requested margin at clearance is 38–43 m, against 54–59 m before, and `margin` fired in no SBAS run. SPS still requests 45–52 m.
+- **The smallest separations fell with the margins** (RTK calm 12.83 m against 27.56 m; SBAS calm 31.17 against 43.40 m), and stayed far from 5 m.
+- **`absorb` rose where the margin left the cap.** SBAS 16–21 runs (largest deficit 0.91 / 1.08 m), RTK India 8 / 9 (≤ 0.13 m), SPS 3 / 0. Before, SBAS was clamped at 48.57 m in every cycle and could not rise, so it showed no `absorb`. `absorb` is not a warning (B2), but each such cycle is one where the claim was short by that amount.
+- **The `dc` alarm fired in no run of the matrix.** The largest observed ratio |Δc| / dc_i after clearance was 0.37 in-limit and 0.44 on takeoff under RTK, 0.78 under SBAS, 0.58 under SPS and 0.76 in the beyond-limit cases. The bound is a worst case: in these encounters the station's commands change by at most about three quarters of it.
+- **Main's QP fell back in 6 admissible in-limit runs** (SBAS calm ring6 seeds 1 and 3, SPS India cross2 seed 5, each at both targets), against none before. Each time OSQP stopped at its iteration limit or returned "solved inaccurate" for one cycle, at 8.0–9.0 s, with the predicted separation within about 1 m of d_eff (43.2 m against 44.2 m, 45.1 against 44.7 m, 50.8 against 50.8 m), and main applied its evasive fallback to every drone for that cycle. No loss followed (smallest separations 34.2, 40.7 and 55.1 m). In `runs3` the same scenarios ran at the 48.57 m cap (SBAS) or were held further apart, and the solver did not fail. The fallback is unverified (CLAUDE.md glossary), so this is a safety metric that got worse. It is a robustness limit of main's QP, not of the margin, and it is reported, not tuned (§8).
+- **The baseline is unchanged row for row;** its counts change only because the admissible set grew (110 and 107 losses in the larger sets).
 
 ### 6.2 Outside the limits
 
-All beyond-limit cases run in the India wind and under SBAS, except B7 (GPS worst site) and the `_rtk` variants. Two families (`headon2`, `ring4`) with 8 seeds each. All 16 runs are counted; admissibility is reported and not used to filter. Each cell gives 10⁻⁵ / 10⁻⁷.
+All beyond-limit cases run in the India wind and under SBAS, except B7 (GPS worst site) and the `_rtk` variants. Two families (`headon2`, `ring4`) with 8 seeds each. All 16 runs are counted; admissibility is reported and not used to filter. Each cell gives 10⁻⁵ / 10⁻⁷. The `a5b5264` values are in brackets where they changed.
 
-| case | what breaks | admissible | LoS | warning before any LoS | case alarm: runs, first time (median s) | other warnings | min sep (m) |
-|---|---|---|---|---|---|---|---|
-| B1 squall, 11 m/s mean, moderate turbulence | wind | 9 / 8 | 0 / 0 | 16 / 16 | `wind` 16 / 16, 2.0 s | headroom 14 / 13, wall 9 / 9, saturation 4 / 6 | 45.91 / 45.22 |
-| B2 gust front, +8 m/s on one drone at 9 s | wind model | 14 / 9 | 0 / 0 | 16 / 16 | `nis` 16 / 16, 9.6 s | wall 16 / 16, wind 13 / 13, saturation 11 / 12 | 45.46 / 45.46 |
-| B3 GNSS white noise at 5 σ | GNSS model | 15 / 10 | 0 / 0 | 16 / 16 | `nis` 16 / 16, 2.0 s | wall 14 / 13, saturation 12 / 11, lag 1 / 0 | 47.68 / 46.92 |
-| B4 downlink out 3 s at 9 s | link | 14 / 9 | 0 / 0 | 16 / 16 | `link` 16 / 16, 9.3 s | wall 10 / 9, saturation 3 / 2 | 45.68 / 45.93 |
-| B5 uplink out 1.5 s at 9 s | link | 14 / 9 | 0 / 0 | 16 / 16 | `link` 16 / 16, 9.4 s | saturation 2 / 3 | 45.83 / 45.86 |
-| B6 actuator lag 0.5 s (2×), SBAS | lag | 14 / 9 | 0 / 0 | 14 / 14 | `lag` 9 / 10, 7.3 / 6.9 s | nis 13 / 13, wall 9 / 9 | 45.91 / 45.84 |
-| B6 actuator lag 0.5 s (2×), RTK | lag | 16 / 16 | 0 / 0 | 16 / 16 | `lag` 10 / 8, 9.2 / 8.9 s | nis 16 / 16 | 36.95 / 37.96 |
-| B7 GPS worst site (15 / 33 m, 95 %) | GNSS level | 2 / 1 | 0 / 0 | 14 / 14 | `margin` 16 / 16 (not a warning) | wall 14 / 14, saturation 1 / 2 | 13.56 / 12.19 |
-| B8 bias 5 σ, reported σ nominal, SBAS | receiver integrity | 9 / 9 | 0 / 0 | 13 / 13 | none specific | wall 13 / 13 | 25.10 / 25.77 |
-| B8 bias 5 σ, reported σ nominal, RTK | receiver integrity | 16 / 16 | 0 / 0 | 0 / 0 | none | none (`absorb` 5 / 5) | 36.59 / 37.60 |
+| case | what breaks | admissible | LoS | warning before any LoS | case alarm: runs, first time (median s) | min sep (m) |
+|---|---|---|---|---|---|---|
+| B1 squall, 11 m/s mean, moderate turbulence | wind | 16 / 14 (9 / 8) | 0 / 0 | 16 / 16 | `wind` 16 / 16, 2.0 s | 45.91 / 45.22 |
+| B2 gust front, +8 m/s on one drone at 9 s | wind model | 16 / 16 (14 / 9) | 0 / 0 | 16 / 16 | `nis` 16 / 16, 9.6 / 9.5 s | 37.14 / 40.64 (45.46) |
+| B3 GNSS white noise at 5 σ | GNSS model | 16 / 16 (15 / 10) | 0 / 0 | 16 / 16 | `nis` 16 / 16, 2.0 s | 38.46 / 41.59 (47.68 / 46.92) |
+| B4 downlink out 3 s at 9 s | link | 16 / 16 (14 / 9) | 0 / 0 | 16 / 16 | `link` 16 / 16, 9.3 s | 38.75 / 41.84 (45.68 / 45.93) |
+| B5 uplink out 1.5 s at 9 s | link | 16 / 16 (14 / 9) | 0 / 0 | 16 / 16 | `link` 16 / 16, 9.4 s | 37.77 / 40.70 (45.83 / 45.86) |
+| B6 actuator lag 0.5 s (2×), SBAS | lag | 16 / 16 (14 / 9) | 0 / 0 | 16 / 12 (14 / 14) | `lag` 13 / 7 (9 / 10), 8.0 / 7.2 s | 38.27 / 41.53 (45.91 / 45.84) |
+| B6 actuator lag 0.5 s (2×), RTK | lag | 16 / 16 | 0 / 0 | 16 / 16 | `lag` 5 / 8 (10 / 8), 10.2 / 10.6 s | 22.97 / 24.04 (36.95 / 37.96) |
+| B7 GPS worst site (15 / 33 m, 95 %) | GNSS level | 6 / 3 (2 / 1) | 0 / 0 | 14 / 14 | `margin` 16 / 16 (not a warning) | 13.56 / 12.19 |
+| B8 bias 5 σ, reported σ nominal, SBAS | receiver integrity | 16 / 16 (9 / 9) | 0 / 0 | 13 / 13 | none specific (`wall` 13 / 13) | 21.84 / 23.26 (25.10 / 25.77) |
+| B8 bias 5 σ, reported σ nominal, RTK | receiver integrity | 16 / 16 | 0 / 0 | 0 / 0 | none | 22.86 / 23.93 (36.59 / 37.60) |
 
-`margin` fires in every SBAS and SPS beyond-limit run, as in-limit. The "first time" of `nis` in B6 RTK includes one run at 2.0 s from the converging wind estimate.
-
-**Pass criterion 2 holds for B1–B5, partly for B6, and B7 and B8 have no warning of their own.** No case lost separation at either target. The large margins of §6.1 now dominate these runs, so they show far less about the monitor than before:
-
-- **B1–B5: the case alarm fired in all 16 runs** (B2 `nis` at 9.4–9.7 s; B4 `link` at 9.3 s, earlier than the 9.9 s before because telemetry older than AGE_S now raises `link`, §3.6; B5 `link` at 9.4 s). The alarm comes 2–3 s before the encounter at 12 s, and the safe responses were not executed.
-- **B6: the lag monitor found the doubled lag in 9 / 10 of 16 runs under SBAS and 10 / 8 under RTK**, against 16 and 14 before. The misses are mostly head-on pairs (6 of the 7 SBAS misses at 10⁻⁵), which fly an almost steady command. Two founder decisions explain the drop, shown by scratch reruns of the 32 B6 runs at 10⁻⁵ (not committed):
-  - *N1, the regressor's trend term.* With an offset only, the same runs find the lag in 14 of 16 (SBAS) and 16 of 16 (RTK); with the N1 offset and trend, 9 and 10. The trend absorbs part of the lag's signature, as measured on the takeoff tracks before N1 (§6.5).
-  - *B3, the cleared speeds.* India-wind cleared speeds are 4.6–6.7 m/s, so the commands change less. Without the clearance the SBAS head-on runs find the lag in 6 of 8, with it in 2 of 8. Under RTK the clearance makes no difference to the head-on runs (3 of 8 either way).
-  
-  N1 bought fewer false alarms (B1: `lag` in 15 of 16 runs before, none now; in-limit 1 run of 218) at the price of detection. The margin, not the alarm, kept the B6 runs apart (smallest separation 45.8 m under SBAS, 37.0 m under RTK). The trade-off is the founder's (§8).
-- **B7 has no warning by construction any more.** Its case alarm was `margin`, which no longer counts (founder B2). 14 of 16 runs raise `wall`. Only 2 / 1 of 16 runs are admissible, and the smallest separation is 12.2 m: the closest any adaptive run came to a loss.
-- **B8 under SBAS lost no separation** (2 of 16 before, one of them silent). The margin in force is now the 48.57 m cap, against 23 m before, and a 5 σ bias (5 × 3.1–3.9 m per drone) fits inside it. Nothing detects the bias: the only warning is `wall`, from the margin's size. The Fable recount of the earlier rows, with `absorb` not counted, is 5 of 16 runs warned before any loss (not 6). B8 is still a stated limit of single-receiver GNSS without integrity (§3.10). It is masked here by a margin the filter cannot honestly carry, not removed.
-- **B8 under RTK** had no loss and no warning: a 5 σ bias at RTK accuracy is a few centimetres.
+- **No case lost separation at either target**, and the `dc` alarm fired in none.
+- **B1–B5 raised their case alarm in all 16 runs**, at the same times as in `a5b5264`. With SBAS margins now below the cap, B2–B5 also raise `absorb` in 8–16 runs (deficits up to 1.2 m): the faults raise the requested margin, and the rate limit lets it rise only as fast as the barrier absorbs.
+- **B6 detection moved both ways:** SBAS 13 / 7 of 16 (9 / 10 before), RTK 5 / 8 (10 / 8). The smaller margins change how much the commands vary, which is what the lag identifier needs (§5). With 16 runs per cell, these shifts are within what the sample can resolve; the N1 trade-off of §8 stands.
+- **B7** is unchanged: no warning of its own, smallest separation 12.2 m.
+- **B8 under SBAS still lost no separation.** The margin is now 43–46 m (48.57 m before), still wider than a 5 σ bias (5 × 3.1–3.9 m per drone); the smallest separation is 21.8 m. B8 remains masked, not solved.
 
 ### 6.3 Takeoff tracks (decision 5)
 
 The track starts 15 s before the run's t = 0, with the drone hovering for 3 s and then accelerating to its cruise velocity (§4.4). India wind, admissible scenarios only. Each cell gives 10⁻⁵ / 10⁻⁷.
 
-| grade | runs | LoS | runs with a warning (kinds) | alarm of any kind in the last 5 s before the encounter | absorb: runs (cycles, largest deficit m) | margin in force p50 (m) | min sep (m) |
+| grade | runs | LoS | runs with a warning | alarm of any kind in the last 5 s before the encounter | absorb: runs (cycles, largest deficit m) | margin in force p50 (m) | min sep (m) |
 |---|---|---|---|---|---|---|---|
-| RTK | 45 / 45 | **0 / 0** | 12 / 10 (wall 9 / 5, lag 3 / 2, nis 2 / 2, saturation 0 / 1) | 6 / 7 | 15 / 15 (28 / 24, 0.15 / 0.14) | 34.64 / 35.81 | 36.89 / 37.86 |
-| SBAS | 43 / 43 | **0 / 0** | 33 / 30 (wall 31 / 28, lag 2 / 2, saturation 1 / 0) | 5 / 5 | 0 / 0 | 48.57 (cap) | 43.65 / 43.82 |
-| GPS SPS | 43 / 43 | **0 / 0** | 37 / 37 (wall 35 / 35, lag 2 / 2, saturation 2 / 0) | 7 / 9 | 0 / 0 | 48.57 (cap) | 31.37 / 32.29 |
+| RTK | 46 / 45 | **0 / 0** | 6 / 5 (nis, lag) | 7 / 10 | 14 / 14 (18 / 20, 0.15 / 0.12) | 17.80 / 18.95 | 10.72 / 23.94 |
+| SBAS | 45 / 44 | **0 / 0** | 30 / 30 (wall 27 / 27) | 19 / 14 | 27 / 22 (186 / 157, 0.60 / 0.59) | 40.02 / 43.36 | 35.00 / 40.42 |
+| GPS SPS | 44 / 43 | **0 / 0** | 38 / 37 (wall 36 / 35) | 8 / 9 | 4 / 0 (27, 0.55) | 48.57 (cap) | 31.37 / 32.29 |
 
-No loss of separation. `headroom` did not fire on any takeoff track. The RTK margin on a converged track is the same as on a track started at cruise (34.6 against 34.7 m at 10⁻⁵), so the earlier gap (4.22 against 1.43 m) is gone with the constant terms. The `lag` false alarms on takeoff fell from 8–11 to 2–3 runs per grade (N1). As in-limit, `margin` fires in every SBAS and SPS run.
+No loss of separation. The RTK 10.72 m at 10⁻⁵ is `random` seed 0, which became admissible with the smaller margin (requested 17.87 m against m* = 18.71 m at clearance). Its two closest drones hover 10.7 m apart at the track's first tick, 15 s before the encounter and before clearance. After clearance the pair stays at least 22.5 m apart against a d_eff of 22.9 m. The row's `min_sep` covers the whole episode, warm-up included, so this value is the starting geometry, not the margin's result.
 
 ### 6.4 Corridor capacity per GNSS grade (decision 1, review N5)
 
-Reference corridor 100 m wide and 30 m high. Lanes on a square grid at spacing s = 5 m + the median margin in force of the in-limit India-wind runs, drones along each lane at s. Each lane keeps at least one margin from each wall, because the margin is also main's wall standoff (`FilterConfig.margin_m`) and the `wall` alarm shows that the backup's braking is not guaranteed nearer the wall.
+Reference corridor 100 m wide and 30 m high. Lanes on a square grid at spacing s = 5 m + the median margin in force of the in-limit runs, drones along each lane at s. Each lane keeps at least one margin from each wall: the margin is also main's wall standoff (`FilterConfig.margin_m`), and the `wall` alarm shows that the backup's braking is not guaranteed nearer the wall.
 
-| grade | target | margin p50 (m) | lane spacing s (m) | lanes in 100 m × 30 m | drones per km | corridor height for one layer (m) |
-|---|---|---|---|---|---|---|
-| RTK | 10⁻⁵ | 34.68 | 39.7 | **0** | **0** | 69.4 |
-| RTK | 10⁻⁷ | 35.83 | 40.8 | **0** | **0** | 71.7 |
-| SBAS (GAGAN) | either | 48.57 (cap; 56–59 requested) | 53.6 | **0** | **0** | 97.1 |
-| GPS SPS | either | 48.57 (cap; 64–67 requested) | 53.6 | **0** | **0** | 97.1 |
+| grade, wind | target | margin p50 (m) | lane spacing s (m) | lanes in 100 m × 30 m | drones per km | height for one layer (m) | `a5b5264` margin p50 (m) |
+|---|---|---|---|---|---|---|---|
+| RTK, India wind | 10⁻⁵ | 18.07 | 23.1 | **0** | **0** | 36.1 | 34.68 |
+| RTK, India wind | 10⁻⁷ | 19.22 | 24.2 | **0** | **0** | 38.4 | 35.83 |
+| RTK, calm | 10⁻⁵ / 10⁻⁷ | 8.03 / 8.06 | 13.0 / 13.1 | **14** (7 × 2) | **1064** | 16.1 | 24.89 / 24.97 |
+| SBAS, India wind | 10⁻⁵ / 10⁻⁷ | 40.75 / 43.94 | 45.8 / 48.9 | 0 | 0 | 81.5 / 87.9 | 48.57 (cap) |
+| GPS SPS, India wind | either | 48.57 (cap) | 53.6 | 0 | 0 | 97.1 | 48.57 (cap) |
 
-No grade fits a single lane in the reference corridor at either target: 30 m of height is less than two margins. A corridor 100 m wide and at least 70 m tall would hold one RTK lane, about 25 drones per km at 10⁻⁵ and 24 at 10⁻⁷. The SBAS and SPS rows rest on the capped margin, which does not meet the target, so they give no capacity at all under the claim.
+`summary.md` gives the India-wind rows only. The calm-air RTK row is computed with the same `run._lanes` from the calm-air medians.
 
-**The earlier capacity figures are withdrawn.** The 12 400 (RTK), 280 (SBAS) and 66 (SPS) drones per km of the `runs2` rows came from K = 4.033, a risk of 10⁻³ per check (about 36 expected exceedances per pair-hour, review B6), from the isotropic GNSS ball (B1), from a lost-command term that followed the unconfirmed commands (B2), and from lanes placed at the walls (N5). They were a per-check result only and do not carry over to any per-hour target.
+- **In the India wind no grade fits a lane in the reference corridor at either target.** RTK needs 36–38 m of height for one layer. A corridor 100 m wide and that tall would hold 3 RTK lanes, about 129 drones per km at 10⁻⁵ and 123 at 10⁻⁷.
+- **In calm air RTK fits 14 lanes, 1064 drones per km** at both targets. The difference between calm and wind is the GNSS term's wind part (10–11 m), which the tracker carries from the drag model over T.
+- The earlier per-check figures (12 400, 280 and 66 drones per km, `runs2`, K = 4.033) stay withdrawn (§6.5).
 
 ### 6.5 Changes from the earlier runs
 
-**`runs2` (`486f3b4bd66c`, 1168 rows, K = 4.033, per check only).** The review decisions changed the risk level, the shape of the GNSS term, T, the lost-command term, the speeds flown, the lag model and the counting rules, so almost every number moved. Each change and its cause:
+**`a5b5264` (`runs3`) to this matrix.** Only the lost-command term changed (re-review 3a, 3b), plus the `dc` check and the R1 column fix:
 
-| quantity | `runs2` (per check) | `runs3`, 10⁻⁵ / 10⁻⁷ | cause |
+| quantity | `a5b5264`, 10⁻⁵ / 10⁻⁷ | this matrix, 10⁻⁵ / 10⁻⁷ | cause |
 |---|---|---|---|
-| adaptive LoS, in-limit | 0 of 282 | 0 of 218 / 0 of 203 | – (fewer runs: admissibility, B2) |
-| in-limit set per condition | 47 | 14–45 | admissibility at clearance (B2) |
-| margin p50, RTK calm / India | 1.34 / 1.43 m | 24.9 / 34.7 m; 25.0 / 35.8 m | constant lost-command term 22–27 m (B2); India: wind uncertainty over the worst-case T (B2, B6) |
-| margin p50, SBAS / SPS | 23.3 / 39.0 m | 48.57 m cap, 54–67 m requested | K1 = 6.31 / 6.99 in place of 4.03 (B6) and the lost term (B2) outweigh the direction-aware GNSS term (B1) |
-| adaptive min sep, in-limit | 6.52 m (RTK calm) | 27.56 / 27.64 m (RTK calm) | larger margins |
-| `absorb`, in-limit | up to 189 cycles, 16.4 m | RTK India 15 / 17 cycles, ≤ 0.13 m | constant T and lost term, inadmissible scenarios left out (B2) |
-| `headroom`, in-limit | 43–46 of 47 per condition | calm 22–25, India 0 | cleared speed (B3); calm-air clearance has no reserve (§6.1) |
-| `lag` false alarms, in-limit / takeoff / B1 | 1–6 per condition / 8–11 / 15 of 16 | 1 of 218 / 2–3 / 0 | regressor offset and trend (N1) |
-| B6 lag detected, SBAS / RTK | 16 / 14 of 16 | 9 / 10 and 10 / 8 of 16 | N1 trend term; B3 cleared speed (§6.2) |
-| B7 warned | 16 of 16 (`margin`) | 14 of 16 (`wall`) | `margin` no longer counts as a warning (B2) |
-| B8 SBAS LoS | 2 of 16 (1 silent) | 0 / 0 | the 48.57 m capped margin covers a 5 σ bias |
-| baseline LoS, RTK calm | 17 of 47 | 17 of 45 | same plant; the cleared speeds (11.0–12.9 m/s in calm) do not change the count |
-| baseline LoS, India wind | 2 / 11 / 10 | 1 / 2 / 1 | cleared speeds about half the calm ones (B3) |
-| capacity, drones per km | 12 400 / 280 / 66 | 0 / 0 / 0 | all of the above, and lanes one margin from the walls (N5) |
+| adaptive LoS, in-limit | 0 of 218 / 0 of 203 | 0 of 259 / 0 of 248 | – (more admissible runs) |
+| lost-command term per pair | 22.1–26.8 m | 7.5–7.7 m | drag decay (3a) and box bound (3b) |
+| margin p50, RTK calm / India | 24.9 / 34.7; 25.0 / 35.8 m | 8.0 / 18.1; 8.1 / 19.2 m | the lost term |
+| SBAS requested at clearance | 54–59 m (above the cap) | 38–43 m (below the cap) | the lost term |
+| admissible in-limit runs | 218 / 203 | 259 / 248 | smaller requested margins |
+| smallest separation, RTK calm | 27.56 / 27.64 m | 12.83 / 12.91 m | smaller margin |
+| `absorb`, in-limit | RTK India 11 / 15 runs, ≤ 0.13 m | SBAS 16–21 runs, ≤ 1.08 m; RTK India 8 / 9, ≤ 0.13 m | SBAS margin no longer clamped |
+| QP fallback, admissible in-limit runs | 0 | 6 (3 scenarios × 2 targets) | OSQP iteration limit at 39–46 m margins (§6.1) |
+| `dc` alarm | – | 0 runs (largest ratio 0.78) | new check (3b) |
+| B6 lag detected, SBAS / RTK | 9 / 10, 10 / 8 of 16 | 13 / 7, 5 / 8 of 16 | command variation changed with the margins |
+| capacity, RTK India / calm, drones per km | 0 / 0 | 0 / 1064 | the lost term |
 
-No adaptive safety metric got worse except the B6 detection rate and the B7 warning count. Both follow from founder decisions (N1 and B3; B2's counting rule), and §6.2 shows the N1 and B3 effects separately. No adaptive run lost separation in any condition or case. `runs2` stays in `results/` as the record of the per-check matrix. Every statement about it in the earlier versions of this note (the 12 400 drones per km, "up to 16 m short", the `headroom` rate) is about K = 4.033 per check and is superseded.
+Two safety metrics got worse: the QP fallback count in admissible runs (0 to 6) and the smallest separations, which follow the smaller margins by design. The B6 detection count moved both ways. No run lost separation. The fallback count is the founder's (§8 item 1).
 
-**The laptop start (`b375131`, 157 rows, `results/partial-b375131-*.jsonl`).** All 157 rows reappear in this run with the same values in every field except the recoverability value `ideal_min_sep` (harness defect, §6) and the wall time. The two platforms gave the same closed-loop results.
+**`runs2` (`486f3b4bd66c`, 1168 rows, K = 4.033, per check only).** The record of the per-check matrix, kept in `results/`. Its margins (RTK 1.3–1.4 m, SBAS 23 m, SPS 39 m), capacities (12 400 / 280 / 66 drones per km), `absorb` deficits up to 16 m and `headroom` rates are about K = 4.033 per check, an isotropic GNSS ball and lanes at the walls, and are superseded (reviews B1, B2, B6, N5).
+
+**The laptop start (`b375131`, 157 rows, `results/partial-b375131-*.jsonl`).** Reproduced by `runs3` in every field except `ideal_min_sep` (R1) and the wall time.
 
 ### 6.6 Why main's RTK calm baseline went from 7 to 17 losses (founder, interim review item 3; measured on `runs2`)
 
-This diagnostic was run on the `runs2` plant at uncleared speeds and was not repeated. In `runs3` the RTK calm baseline loses separation in 17 of 45 admissible scenarios (18 of 47 recoverable) at the cleared speeds, so the conclusion is unchanged.
+This diagnostic was run on the `runs2` plant at uncleared speeds and was not repeated. At the cleared speeds the RTK calm baseline loses separation in 18 of 47 recoverable scenarios (the baseline rows of `runs3` and `runs4` are identical), so the conclusion is unchanged.
 
 The diagnostic reruns the 47 recoverable RTK calm baseline scenarios with the baseline's plant and command changed one at a time, by text substitution in a copy of `sim.py` (the repository is not edited; the script is a scratch file and not committed).
 
@@ -624,10 +620,11 @@ Main's filter assumes a double integrator with the full A_REL available for brak
 ### 6.7 What the results do and do not show
 
 - In-limit and in-model, the adaptive design kept every admissible pair apart at both risk targets, under three GNSS grades, in calm air and in the India wind, from a cold start and from a takeoff track.
-- Only the RTK rows ran with the margin the target asks for. Under SBAS and SPS the request exceeded main's 48.57 m bound in every run. Those rows show that a 48.57 m margin keeps these encounters apart, not that the 10⁻⁵ or 10⁻⁷ claim holds.
-- At either target the margin is 25–36 m with RTK, mostly the one-lost-command term. No grade gives a single lane in the 100 m × 30 m reference corridor. The design as it stands is a separation standard for sparse traffic, not for dense corridors.
-- Every fault in B1–B5 raised its alarm before the encounter. B6 was found in only about 60 % of runs with the N1 regressor. B7 and B8 have no warning of their own. The large margins, not the alarms, kept the beyond-limit runs apart, and the safe responses were not executed.
-- B8 shows no loss only because the capped margin is wider than a 5 σ SBAS bias. It remains the main open safety limit.
+- With the tighter lost-command term, the RTK and SBAS rows ran with the margin the target asks for. The SPS rows still ran at main's 48.57 m bound, and show only that such a margin keeps these encounters apart.
+- The RTK margin is 8 m in calm air and 18–19 m in the India wind. Calm-air RTK gives 1064 drones per km in the reference corridor. In wind no grade fits it: the wind uncertainty carried through the drag is now the largest RTK term.
+- Main's QP fell back in 6 admissible runs at the new margins. The fallback is unverified and no loss followed. The design's claim rests on main's QP staying solvable, and at 39–46 m margins in six-drone rings it did not always.
+- Every fault in B1–B5 raised its alarm before the encounter. B6 was found in 5–13 of 16 runs. B7 and B8 have no warning of their own. The safe responses were not executed.
+- B8 shows no loss only because the SBAS margin (43–46 m) is wider than a 5 σ bias. It remains the main open safety limit.
 
 ## 7. Known limits
 
@@ -643,22 +640,24 @@ Data:
 Model and simulation:
 
 - **In-model drag.** The plant, the tracker and the backup rollout share the same linear drag with the same registered D. A real drone's drag differs in coefficient and shape, and nothing in the monitor checks D directly; a larger D shows up only through `nis`, `headroom` or `wind`. Because the rollout now flies the drag, a wrong D also makes the certificate wrong, not only the margin.
-- **The lag inside the rollout is the declared lag.** The rollout flies τ_a = 0.25 s (§3.5). A drone with a longer lag brakes later than its certificate says, and the lag monitor found a doubled lag in only 8–10 of 16 runs (§6.2). The declared upper-bound lag of §3.10 would close this and is not prototyped.
+- **The lag inside the rollout is the declared lag.** The rollout flies τ_a = 0.25 s (§3.5). A drone with a longer lag brakes later than its certificate says, and the lag monitor found a doubled lag in only 5–13 of 16 runs (§6.2). The declared upper-bound lag of §3.10 would close this and is not prototyped.
 - **Independent gusts.** Each drone gets its own gust process. The Dryden correlation length is about 270 m, so drones a few tens of metres apart really feel almost the same gust. This overstates the relative gust and so makes the margin conservative.
 - **Constant GNSS bias in the nominal runs.** The bias is drawn once per drone per run and held. White noise is tested only as a beyond-limit case (B3). Correlated errors between drones (the same satellites, the same ionosphere) are not modelled. They would cancel in the relative position, so the margin is conservative on that count too, but the monitor cannot see them.
 - **Full command echo.** The drone reports its whole command history with each telemetry message. A real link would acknowledge commands one at a time, and a lost acknowledgement would look like a lost command. A braking echo at the same tick as a lost planned command counts that command as delivered (`CommandLog.delivered`).
 - **The lag monitor sees only command changes,** and with the N1 trend term it loses part of what it sees (§6.2). A drone flying a steady command, such as a head-on pair at the cleared speed, is not checked. Its 20-sample window and its grid of five alternatives are design choices; a lag between grid points is detected only through its nearest neighbour.
 - **The station is given the true initial trim** (review N4). `sim.episode` starts the tracker and the command log from the drone's true trim −D (w(0) − v). A real station has only its first command. In-model and small.
-- **Harness defect in the recoverability check.** `sim.recoverable` runs with a stale `rollout.CTX` (§6), so the recorded `ideal_min_sep` is off by up to 4.35 m. No scenario changed class (checked with `CTX` empty); the fix is not applied in this run.
+- **Recoverability check fixed after the fact (R1).** The `runs3` column `ideal_min_sep` was re-recorded at `d602f592d04e`, not rerun with the episodes; no scenario changed class (§6). `runs4` was computed with the fix.
 
 Method:
 
 - **Risk per pair-hour by the union bound.** The margin terms use K1 and K2 for a per-check risk q = target / 36 000 (§3.2). The bound holds whatever the correlation between checks, so it is conservative. How conservative was not studied, and the margins of §6 suggest it costs a great deal. The target covers the margin terms of one pair; a traffic-level target per flight hour would also have to count pairs per flight hour.
-- **The lost-command term is a worst case held for the whole horizon.** It assumes the lost segment started AGE_S before the action time and that its velocity error stays uncorrected for T (§3.6). That is what makes the backup certificate sound with constant terms (B2), and it is the largest term in every RTK margin. A tighter bound needs a design argument that is not in this note (§8).
-- **The filter's margin bound caps SBAS and SPS.** Main's `FilterConfig` cannot express a margin above 48.57 m. Above it the margin in force is the cap and the risk claim is not in force (§6.1). The SBAS and SPS rows of §6 are results for a 48.57 m margin.
+- **The lost-command term is open loop and rests on derived quantities.** It carries one lost segment through the lag and the registered drag to the end of the horizon (§3.6). A true drag below the registered D slows the decay (founder item 4). The command-difference bound rests on the tracker's Gaussian model at K3 and on an airspeed bound; the station checks it exactly (`dc`), and it held in every run. The evasive backup's own feedback is not credited (§3.11).
+- **The filter's margin bound caps SPS.** Main's `FilterConfig` cannot express a margin above 48.57 m. SPS requests 45–52 m, so in most SPS runs the margin in force is the cap and the risk claim is not in force (§6.1). SBAS now stays below it.
 - **Admissibility is checked once, at clearance.** The test uses the unclamped margin at the first cycle after the 2 s convergence. It says nothing about states later in the run, which the rate limit and `absorb` cover (§3.9).
 - **The safe responses are not executed.** The prototype records alarms only. The beyond-limit runs therefore show whether the monitor fires, not that the proposed responses keep the drones apart. In this matrix the margins are so large that they decide the beyond-limit outcome on their own.
-- **Small sample.** 14–45 admissible scenarios per in-limit condition and 16 runs per beyond-limit condition. Zero losses in n runs bounds the per-run loss rate below about 3 / n at 95 % confidence (rule of three), nothing tighter. The claim at the target rests on the 88 RTK runs per target.
+- **Small sample.** 29–47 admissible scenarios per in-limit condition and 16 runs per beyond-limit condition. Zero losses in n runs bounds the per-run loss rate below about 3 / n at 95 % confidence (rule of three), nothing tighter. The claim at the target rests on the 179 / 177 RTK and SBAS runs per target.
+- **Main's QP is not always solvable at the new margins.** OSQP failed for one cycle in 6 admissible in-limit runs and main flew its unverified evasive fallback (§6.1). The certificate holds only while the QP solves.
+- **`min_sep` covers the whole episode,** warm-up included. On takeoff tracks it can be the starting geometry, before clearance (§6.3).
 - **In-model only.** The tracker's model is the plant's model (§6.1). A real drone's dynamics, gusts and GNSS errors will differ from both.
 - **Recursive feasibility is sketched, not proven** (§3.9). The absorbable margin uses the previous configuration's wall standoff and horizon and a read-only latch. Anticipation of margin rises was not implemented. With the constant terms `absorb` is now rare (≤ 0.13 m, RTK India only).
 - **Lines of sight from the estimated rollout.** The direction-aware GNSS term (§3.2) takes the lines of sight from the rollout of the predicted states, not of the true ones; the difference is second order in the error and is not bounded here.
@@ -670,18 +669,16 @@ Method:
 
 ## 8. For the founder
 
-Decisions 1–7, the four decisions on the interim report and B1–B6 and N1 on the Fable review are applied above. These items remain open; none was changed in this work.
+Decisions 1–7, the four on the interim report, B1–B6 and N1 on the Fable review and 3(a)–(c) on the Fable re-review are applied above. These items remain open; none was changed in this work.
 
-1. **Capacity is zero; the lost-command term is why.** At both targets no grade fits one lane in the 100 m × 30 m reference corridor (§6.4). With RTK, 22–27 of the 25–36 m margin is the cover for one lost 100 ms command, held open loop for T ≈ 6.3 s (§3.6, B2). Options, each a design change that needs literature first and a new matrix:
-   - (a) keep the bound and accept sparse-traffic spacing (about 40 m lanes, one lane per 70 m of corridor height);
-   - (b) send each drone a short command plan per message (the next k cycles), so that a lost message leaves a plan the station knows, as in the input buffer of Singletary et al.; a loss then costs nothing unless k messages in a row are lost (10⁻³ᵏ per drone), and the term could move into the risk budget;
-   - (c) bound the lost command's effect only until the station sees it (about AGE_S plus one cycle) and argue the next cycle's feasibility, which is the recursive-feasibility question of B2 again.
-2. **SBAS and SPS exceed main's margin bound.** Their requested margins (54–67 m) are above the 48.57 m that `FilterConfig` allows, so the claim is not in force for either grade at either target (§6.1). A larger bound needs a larger world box or a smaller barrier offset in main's filter (a spec change). Otherwise these grades are out of scope for the claim. Together with B5 (§3.10), SBAS does not qualify for dense corridors on either ground.
-3. **Which risk target.** 10⁻⁵ and 10⁻⁷ per pair-hour give nearly the same results: the RTK margin differs by about 1 m and the admissible counts by up to 8 of 47. The union bound over 36 000 checks per pair-hour is conservative; a tighter argument from the correlation between checks was not studied. A traffic-level target per flight hour would also have to count the pairs per hour.
-4. **The lag identifier: false alarms or detection.** N1 removed the lag false alarms (B1: 15 of 16 runs to 0; takeoff 8–11 to 2–3 runs per grade), but the doubled lag is now found in 8–10 of 16 runs, against 14–16 with an offset-only regressor on the same runs (§6.2). Options: keep N1 and fly the declared upper-bound lag τ_max inside the rollout until the lag is identified (§3.10; needs a τ_max per airframe, which no source gives); go back to the offset only and accept the false alarms; or a longer window. The lag is now inside the rollout, so a wrong lag makes the certificate wrong; this item matters more than before.
-5. **`headroom` in calm air.** At the calm-air cleared speed the braking inequality holds with equality, so the tracker's drag uncertainty trips `headroom` in 22–25 runs per grade, recurring (§6.1). Options: clear calm-air speeds with the same K2 σ reserve on the tracker's drag estimate that `headroom` uses (a slightly lower v_clr), or give `headroom` a tolerance. The first changes an operating threshold.
-6. **B8 is masked, not solved.** No B8 run lost separation, but only because the capped 48.57 m margin is wider than a 5 σ SBAS bias (§6.2). With a margin the filter could honestly carry, the earlier losses would be expected back. The design still has no detector for a receiver that under-reports its error, and no positioning grade with a verified integrity bound qualifies (§3.10, decision B5).
-7. **B7 has no warning of its own.** Its only alarm was `margin`, which no longer counts as a warning (B2). If a requested margin above the filter's bound should stop clearance, `margin` belongs among the warnings at clearance; that is a rule change.
-8. **Main's filter on the drag plant.** As configured, main lost separation in 17 of 45 admissible RTK calm runs and 32–35 under SBAS and SPS (§6.1). The cause is the drag trim taking authority from braking (§6.6). This concerns main's filter, not the adaptive margin, and connects to BL-06 and BL-07 (disturbance margin).
-9. **Harness fix.** `sim.recoverable` should clear `rollout.CTX` before calling main's filter (§6). It did not change any scenario's class in this matrix. It was left unapplied so that rows and code stay at one commit; it should go in before the next matrix.
-10. **Modelling choices still in force,** each logged in DECISIONS: the NIS window of 10 messages and the 2 s convergence time; the 99.9 % latency quantile for the playout delay; AGE_S = 0.46 s; the floors on q and P_ww(0); τ_a = 0.25 s; drag and authority derived from top speed and tilt; the light turbulence class for the India wind; the lag monitor's 2 s window, five-point grid and trend term; the detectors at P_RISK = 10⁻³ per test.
+1. **QP fallbacks at the new margins (a safety metric that got worse).** Main's QP fell back in 6 admissible in-limit runs (SBAS calm ring6 seeds 1 and 3, SPS India cross2 seed 5, at both targets), against none at `a5b5264` (§6.1). Each was one cycle with OSQP at its iteration limit or "solved inaccurate", with the predicted separation within about 1 m of d_eff, and no loss followed. The cause is main's solver at these margins, not the margin term. Options: accept the tighter term and track the fallback count as a known main limit (it relates to the 64-drone timing and solver work on main); raise OSQP's iteration limit or tolerances for this lane (a filter configuration change, needs its own review); or keep the old term until main's QP is robust here. Your call: the term is not adopted as a result until you decide.
+2. **Capacity in wind.** In calm air RTK now fits 14 lanes in the 100 m × 30 m corridor (1064 drones per km). In the India wind none fits, because the RTK margin's GNSS term (10–11 m) is the wind uncertainty carried through the drag over T (§6.4). Shortening that horizon or tightening the wind model is the next lever. Option (c) of §3.11 is not: it needs a Lipschitz backup in main and promises little over (a) and (b).
+3. **SPS exceeds main's margin bound;** SBAS now fits it. SPS requests 45–52 m, above the 48.57 m `FilterConfig` allows (§6.1). With B5 (§3.10), neither SBAS nor SPS qualifies for dense corridors on integrity grounds.
+4. **The drag decay rests on the registered D (re-review 3a).** The perturbation decays at D, which is derived from the declared top speed and is an upper bound when that speed is a software limit (§3.3). A smaller true D slows the decay and enlarges the lost-command error. Your decision asked for the tracker's K σ bound on the drag: under linear drag there is no estimate of D to bound, so none was applied (§3.6). A type test of D, or a declared lower bound D_lo per airframe, would close this.
+5. **The `dc` bound (re-review 3b)** rests on the tracker's Gaussian model at K3 for the correction part and on an airspeed bound that `wind` checks only horizontally. The station checks every command exactly, and the bound held with at least 21 % to spare in every run. Whether `dc` should raise the drone's term to the airframe bound automatically (the proposed response in §5) is a rule change.
+6. **The lag identifier: false alarms or detection** (unchanged from the previous round). N1 keeps the false alarms low. Detection of a doubled lag is 5–13 of 16 runs (§6.2); an offset-only regressor found 14–16 of 16 at `a5b5264` (scratch diagnostic). The declared upper-bound lag τ_max (§3.10) needs a figure per airframe that no source gives.
+7. **`headroom` in calm air:** 24–27 runs per grade (§6.1), none in the India wind. At the calm-air cleared speed the braking inequality of §3.3 holds with equality (there is no forecast gust reserve), so the K2 σ of the tracker's drag estimate trips it. Options: clear calm-air speeds with the same K2 σ reserve that `headroom` uses, or give `headroom` a tolerance; the first changes an operating threshold.
+8. **B8 is masked, not solved,** and **B7 has no warning of its own** (`margin` is not a warning). Unchanged from the previous round.
+9. **Option (b) of the earlier §8 (a command plan per message)** waits for a consistent per-drone backup (BL-03) and an onboard-layer ADR (founder, re-review). The applied-command echo (contract v1.6, D1) is accepted and not built.
+10. **Main's filter on the drag plant.** The baseline rows are unchanged: main as configured loses 18 of 47 RTK calm runs and 39–43 of 47 SBAS and SPS calm runs (§6.1, §6.6); BL-06 and BL-07.
+11. **Modelling choices still in force,** each logged in DECISIONS: the NIS window of 10 messages and the 2 s convergence time; the 99.9 % latency quantile for the playout delay; AGE_S = 0.46 s; N_UPD = 2 updates per cycle; the floors on q and P_ww(0); τ_a = 0.25 s; drag and authority derived from top speed and tilt; the light turbulence class for the India wind; the lag monitor's 2 s window, five-point grid and trend term; the detectors at P_RISK = 10⁻³ per test.
