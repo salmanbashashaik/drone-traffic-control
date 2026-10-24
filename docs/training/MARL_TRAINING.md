@@ -17,10 +17,16 @@ utm-train --out runs/train/my-t2  --iterations 300 --workers 4 --profile nominal
 utm-eval-policy artifacts/policies/marl-mappo-s42-it220-f93dca3638 \
     --suite heldout --suite dense16 --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
 
-# watch it: replay.png (tracks + separation) and replay.gif (animated top-down)
+# watch it: replay.png (tracks + separation), replay.gif (animated top-down), replay3d.html (interactive 3D, rotate/zoom)
 utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
-    --variant shielded_marl --out runs/viz/x
+    --variant shielded_marl --html --out runs/viz/x
+
+# same policy in the rigid-body PyBullet quadrotor sim; --gui opens the 3D window (close it to exit)
+utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
+    --variant shielded_marl --pybullet --gui --speed 0.6 --out runs/viz/x
 ```
+
+PyBullet on macOS (Apple silicon, macOS 26 SDK) needed two workarounds that the `physics` extra does not cover: `CFLAGS="-Dfdopen=fdopen" pip install pybullet` (the bundled zlib clashes with the SDK headers), and `pip install --no-deps --ignore-requires-python gym-pybullet-drones@7ebad1e` (that commit declares Python >= 3.12; this repo's venv is 3.11 and it imported fine). With the window open PyBullet sometimes answers a contact query with `None`; `utm-replay` retries and raises if it keeps failing, it never skips the collision check. The GUI episode is slow (a few minutes of wall time).
 
 Load a policy in code: `LearnedPolicy.load(dir)` (`policy/learned.py`). It satisfies the existing `PolicyFn` protocol, so `run_episode(config, "unshielded_marl", policy=..., policy_id=policy.artifact_id)` works unchanged. Loading refuses a missing `metadata.json`, an altered weight file (SHA-256), a different observation normalisation, or different world bounds than `shared/contracts.py`.
 
@@ -101,7 +107,12 @@ Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures,
 
 - Shipped scenarios (3 episodes; rows in `…dev-seeds.ideal.episodes.jsonl`): the shielded learned policy is the same as the shielded reference on `sandwich-3` (13 violation pair-steps; that scenario is documented as physically unrecoverable and the filter does not fully hold it).
 - **T1-trained policy under T2 disturbances:** the table above, on the same fresh seeds, is the comparison. Earlier development-seed runs (30 episodes) gave the same picture (78% / 84%, rows in `…dev-seeds.T2-*.episodes.jsonl`). Training under T2-nominal removed the completion gap in these runs. Why is not isolated; a stateless policy cannot cancel a steady wind, which the reference's integral term does. That explanation is a hypothesis, and each configuration has one training seed.
-- **Shield in the training loop: inconclusive.** A first 150-iteration run was evaluated on the fresh seeds (14 unshielded violation pair-steps in 5 episodes against 10 in 3 for the T1 run; 498 interventions against 324). It is not a fair comparison: 150 vs 300 iterations changes the curriculum and learning-rate schedule, it is one seed, and the evidence files of that run were not kept, so it is not shipped and not cited as a result. A full-length 300-iteration shield-in-loop run is the proper test.
+- **Shield in the training loop (full 300 iterations, `artifacts/ablations/…it300-8f5c910be5`, same schedule as the T1 policy, one seed):** no clear difference. On a third set of 50 held-out episodes (seeds 15,000,000+, never looked at before this comparison), unshielded: 8 violation pair-steps in 3 episodes (min sep 3.35 m) against 8 in 2 episodes (1.93 m) for the T1 policy; shielded: 0 violations for both, 213 interventions against 204. Completion 100% against 99.33% (see the next bullet). With one training seed each and 2 vs 3 violating episodes, this is within what seed-to-seed variation could produce, so it is neither a benefit nor a harm. Not shipped; the artifact, log and rows are kept for traceability (`src_dirty` in its metadata is only an uncommitted change to `replay.py`, which training does not import).
+- **A drone stalled just outside its goal.** On the 15,000,000+ seeds the T1 policy left one of about 150 agents 2.04 m from its goal (goal radius 2.0 m) with zero commanded acceleration until the 800-step limit (seed 15000007, unshielded and shielded). The earlier preprocessing fix removed a 2.79 m stall; this is the same kind of dead zone at a smaller scale. Not fixed. A finer goal scaling or a terminal-approach reward would need a retrain and a new unseen seed set.
+
+### Rigid-body (PyBullet) check
+
+The policy was trained on point-mass dynamics. Flown unchanged in the PyBullet Crazyflie backend, shielded: `head-on-40` completes 2/2 with 8.93 m minimum separation, and `heldout:12000008:4` completes 4/4 with 8.38 m (0 violation pair-steps, 0 fallbacks, 46 interventions). One run each; this shows the loop runs on a different dynamics model, nothing about how often it would hold. Unshielded rigid-body runs and other scenarios were not made.
 
 ### What the plots show
 
@@ -123,7 +134,7 @@ Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures,
 - Only one training seed per configuration; a multi-seed study is needed before comparing configurations.
 - `dense16` generator in `evaluate.py` copies the one in `tests/test_random_traffic.py`; keep them in sync.
 - The `shipped` suite has 3 episodes; treat it as a smoke check.
-- A PyBullet backend run of the trained policy was not done.
+- The rigid-body check above is two shielded runs; no unshielded or multi-seed PyBullet evaluation.
 - Training details that were reviewed and left as they are: behaviour cloning labels come from the stateless PD law (`compute_reference_action`), while the evaluated "reference" is the PID `ReferencePolicy`; the behaviour-cloning rollouts always use ideal dynamics, so the T2 run is warm-started from T1 conditions; under T2 profiles a sampled action is stored as executed even when the environment drops that command, which makes policy-gradient credit noisier on those steps; the checkpoint loader uses `weights_only=False` and must only be given our own checkpoints.
 - The artifact checks (weight hash, normalisation fingerprint, bounds) detect corruption and mixed-up directories. Both values live in the metadata file next to the weights, so they do not stop someone who replaces both files.
 - Reproducibility was checked by retraining the T1 policy (identical hash, repeated by an independent reviewer). The T2 policy was not retrained to check.
