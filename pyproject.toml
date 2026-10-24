@@ -33,6 +33,10 @@ physics = [
     "pybullet>=3.2.7,<4",
     "transforms3d>=0.4,<1",
 ]
+# MARL training (P2-SA-01). The runtime policy (policy/learned.py) needs only numpy.
+train = [
+    "torch==2.5.1",
+]
 # Replay plot for utm-run --plot.
 plot = [
     "matplotlib>=3.8,<4",
@@ -41,6 +45,8 @@ plot = [
 [project.scripts]
 utm-mock-api = "utm_services.api.app:run"
 utm-run = "utm_services.evaluation.cli:main"
+utm-train = "utm_services.training.mappo:main"
+utm-eval-policy = "utm_services.training.evaluate:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "shared" = "shared"}
@@ -53,6 +59,7 @@ packages = [
     "utm_services.policy",
     "utm_services.safety",
     "utm_services.simulation",
+    "utm_services.training",
 ]
 
 [tool.pytest.ini_options]
