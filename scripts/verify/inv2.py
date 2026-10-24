@@ -19,7 +19,7 @@ def trial(t):
         return None
     p_, v_ = [pi, pj], [vi, vj]
     nom = [tuple(np.r_[rng.uniform(-3.5, 3.5, 2), rng.uniform(-0.5, 0.5)]) for _ in range(2)]
-    cfg = FilterConfig()
+    cfg = FilterConfig(step_deadline=False)
     n_tests = n_viol = 0; worst = 0.0; entered = None; minsep = 1e9
     latch = {}  # one per trial, as the runner keeps one per episode
     for k in range(80):

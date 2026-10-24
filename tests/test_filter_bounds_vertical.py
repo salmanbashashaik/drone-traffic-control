@@ -29,6 +29,10 @@ class _BrokenOSQP:
         raise RuntimeError("simulated solver crash")
 
 
+def _broken_daqp(*args, **kwargs):
+    raise RuntimeError("simulated solver crash")
+
+
 def _drone(agent_id, pos, goal, vel):
     return {"agent_id": agent_id, "initial_position_m": tuple(map(float, pos)),
             "initial_velocity_mps": tuple(map(float, vel)), "goal_m": tuple(map(float, goal))}
@@ -62,6 +66,7 @@ def test_head_on_near_floor_or_ceiling_stays_in_the_world(z0, barrier) -> None:
 @pytest.mark.slow
 def test_forced_fallback_head_on_near_floor_or_ceiling_stays_in_the_world(z0, monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
+    monkeypatch.setattr(filter_module.daqp, "solve", _broken_daqp)
     s = _run(_head_on_at(z0), "backup")
 
     assert s["fallback_events"] > 0

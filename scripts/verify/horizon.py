@@ -4,7 +4,7 @@ from shared.contracts import DroneState
 from utm_services.safety import filter as F
 
 rng = np.random.default_rng(1)
-cfg = F.FilterConfig()
+cfg = F.FilterConfig(step_deadline=False)
 print("steps:", F._backup_steps(cfg))
 
 

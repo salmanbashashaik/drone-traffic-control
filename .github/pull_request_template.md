@@ -16,7 +16,7 @@
 ```
 
 ## Results
-<!-- Measured numbers against the baseline (docs/results/pr12-b1-2026-10-23.jsonl for the filter), with seeds and machine. Any safety metric that got worse goes here first. -->
+<!-- Measured numbers against the baseline (docs/results/solver-exact-2026-10-24.jsonl for the filter), with seeds and machine. Any safety metric that got worse goes here first. -->
 
 ## Risks
 <!-- What could break, which safety claims are touched, known limits accepted. -->

@@ -14,7 +14,7 @@ HI = np.array([1000.0, 1000.0, 200.0])
 
 def sim(p, v, nominal, steps=200, cfg=None, wind=(0, 0, 0)):
     """Closed loop like fuzz.py. nominal(k, p, v) -> (n,3). Returns stats."""
-    cfg = cfg or F.FilterConfig()
+    cfg = cfg or F.FilterConfig(step_deadline=False)
     latch = {}  # one filter memory per run, like the episode runner
     p, v = np.array(p, float), np.array(v, float)
     n = len(p)
@@ -61,7 +61,7 @@ section = sys.argv[1] if len(sys.argv) > 1 else "all"
 
 if section in ("all", "limits"):
     print("== _world_accel_limits sweep: low <= high, on-bound, corners")
-    cfg = F.FilterConfig()
+    cfg = F.FilterConfig(step_deadline=False)
     worst = 1e9
     rng = np.random.default_rng(0)
     for _ in range(200000):
@@ -75,12 +75,12 @@ if section in ("all", "limits"):
         worst = min(worst, float(np.min(hi - lo)))
     print(f"min(high-low) over 200k samples incl. walls/corners: {worst:.3f}")
     for m in (0.5, 5.0):
-        lo, hi = F._world_accel_limits(np.array([500, 500, 115.0]), np.zeros(3), F.FilterConfig(margin_m=m))
+        lo, hi = F._world_accel_limits(np.array([500, 500, 115.0]), np.zeros(3), F.FilterConfig(step_deadline=False, margin_m=m))
         print(f"margin_m={m}: z limits ({lo[2]:.2f}, {hi[2]:.2f})")
     # FilterConfig rejects margins above 48.57 m at the default barrier offset.
     for m in (50.0, 90.0):
         try:
-            F.FilterConfig(margin_m=m)
+            F.FilterConfig(step_deadline=False, margin_m=m)
         except ValueError as e:
             print(f"margin_m={m}: rejected ({e})")
         else:
@@ -117,7 +117,7 @@ if section in ("all", "squeeze"):
     ]
     for name, p0, v0 in cases:
         show(name, sim(p0, v0, zero, 200))
-        show(name + " [braking]", sim(p0, v0, zero, 200, cfg=F.FilterConfig(barrier="braking")))
+        show(name + " [braking]", sim(p0, v0, zero, 200, cfg=F.FilterConfig(step_deadline=False, barrier="braking")))
 
 if section in ("all", "vertical"):
     print("== vertical LOS cases")
@@ -143,10 +143,10 @@ if section in ("all", "vertical"):
     print("  3 drones on one vertical line (10 m apart), outer two converge at 10 m/s:")
     for bar in ("backup", "braking"):
         st = sim([(500, 500, 70.0), (500, 500, 100.0), (500, 500, 130.0)], [(0, 0, 10), (0, 0, 0), (0, 0, -10)], zero, 150,
-                 cfg=F.FilterConfig(barrier=bar))
+                 cfg=F.FilterConfig(step_deadline=False, barrier=bar))
         show(f"vertical stack 3 {bar}", st)
         st = sim([(500, 500, 60.0), (500, 500, 85.0), (500, 500, 110.0), (500, 500, 135.0)],
-                 [(0, 0, 10), (0, 0, 0), (0, 0, 0), (0, 0, -10)], zero, 150, cfg=F.FilterConfig(barrier=bar))
+                 [(0, 0, 10), (0, 0, 0), (0, 0, 0), (0, 0, -10)], zero, 150, cfg=F.FilterConfig(step_deadline=False, barrier=bar))
         show(f"vertical stack 4 {bar}", st)
 
 if section in ("all", "det"):

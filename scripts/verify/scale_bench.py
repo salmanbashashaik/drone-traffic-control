@@ -16,13 +16,13 @@ and speed cap, one latch dict per run). Densities:
 
 The time split is exclusive (a nested timed call is not counted twice) and is measured by wrapping
 filter-module functions from outside, so older commits run unchanged (--src points at their checkout):
-QP matrix build (build_hocbf_qp_matrices, first solve), OSQP setup and update, OSQP solve (+ retries),
+QP matrix build (build_hocbf_qp_matrices, first solve), OSQP setup and update, OSQP and DAQP solve (+ retries),
 escape stage (the escape re-solve's build, setup and solve, and _escape_signs), _update_latches,
 backup rollout (_backup_constraints: rollout and row derivation), everything else (pair loop,
 diagnostics, contract objects, fallback). The wrappers cost a few microseconds per call.
 
 Each run also records its safety outcome (min separation, fallback and solver-error steps, steps
-inside d_eff) and a hash of every filtered action, so two code versions can be compared on the same
+inside d_eff, steps and agent-steps with a deadline fallback) and a hash of every filtered action, so two code versions can be compared on the same
 states. Results are a Markdown table (--out) with the machine details, and JSON (--json).
 """
 import argparse
@@ -147,6 +147,13 @@ class Split:
 
         real = filt.osqp
         filt.osqp = type("osqp_shim", (), {"OSQP": TimedOSQP})
+        if hasattr(filt, "daqp"):  # KKT-exact solver (perf/solver-exact): DAQP time counts as solve
+            daqp_solve = filt.daqp.solve
+
+            def timed_daqp(*a, **k):
+                split.counts["solves"] += 1
+                return split.timed(staged("solve"), daqp_solve)(*a, **k)
+            filt.daqp = type("daqp_shim", (), {"solve": staticmethod(timed_daqp)})
         filt.build_hocbf_qp_matrices = self.timed(staged("build"), filt.build_hocbf_qp_matrices)
         filt._solve_hocbf_qp = solve_hocbf(filt._solve_hocbf_qp)
         if hasattr(filt, "_update_latches"):
@@ -185,7 +192,8 @@ def worker(n, density, cluster, seed):
     split.install(filt)
     times, rows, digest = [], [], hashlib.sha256()
     out = {"min_sep": float("inf"), "fallback_steps": 0, "solver_err_steps": 0, "inside_steps": 0,
-           "escape_steps": 0, "max_cluster": 0}
+           "escape_steps": 0, "max_cluster": 0, "deadline_steps": 0, "deadline_agent_steps": 0,
+           "step_deadline": getattr(cfg, "step_deadline", None)}  # runtime default: on (None: before v1.5)
     for k in range(WARMUP + TIMED):
         ts = k * 100
         states = [DroneState(agent_id=ids[i], position_m=tuple(p[i]), velocity_mps=tuple(v[i]),
@@ -206,6 +214,9 @@ def worker(n, density, cluster, seed):
             rows.append(row)
             out["fallback_steps"] += int(diag.fallback_used)
             out["solver_err_steps"] += int(not diag.qp_feasible)
+            missed = getattr(diag, "deadline_fallback_agents", [])  # contract v1.5
+            out["deadline_steps"] += int(bool(missed))
+            out["deadline_agent_steps"] += len(missed)
             out["escape_steps"] += int(row["escape"] > 0.0)
             out["max_cluster"] = max(out["max_cluster"], clusters(kwargs.get("latch", {})))
         vn = v + a * DT
@@ -243,14 +254,16 @@ def machine():
 
 def table(results):
     lines = ["| N | density | pairs | p50 ms | p95 ms | max ms | " + " | ".join(LABELS[c] for c in CATEGORIES)
-             + " | solves/step | escape steps | max cluster | min sep m | fallback | actions hash |",
-             "|" + " --- |" * (12 + len(CATEGORIES))]
+             + " | solves/step | escape steps | max cluster | min sep m | fallback | deadline (steps / agent-steps) "
+             "| actions hash |",
+             "|" + " --- |" * (13 + len(CATEGORIES))]
     for r in results:
         dens = r["density"] if r["cluster"] is None else f"{r['density']} (groups of {r['cluster']})"
         split = " | ".join(f"{r['split_ms'][c]:.1f}" for c in CATEGORIES)
         lines.append(f"| {r['n']} | {dens} | {r['pairs']} | {r['p50_ms']:.1f} | {r['p95_ms']:.1f} | "
                      f"{r['max_ms']:.1f} | {split} | {r['solves_per_step']:.2f} | {r['escape_steps']} | "
-                     f"{r['max_cluster']} | {r['min_sep']:.3f} | {r['fallback_steps']} | `{r['actions_sha256']}` |")
+                     f"{r['max_cluster']} | {r['min_sep']:.3f} | {r['fallback_steps']} | "
+                     f"{r.get('deadline_steps', 0)} / {r.get('deadline_agent_steps', 0)} | `{r['actions_sha256']}` |")
     return "\n".join(lines)
 
 
@@ -297,7 +310,9 @@ def main(argv=None):
             with open(a.json, "a") as f:
                 f.write(json.dumps(r, sort_keys=True) + "\n")
     text = (f"### {label}\n\nMachine: {machine()}. Seed {a.seed}, {WARMUP} warm-up and {TIMED} timed steps per "
-            f"config, one process per config, split in mean ms per timed step.\n\n{table(results)}\n")
+            f"config, one process per config, split in mean ms per timed step. "
+            f"FilterConfig defaults, step_deadline {sorted({str(r.get('step_deadline')) for r in results})}."
+            f"\n\n{table(results)}\n")
     print(text)
     if a.out:
         with open(a.out, "a") as f:

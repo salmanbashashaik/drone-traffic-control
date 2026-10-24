@@ -59,7 +59,7 @@ def rvel(rng):
 
 
 rng = np.random.default_rng(7)
-cfg = FilterConfig()
+cfg = FilterConfig(step_deadline=False)
 n_tests, n_viol, worst, n_inv_fail, tested_inv = 0, 0, 0.0, 0, 0
 for trial in range(3000):
     rel = rng.normal(size=3); rel[2] *= 0.3

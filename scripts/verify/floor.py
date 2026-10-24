@@ -7,7 +7,7 @@ import utm_services.safety.filter as F
 def d(a,p,g,v): return {"agent_id":a,"initial_position_m":p,"initial_velocity_mps":v,"goal_m":g}
 for z in (30.5, 35.0, 40.0):
   for bar in ("backup","braking"):
-    kw = {"filter_config": FilterConfig(barrier=bar)} if "barrier" in F.FilterConfig.__dataclass_fields__ else {}
+    kw = {"filter_config": FilterConfig(step_deadline=False, barrier=bar)} if "barrier" in F.FilterConfig.__dataclass_fields__ else {}
     if not kw and bar=="backup": continue
     sc = ScenarioConfig(scenario_id="x", seed=0, episode_limit_steps=400, drones=[d("a",(480.,500.,z),(900.,500.,z),(15.,0.,0.)), d("b",(520.,500.,z),(100.,500.,z),(-15.,0.,0.))])
     r = run_episode(sc, "shielded_marl", policy=compute_reference_action, policy_id="ref", keep_records=True, **kw)

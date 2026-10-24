@@ -24,6 +24,7 @@ from pathlib import Path
 from shared.contracts import SAFE_SEPARATION_M, ScenarioConfig
 
 from utm_services.policy.reference import ReferencePolicy
+from utm_services.safety.filter import FilterConfig
 from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import run_episode
 
@@ -48,7 +49,7 @@ def run_matrix(seeds: int) -> list[dict]:
                 s = run_episode(cfg.model_copy(update={"seed": seed}), "shielded_marl", policy=ReferencePolicy(),
                                 policy_id="reference-standin",
                                 make_env=lambda rules, d=d: DroneEnv(rules, disturbances=d),
-                                keep_records=False).summary
+                                filter_config=FilterConfig(step_deadline=False), keep_records=False).summary
                 rows.append({"case": label, "profile": profile, "seed": seed, **s})
     return rows
 

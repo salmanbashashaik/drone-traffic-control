@@ -58,10 +58,10 @@ def test_escape_solve_failure_keeps_the_first_solve(monkeypatch) -> None:
     real_solve = filter_module._solve_hocbf_qp
     first_solves = []
 
-    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None):
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None, **kwargs):
         if escape_signs:
             return {}, {}, False
-        first_solves.append(real_solve(state_map, action_map, pairs, config, backup=backup, frames=frames))
+        first_solves.append(real_solve(state_map, action_map, pairs, config, backup=backup, frames=frames, **kwargs))
         return first_solves[-1]
 
     monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
@@ -88,8 +88,9 @@ def test_escape_failures_with_slack_are_counted_in_the_summary(monkeypatch) -> N
 
     real_solve = filter_module._solve_hocbf_qp
 
-    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None):
-        return ({}, {}, False) if escape_signs else real_solve(state_map, action_map, pairs, config, backup=backup, frames=frames)
+    def escape_fails(state_map, action_map, pairs, config, escape_signs=None, backup=None, frames=None, **kwargs):
+        return ({}, {}, False) if escape_signs else real_solve(state_map, action_map, pairs, config, backup=backup,
+                                                               frames=frames, **kwargs)
 
     monkeypatch.setattr(filter_module, "_solve_hocbf_qp", escape_fails)
     s = _run("sandwich-3", drones, steps=60)
@@ -140,6 +141,10 @@ class _BrokenOSQP:
         raise RuntimeError("simulated solver crash")
 
 
+def _broken_daqp(*args, **kwargs):
+    raise RuntimeError("simulated solver crash")
+
+
 def _head_on_plus_bystander():
     states = [
         _state("d1", (480.0, 500.0, 100.0), (15.0, 0.0, 0.0)),
@@ -152,6 +157,7 @@ def _head_on_plus_bystander():
 
 def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
+    monkeypatch.setattr(filter_module.daqp, "solve", _broken_daqp)
     states, actions = _head_on_plus_bystander()
     safe, diag = apply_filter(states, actions, latch={})
     by_id = {a.agent_id: a for a in safe}
@@ -173,6 +179,7 @@ def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
 
 def test_solver_error_fallback_is_per_cluster(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
+    monkeypatch.setattr(filter_module.daqp, "solve", _broken_daqp)
     states, actions = _head_on_plus_bystander()
     safe, _ = apply_filter(states, actions, latch={})
     bystander = {a.agent_id: a for a in safe}["d3"]

@@ -5,7 +5,7 @@ from utm_services.safety import filter as F
 def run(sig, bar, seed):
     rng = np.random.default_rng(seed)
     p = np.array([(470, 500, 100.0), (530, 500, 100.0)]); v = np.array([(10.0, 0, 0), (-10.0, 0, 0)])
-    cfg = F.FilterConfig(barrier=bar); latch = {}; mins = 1e9; flips = 0; prev = None
+    cfg = F.FilterConfig(step_deadline=False, barrier=bar); latch = {}; mins = 1e9; flips = 0; prev = None
     for k in range(120):
         obs = p + rng.normal(0, sig, p.shape)
         st = [DroneState(agent_id=f"d{i}", position_m=tuple(obs[i]), velocity_mps=tuple(v[i]), goal_m=(500,500,100.), timestamp_ms=k*100) for i in range(2)]

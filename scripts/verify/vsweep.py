@@ -15,7 +15,7 @@ for elev in (90, 85, 75, 60):
             pa, pb = c - u*40 + [0, off, 0], c + u*40
             row = []
             for bar in (("backup","braking") if has_bar else ("x",)):
-                kw = {"filter_config": F.FilterConfig(barrier=bar)} if has_bar else {}
+                kw = {"filter_config": F.FilterConfig(step_deadline=False, barrier=bar)} if has_bar else {}
                 sc = ScenarioConfig(scenario_id="v", seed=0, episode_limit_steps=250, drones=[d("a",pa,c+u*70+[0,off,0],u*spd), d("b",pb,c-u*70,-u*spd)])
                 s = run_episode(sc, "shielded_marl", policy=compute_reference_action, policy_id="ref", keep_records=False, **kw).summary
                 row.append(f"{s['min_separation_m']:.2f}{'*' if s['min_separation_m']<5.5 else ' '}{'F' if s['fallback_events'] else ''}")
