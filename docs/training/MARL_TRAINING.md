@@ -123,6 +123,19 @@ A fixed-size suite (`--suite six`, conflict 0.8, 50 episodes, 1000-step limit), 
 
 Same pattern as with 2-4 drones: the policies finish every mission and have fewer violations than the reference, but not none; the filter removes them in these runs. The T2-nominal policy's closest approach unshielded (0.80 m) is lower than the T1 policy's (2.80 m) even though it has fewer violation pair-steps, so the two are not ranked here. Files: `docs/results/training/*.six-drones.*`. The 3D viewer screenshot of the worst unshielded episode is `figures/viewer-3d-six-drones-unshielded.jpg` (`heldout:18000044:6`, chosen as the worst of the 50, not a typical one).
 
+### Mirrored head-on: two drones swap places (6 drones), seeds 24,000,000+
+
+Suite `swap` (`--suite swap`): d0 starts where d1 is going and vice versa, 25 m apart, same altitude, at rest; four more drones fly random routes. 50 episodes, 300 drones per variant, T1-trained policy `…it300-08e745b853`. Seeds 24,000,000+ were not used before this table; a separate set of 20 probe seeds (24,900,000+) was used to try the scenario at gaps of 20, 25 and 30 m (not reported as results) and to pick the showcase seed.
+
+| Variant | Arrived | Min sep (m) | Viol. pair-steps | Episodes with viol. | Interventions |
+|---|---|---|---|---|---|
+| reference (no filter) | 300/300 | 0.05 | 338 | 50/50 | 0 |
+| unshielded learned | 300/300 | 0.33 | 344 | 50/50 | 0 |
+| shielded learned | 300/300 | 6.05 | 0 | 0/50 | 2222 |
+| shielded reference | 300/300 | 5.81 | 0 | 0/50 | 3185 |
+
+Without the filter the swapping pair is a collision course for both the reference and the learned policy in every episode; the learned policy does not learn to avoid it on its own. With the filter no pair came under 5 m and no episode went inside the filter's 5.5 m buffer. This is the filter working on a head-on it was designed for, in simulation, with perfect state information and no disturbances; it is not a general safety result (see the limits below and the filter's open items BL-03 to BL-12). Files: `docs/results/training/*.swap-mirror.*`; a viewer frame is `figures/viewer-3d-swap-avoidance.jpg` (`swap:24900003:6:25`, follow d0, t = 2.3 s).
+
 ### Development seeds (not clean held-out)
 
 Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures, and two preprocessing changes came from them. They are reported as development evidence only. The fresh-seed results above show the same pattern (held-out, shielded learned: 0 violations in both).

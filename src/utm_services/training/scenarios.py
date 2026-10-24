@@ -114,3 +114,44 @@ def fixed_size_scenarios(base: int, count: int, n_agents: int, conflict: float =
     """Evaluation set with the same team size in every episode (e.g. 6 drones, larger than the 2-4 trained on)."""
     return [sample_scenario(base + i, n_agents, conflict, episode_limit_steps,
                             scenario_id=f"eval-n{n_agents}-c{conflict:.2f}") for i in range(count)]
+
+
+SWAP_SEED_BASE = 24_000_000
+
+
+def swap_scenario(seed: int, n_agents: int = 6, gap_m: float = 25.0, episode_limit_steps: int = 800) -> ScenarioConfig:
+    """Two drones swap places ``gap_m`` apart (d0: P -> Q, d1: Q -> P), the rest fly random routes.
+
+    d0 starts where d1 wants to go and the other way round, at the same altitude and at rest, so the
+    two must pass through each other's space: a head-on with a short run-up. The other
+    ``n_agents - 2`` drones have random starts and goals in the same airspace and may cross the pair.
+    """
+    if n_agents < 2:
+        raise ValueError("a swap scenario needs at least 2 drones")
+    rng = np.random.default_rng(seed)
+    centre = np.array([*rng.uniform(400.0, 600.0, 2), 100.0])
+    theta = rng.uniform(0.0, 2.0 * np.pi)
+    half = np.array([np.cos(theta), np.sin(theta), 0.0]) * gap_m / 2.0
+    p_pt, q_pt = centre - half, centre + half
+    starts, goals = [p_pt, q_pt], [q_pt, p_pt]
+    taken = [p_pt, q_pt]
+    arena = 150.0
+    for _ in range(n_agents - 2):
+        for _try in range(10_000):
+            st = np.array([*(centre[:2] + rng.uniform(-arena, arena, 2)), rng.uniform(80.0, 120.0)])
+            gl = np.array([*(centre[:2] + rng.uniform(-arena, arena, 2)), rng.uniform(80.0, 120.0)])
+            if (all(np.linalg.norm(st - t) >= 35.0 for t in taken) and all(np.linalg.norm(gl - t) >= 30.0 for t in taken)
+                    and np.linalg.norm(st - gl) >= 60.0):
+                break
+        else:  # pragma: no cover
+            raise RuntimeError("could not place the extra drones")
+        starts.append(st); goals.append(gl); taken += [st, gl]
+    drones = [{"agent_id": f"d{k}", "initial_position_m": tuple(float(v) for v in starts[k]),
+               "initial_velocity_mps": (0.0, 0.0, 0.0), "goal_m": tuple(float(v) for v in goals[k])}
+              for k in range(n_agents)]
+    return ScenarioConfig(scenario_id=f"swap-n{n_agents}-gap{gap_m:g}", seed=int(seed),
+                          episode_limit_steps=episode_limit_steps, drones=drones)
+
+
+def swap_scenarios(base: int, count: int, n_agents: int = 6, gap_m: float = 25.0) -> list[ScenarioConfig]:
+    return [swap_scenario(base + i, n_agents, gap_m) for i in range(count)]
