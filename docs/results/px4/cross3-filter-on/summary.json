@@ -1,0 +1,21 @@
+{
+  "n_launched": 3,
+  "n_completed": 3,
+  "n_steps": 112,
+  "min_separation_m": 7.221305710333214,
+  "min_horizontal_separation_m": 0.9983389647993729,
+  "separation_violation_pair_steps": 0,
+  "time_inside_d_eff_s": 0.0,
+  "d_eff_m": 5.5,
+  "shield_interventions": 75,
+  "fallback_events": 0,
+  "qp_infeasible_steps": 0,
+  "speed_cap_events": 0,
+  "p50_loop_latency_ms": 6.693,
+  "p95_loop_latency_ms": 20.738,
+  "max_loop_latency_ms": 33.911,
+  "p50_telemetry_age_ms": 8.254999999999999,
+  "p95_telemetry_age_ms": 17.4525,
+  "max_telemetry_age_ms": 24.7,
+  "max_step_overrun_ms": 0.894
+}

@@ -1,0 +1,196 @@
+[06:52:22|Info ] MAVSDK version: v4.0.6 (mavsdk_impl.cpp:58)
+[06:52:24|Info ] New system on: 127.0.0.1:18570 (system ID: 1) (udp_connection.cpp:283)
+[06:52:35|Info ] New system on: 127.0.0.1:18571 (system ID: 2) (udp_connection.cpp:283)
+1792824755.554 sys1 change mode=HOLD armed=False height=nan m hspeed=0.00 m/s
+1792824755.554 sys2 change mode=UNKNOWN armed=False height=nan m hspeed=0.00 m/s
+1792824756.306 sys2 text INFO: [logger] ./log/2026-10-24/06_52_36.ulg	
+1792824756.461 sys2 change mode=HOLD armed=False height=-0.01 m hspeed=0.01 m/s
+1792824756.562 sys1 snap mode=HOLD armed=False height=-0.00 m hspeed=0.01 m/s
+1792824756.562 sys2 snap mode=HOLD armed=False height=-0.02 m hspeed=0.01 m/s
+1792824756.979 sys1 text INFO: Armed by external command	
+1792824756.988 sys2 text INFO: Armed by external command	
+1792824757.032 sys1 text INFO: Using default takeoff altitude: 20.0 m	
+1792824757.040 sys2 text INFO: Using default takeoff altitude: 20.0 m	
+1792824757.466 sys2 change mode=TAKEOFF armed=True height=-0.02 m hspeed=0.02 m/s
+1792824757.567 sys1 snap mode=HOLD armed=False height=0.01 m hspeed=0.01 m/s
+1792824757.567 sys2 snap mode=TAKEOFF armed=True height=-0.02 m hspeed=0.02 m/s
+1792824758.020 sys1 change mode=TAKEOFF armed=True height=0.02 m hspeed=0.01 m/s
+1792824758.573 sys1 snap mode=TAKEOFF armed=True height=0.02 m hspeed=0.01 m/s
+1792824758.573 sys2 snap mode=TAKEOFF armed=True height=-0.04 m hspeed=0.03 m/s
+1792824758.760 sys2 text INFO: Takeoff detected	
+1792824758.780 sys1 text INFO: Takeoff detected	
+1792824759.577 sys1 snap mode=TAKEOFF armed=True height=0.01 m hspeed=0.00 m/s
+1792824759.577 sys2 snap mode=TAKEOFF armed=True height=-0.04 m hspeed=0.02 m/s
+1792824760.582 sys1 snap mode=TAKEOFF armed=True height=0.01 m hspeed=0.00 m/s
+1792824760.582 sys2 snap mode=TAKEOFF armed=True height=-0.03 m hspeed=0.01 m/s
+1792824761.586 sys1 snap mode=TAKEOFF armed=True height=0.03 m hspeed=0.01 m/s
+1792824761.586 sys2 snap mode=TAKEOFF armed=True height=-0.01 m hspeed=0.02 m/s
+1792824762.590 sys1 snap mode=TAKEOFF armed=True height=0.64 m hspeed=0.03 m/s
+1792824762.590 sys2 snap mode=TAKEOFF armed=True height=0.63 m hspeed=0.01 m/s
+1792824763.597 sys1 snap mode=TAKEOFF armed=True height=1.74 m hspeed=0.02 m/s
+1792824763.598 sys2 snap mode=TAKEOFF armed=True height=1.75 m hspeed=0.02 m/s
+1792824764.602 sys1 snap mode=TAKEOFF armed=True height=2.96 m hspeed=0.03 m/s
+1792824764.602 sys2 snap mode=TAKEOFF armed=True height=2.94 m hspeed=0.01 m/s
+1792824765.556 sys1 snap mode=TAKEOFF armed=True height=4.24 m hspeed=0.02 m/s
+1792824765.556 sys2 snap mode=TAKEOFF armed=True height=4.23 m hspeed=0.01 m/s
+1792824766.561 sys1 snap mode=TAKEOFF armed=True height=5.70 m hspeed=0.02 m/s
+1792824766.561 sys2 snap mode=TAKEOFF armed=True height=5.64 m hspeed=0.03 m/s
+1792824767.565 sys1 snap mode=TAKEOFF armed=True height=7.17 m hspeed=0.03 m/s
+1792824767.565 sys2 snap mode=TAKEOFF armed=True height=7.11 m hspeed=0.03 m/s
+1792824768.570 sys1 snap mode=TAKEOFF armed=True height=8.62 m hspeed=0.01 m/s
+1792824768.570 sys2 snap mode=TAKEOFF armed=True height=8.55 m hspeed=0.03 m/s
+1792824769.517 sys1 snap mode=TAKEOFF armed=True height=10.09 m hspeed=0.02 m/s
+1792824769.517 sys2 snap mode=TAKEOFF armed=True height=10.01 m hspeed=0.02 m/s
+1792824770.521 sys1 snap mode=TAKEOFF armed=True height=12.25 m hspeed=0.01 m/s
+1792824770.521 sys2 snap mode=TAKEOFF armed=True height=12.15 m hspeed=0.03 m/s
+1792824771.525 sys1 snap mode=TAKEOFF armed=True height=14.71 m hspeed=0.03 m/s
+1792824771.525 sys2 snap mode=TAKEOFF armed=True height=14.63 m hspeed=0.03 m/s
+1792824772.531 sys1 snap mode=TAKEOFF armed=True height=16.63 m hspeed=0.01 m/s
+1792824772.531 sys2 snap mode=TAKEOFF armed=True height=16.53 m hspeed=0.03 m/s
+1792824773.535 sys1 snap mode=TAKEOFF armed=True height=17.91 m hspeed=0.01 m/s
+1792824773.535 sys2 snap mode=TAKEOFF armed=True height=17.85 m hspeed=0.03 m/s
+1792824774.541 sys1 snap mode=TAKEOFF armed=True height=18.71 m hspeed=0.00 m/s
+1792824774.541 sys2 snap mode=TAKEOFF armed=True height=18.67 m hspeed=0.05 m/s
+1792824775.545 sys1 snap mode=TAKEOFF armed=True height=19.25 m hspeed=0.02 m/s
+1792824775.545 sys2 snap mode=TAKEOFF armed=True height=19.20 m hspeed=0.02 m/s
+1792824775.796 sys2 change mode=HOLD armed=True height=19.30 m hspeed=0.01 m/s
+1792824776.300 sys1 change mode=HOLD armed=True height=19.50 m hspeed=0.01 m/s
+1792824776.501 sys1 snap mode=HOLD armed=True height=19.55 m hspeed=0.02 m/s
+1792824776.501 sys2 snap mode=HOLD armed=True height=19.50 m hspeed=0.03 m/s
+1792824776.802 sys2 change mode=OFFBOARD armed=True height=19.58 m hspeed=0.12 m/s
+1792824777.304 sys1 change mode=OFFBOARD armed=True height=19.70 m hspeed=1.55 m/s
+1792824777.505 sys1 snap mode=OFFBOARD armed=True height=19.75 m hspeed=2.28 m/s
+1792824777.505 sys2 snap mode=OFFBOARD armed=True height=19.69 m hspeed=2.26 m/s
+1792824778.510 sys1 snap mode=OFFBOARD armed=True height=20.12 m hspeed=5.38 m/s
+1792824778.510 sys2 snap mode=OFFBOARD armed=True height=20.13 m hspeed=4.92 m/s
+1792824779.514 sys1 snap mode=OFFBOARD armed=True height=20.75 m hspeed=7.75 m/s
+1792824779.514 sys2 snap mode=OFFBOARD armed=True height=20.79 m hspeed=7.53 m/s
+1792824780.521 sys1 snap mode=OFFBOARD armed=True height=21.32 m hspeed=9.07 m/s
+1792824780.521 sys2 snap mode=OFFBOARD armed=True height=21.40 m hspeed=8.81 m/s
+1792824780.816 sys2 text CRITICAL: Failsafe activated	
+1792824780.820 sys1 text CRITICAL: Failsafe activated	
+1792824780.876 sys2 text INFO: RTL: start return at 31 m (30 m above destination)	
+1792824780.876 sys1 text INFO: RTL: start return at 31 m (30 m above destination)	
+1792824781.325 sys1 change mode=RETURN_TO_LAUNCH armed=True height=21.78 m hspeed=8.49 m/s
+1792824781.525 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=21.95 m hspeed=7.99 m/s
+1792824781.526 sys2 snap mode=OFFBOARD armed=True height=22.03 m hspeed=7.77 m/s
+1792824781.828 sys2 change mode=RETURN_TO_LAUNCH armed=True height=22.32 m hspeed=6.89 m/s
+[06:53:02|Info ] Heartbeats from system 245 timed out (system_impl.cpp:419)
+1792824782.531 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=22.95 m hspeed=5.17 m/s
+1792824782.531 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=23.06 m hspeed=4.96 m/s
+1792824783.537 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=23.82 m hspeed=2.67 m/s
+1792824783.537 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=23.96 m hspeed=2.41 m/s
+1792824784.545 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=24.54 m hspeed=0.18 m/s
+1792824784.545 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=24.69 m hspeed=0.47 m/s
+1792824785.500 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=25.44 m hspeed=2.98 m/s
+1792824785.500 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=25.65 m hspeed=3.23 m/s
+1792824786.504 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=26.73 m hspeed=5.09 m/s
+1792824786.504 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=27.00 m hspeed=5.14 m/s
+1792824787.511 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=28.03 m hspeed=3.92 m/s
+1792824787.511 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=28.24 m hspeed=3.64 m/s
+1792824788.515 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=28.87 m hspeed=2.28 m/s
+1792824788.515 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=28.97 m hspeed=1.88 m/s
+1792824789.520 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.30 m hspeed=1.55 m/s
+1792824789.520 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.38 m hspeed=1.70 m/s
+1792824790.524 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.64 m hspeed=3.64 m/s
+1792824790.524 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.64 m hspeed=4.26 m/s
+1792824791.528 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.72 m hspeed=5.08 m/s
+1792824791.528 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.70 m hspeed=4.91 m/s
+1792824792.532 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.81 m hspeed=4.75 m/s
+1792824792.532 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.80 m hspeed=4.73 m/s
+1792824793.537 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.90 m hspeed=4.48 m/s
+1792824793.537 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.86 m hspeed=3.66 m/s
+1792824794.541 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.96 m hspeed=2.89 m/s
+1792824794.541 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.91 m hspeed=2.24 m/s
+1792824795.357 sys2 text INFO: RTL: land at destination	
+1792824795.546 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.99 m hspeed=1.76 m/s
+1792824795.546 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.94 m hspeed=1.22 m/s
+1792824795.905 sys1 text INFO: RTL: land at destination	
+1792824796.499 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=29.85 m hspeed=0.99 m/s
+1792824796.500 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=29.06 m hspeed=0.58 m/s
+1792824797.504 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=28.49 m hspeed=0.41 m/s
+1792824797.504 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=27.67 m hspeed=0.16 m/s
+1792824798.508 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=27.08 m hspeed=0.11 m/s
+1792824798.508 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=26.21 m hspeed=0.04 m/s
+1792824799.449 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=25.59 m hspeed=0.04 m/s
+1792824799.449 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=24.71 m hspeed=0.04 m/s
+1792824800.453 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=24.09 m hspeed=0.03 m/s
+1792824800.453 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=23.19 m hspeed=0.05 m/s
+1792824801.458 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=22.58 m hspeed=0.06 m/s
+1792824801.458 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=21.68 m hspeed=0.06 m/s
+1792824802.462 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=21.07 m hspeed=0.07 m/s
+1792824802.462 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=20.19 m hspeed=0.07 m/s
+1792824803.466 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=19.56 m hspeed=0.05 m/s
+1792824803.466 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=18.72 m hspeed=0.06 m/s
+1792824804.469 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=18.06 m hspeed=0.05 m/s
+1792824804.470 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=17.25 m hspeed=0.02 m/s
+1792824805.473 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=16.52 m hspeed=0.04 m/s
+1792824805.473 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=15.76 m hspeed=0.04 m/s
+1792824806.477 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=15.01 m hspeed=0.00 m/s
+1792824806.477 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=14.30 m hspeed=0.05 m/s
+1792824807.481 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=13.51 m hspeed=0.03 m/s
+1792824807.481 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=12.78 m hspeed=0.01 m/s
+1792824808.485 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=12.01 m hspeed=0.05 m/s
+1792824808.485 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=11.30 m hspeed=0.02 m/s
+1792824809.439 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=10.57 m hspeed=0.04 m/s
+1792824809.440 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=9.91 m hspeed=0.03 m/s
+1792824810.444 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=9.11 m hspeed=0.03 m/s
+1792824810.444 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=8.51 m hspeed=0.00 m/s
+1792824811.451 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=7.87 m hspeed=0.05 m/s
+1792824811.451 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=7.33 m hspeed=0.02 m/s
+1792824812.456 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=6.78 m hspeed=0.02 m/s
+1792824812.456 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=6.33 m hspeed=0.01 m/s
+1792824813.460 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=5.85 m hspeed=0.01 m/s
+1792824813.460 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=5.47 m hspeed=0.03 m/s
+1792824814.465 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=5.07 m hspeed=0.00 m/s
+1792824814.465 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=4.77 m hspeed=0.04 m/s
+1792824815.471 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=4.40 m hspeed=0.03 m/s
+1792824815.471 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=4.06 m hspeed=0.02 m/s
+1792824816.475 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=3.72 m hspeed=0.03 m/s
+1792824816.475 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=3.37 m hspeed=0.02 m/s
+1792824817.480 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=3.03 m hspeed=0.02 m/s
+1792824817.480 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=2.69 m hspeed=0.01 m/s
+1792824818.485 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=2.34 m hspeed=0.02 m/s
+1792824818.485 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=1.99 m hspeed=0.00 m/s
+1792824819.439 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=1.69 m hspeed=0.01 m/s
+1792824819.439 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=1.33 m hspeed=0.01 m/s
+1792824820.443 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=0.98 m hspeed=0.01 m/s
+1792824820.443 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=0.65 m hspeed=0.04 m/s
+1792824821.448 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=0.29 m hspeed=0.03 m/s
+1792824821.448 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=-0.04 m hspeed=0.02 m/s
+1792824822.453 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=-0.05 m hspeed=0.02 m/s
+1792824822.453 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=-0.05 m hspeed=0.01 m/s
+1792824822.755 sys2 text INFO: Landing detected	
+1792824823.223 sys1 text INFO: Landing detected	
+1792824823.460 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=-0.00 m hspeed=0.01 m/s
+1792824823.460 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=-0.03 m hspeed=0.01 m/s
+1792824824.464 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=0.00 m hspeed=0.02 m/s
+1792824824.465 sys2 snap mode=RETURN_TO_LAUNCH armed=True height=-0.03 m hspeed=0.01 m/s
+1792824824.872 sys2 text INFO: Disarmed by landing	
+1792824825.067 sys2 change mode=OFFBOARD armed=False height=-0.02 m hspeed=0.01 m/s
+1792824825.316 sys2 text CRITICAL: Preflight Fail: heading estimate not stable
+1792824825.336 sys1 text INFO: Disarmed by landing	
+1792824825.469 sys1 snap mode=RETURN_TO_LAUNCH armed=True height=0.01 m hspeed=0.02 m/s
+1792824825.469 sys2 snap mode=OFFBOARD armed=False height=0.03 m hspeed=0.01 m/s
+1792824825.570 sys1 change mode=OFFBOARD armed=False height=0.01 m hspeed=0.02 m/s
+1792824825.949 sys1 text CRITICAL: Preflight Fail: heading estimate not stable
+1792824826.482 sys1 snap mode=OFFBOARD armed=False height=0.01 m hspeed=0.01 m/s
+1792824826.482 sys2 snap mode=OFFBOARD armed=False height=0.09 m hspeed=0.02 m/s
+1792824827.437 sys1 snap mode=OFFBOARD armed=False height=0.00 m hspeed=0.01 m/s
+1792824827.437 sys2 snap mode=OFFBOARD armed=False height=0.09 m hspeed=0.02 m/s
+1792824828.441 sys1 snap mode=OFFBOARD armed=False height=0.02 m hspeed=0.01 m/s
+1792824828.441 sys2 snap mode=OFFBOARD armed=False height=0.08 m hspeed=0.01 m/s
+1792824829.381 sys1 snap mode=OFFBOARD armed=False height=0.00 m hspeed=0.01 m/s
+1792824829.381 sys2 snap mode=OFFBOARD armed=False height=0.09 m hspeed=0.01 m/s
+1792824830.386 sys1 snap mode=OFFBOARD armed=False height=-0.00 m hspeed=0.01 m/s
+1792824830.386 sys2 snap mode=OFFBOARD armed=False height=0.07 m hspeed=0.02 m/s
+1792824831.390 sys1 snap mode=OFFBOARD armed=False height=-0.02 m hspeed=0.02 m/s
+1792824831.390 sys2 snap mode=OFFBOARD armed=False height=0.05 m hspeed=0.02 m/s
+1792824832.394 sys1 snap mode=OFFBOARD armed=False height=-0.03 m hspeed=0.02 m/s
+1792824832.394 sys2 snap mode=OFFBOARD armed=False height=0.03 m hspeed=0.01 m/s
+1792824833.398 sys1 snap mode=OFFBOARD armed=False height=-0.02 m hspeed=0.01 m/s
+1792824833.398 sys2 snap mode=OFFBOARD armed=False height=0.01 m hspeed=0.01 m/s
+1792824834.402 sys1 snap mode=OFFBOARD armed=False height=-0.01 m hspeed=0.01 m/s
+1792824834.402 sys2 snap mode=OFFBOARD armed=False height=0.00 m hspeed=0.00 m/s
+1792824835.406 watch done: landing every armed vehicle
+1792824835.406 all disarmed

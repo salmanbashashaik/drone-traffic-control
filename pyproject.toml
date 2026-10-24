@@ -37,6 +37,10 @@ physics = [
 train = [
     "torch==2.5.1",
 ]
+# PX4 SITL bridge, utm-px4-demo (WSL2 Ubuntu; see docs/integration/PX4_SETUP.md).
+px4 = [
+    "mavsdk==4.0.6",
+]
 # Replay plot for utm-run --plot.
 plot = [
     "matplotlib>=3.8,<4",
@@ -49,6 +53,7 @@ utm-train = "utm_services.training.mappo:main"
 utm-eval-policy = "utm_services.training.evaluate:main"
 utm-replay = "utm_services.training.replay:main"
 utm-city-check = "utm_services.training.city_eval:main"
+utm-px4-demo = "utm_services.integration.px4_demo:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "shared" = "shared"}
@@ -58,6 +63,7 @@ packages = [
     "utm_services.api",
     "utm_services.application",
     "utm_services.evaluation",
+    "utm_services.integration",
     "utm_services.policy",
     "utm_services.safety",
     "utm_services.simulation",

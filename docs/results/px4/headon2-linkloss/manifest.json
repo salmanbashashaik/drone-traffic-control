@@ -1,0 +1,101 @@
+{
+  "episode_id": "headon2-px4sitl-shielded_marl",
+  "scenario_id": "headon2",
+  "controller_variant": "shielded_marl",
+  "policy_id": "reference-standin",
+  "filter": {
+    "gamma": 1.0,
+    "margin_m": 0.5,
+    "tie_break_mps2": 1.0,
+    "lag_s": 0.0,
+    "range_gate_m": null,
+    "solver_eps": 1e-05,
+    "solver_max_iter": 4000,
+    "slack_weight": 10000.0,
+    "barrier_offset_mps": 1.0,
+    "barrier": "backup"
+  },
+  "backend": "px4-sitl-gazebo",
+  "px4_version": "v1.17.0",
+  "mavsdk_version": "4.0.6",
+  "px4_params": {
+    "COM_OF_LOSS_T": 1.0,
+    "MPC_XY_VEL_P_ACC": 1.8,
+    "MPC_ACC_HOR": 3.0,
+    "MPC_ACC_HOR_MAX": 5.0,
+    "MPC_XY_VEL_MAX": 12.0,
+    "MPC_Z_VEL_MAX_UP": 3.0,
+    "MPC_Z_VEL_MAX_DN": 1.5,
+    "MPC_TILTMAX_AIR": 45.0,
+    "COM_OBL_RC_ACT": 0
+  },
+  "encounter": {
+    "scenario_id": "headon2",
+    "agent_ids": [
+      "a",
+      "b"
+    ],
+    "spawns_en": [
+      [
+        -40.0,
+        0.0
+      ],
+      [
+        40.0,
+        0.0
+      ]
+    ],
+    "start_z": [
+      40.0,
+      40.0
+    ],
+    "goals_m": [
+      [
+        540.0,
+        500.0,
+        40.0
+      ],
+      [
+        460.0,
+        500.0,
+        40.0
+      ]
+    ],
+    "max_steps": 900
+  },
+  "agent_ids": [
+    "a",
+    "b"
+  ],
+  "goals_m": [
+    [
+      540.0,
+      500.0,
+      40.0
+    ],
+    [
+      460.0,
+      500.0,
+      40.0
+    ]
+  ],
+  "frame": {
+    "world_origin_xy": [
+      500.0,
+      500.0
+    ],
+    "alt_offset_m": 20.0,
+    "rule": "x = X0 + spawn_e + east, y = Y0 + spawn_n + north, z = -down + alt_offset"
+  },
+  "origin_check_errors_m": [
+    0.0,
+    0.121
+  ],
+  "setpoint_mapping": "velocity v_meas + a_safe*dt (|v| <= 15 m/s) + a_safe acceleration feedforward",
+  "loop_latency_boundary": "telemetry snapshot to last setpoint sent, time.perf_counter",
+  "d_safe_m": 5.0,
+  "filter_warm_up_s": 1.02,
+  "started_utc": "2026-10-24T06:52:36+00:00",
+  "end_reason": "stopped",
+  "encounter_s": 3.0
+}
