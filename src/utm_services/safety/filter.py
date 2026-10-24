@@ -1206,7 +1206,12 @@ def _solve_hocbf_qp(
     backup: tuple[np.ndarray, ...] | None = None,
     frames: dict[tuple[str, str], _PairLatch] | None = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float], bool]:
-    """Solve the joint HOCBF QP over all active agents using OSQP.
+    """Solve the joint HOCBF QP over all active agents, as its independent problems.
+
+    ``_independent_problems`` drops rows no acceleration in the box can
+    violate and gives each connected group of agents its own QP, with the
+    joint QP's optimum; each is solved to KKT accuracy (``_solve_exact``).
+    Any problem's solver error is a solver error of the step.
 
     Returns
     -------
@@ -1225,52 +1230,168 @@ def _solve_hocbf_qp(
     if not pairs_in_qp:
         # No active pairs to constrain; the nominal only needs the world-box
         # limits the QP would apply (PR #12 re-review: a lone drone left the box).
-        safe_accels = {}
-        for aid in actions:
-            state = states[aid]
-            limits = _world_accel_limits(
-                np.array(state.position_m, dtype=np.float64), np.array(state.velocity_mps, dtype=np.float64), config
-            )
-            safe_accels[aid] = tuple(float(c) for c in np.clip(actions[aid].proposed_accel_mps2, *limits))
-        return safe_accels, {}, True
+        return _clipped_nominal(states, actions, list(actions), config), {}, True
 
     try:
-        P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
-            states, actions, pairs_in_qp, config, escape_signs, backup, frames
-        )
-        x = _solve_exact(P, q, A, l, u, config, bool(escape_signs))
-        if x is None:
-            logger.warning("filter: no solver returned a KKT-certified solution")
-            return {}, {}, False
-        u_max = MAX_ACCEL_COMPONENT_MPS2
-        safe_accels = {}
-        for idx, aid in enumerate(agent_ids):
-            ax = float(np.clip(x[3 * idx], -u_max, u_max))
-            ay = float(np.clip(x[3 * idx + 1], -u_max, u_max))
-            az = float(np.clip(x[3 * idx + 2], -u_max, u_max))
-            safe_accels[aid] = (ax, ay, az)
-        slacks = x[3 * len(agent_ids):]
-        pair_slack = {
-            pair: float(s)
-            for pair, s in zip(pairs_in_qp, slacks, strict=True)
-            if s > SHIELD_INTERVENTION_TOLERANCE_MPS2
-        }
-        return safe_accels, pair_slack, True
+        if config.barrier == "backup" and backup is None:
+            backup = _backup_constraints(states, pairs_in_qp, config, frames)
+        safe_accels, pair_slack = {}, {}
+        for agents, rows in _independent_problems(states, actions, pairs_in_qp, config, escape_signs, backup, frames):
+            if not len(rows):
+                # No row can bind: the minimiser of |a - a_nom|^2 over the box.
+                safe_accels.update(_clipped_nominal(states, actions, agents, config))
+                continue
+            pairs = [pairs_in_qp[k] for k in rows]
+            solved = _solve_one_qp(
+                {aid: states[aid] for aid in agents}, {aid: actions[aid] for aid in agents}, pairs, config,
+                {pair: escape_signs[pair] for pair in pairs if pair in escape_signs} if escape_signs else None,
+                None if backup is None else tuple(x[rows] for x in backup), frames,
+            )
+            if solved is None:
+                return {}, {}, False
+            safe_accels.update(solved[0])
+            pair_slack.update(solved[1])
+        return safe_accels, {pair: pair_slack[pair] for pair in pairs_in_qp if pair in pair_slack}, True
     except Exception as exc:  # noqa: BLE001
         logger.error("filter: QP solve exception: %s", exc)
         return {}, {}, False
+
+
+def _clipped_nominal(
+    states: dict[str, DroneState], actions: dict[str, MARLAction], agents: list[str], config: FilterConfig
+) -> dict[str, tuple[float, float, float]]:
+    """Nominal accelerations clipped to each drone's world-box limits."""
+    safe_accels = {}
+    for aid in agents:
+        state = states[aid]
+        limits = _world_accel_limits(
+            np.array(state.position_m, dtype=np.float64), np.array(state.velocity_mps, dtype=np.float64), config
+        )
+        safe_accels[aid] = tuple(float(c) for c in np.clip(actions[aid].proposed_accel_mps2, *limits))
+    return safe_accels
+
+
+def _independent_problems(
+    states: dict[str, DroneState],
+    actions: dict[str, MARLAction],
+    pairs_in_qp: list[tuple[str, str]],
+    config: FilterConfig,
+    escape_signs: dict[tuple[str, str], tuple[float, float]] | None,
+    backup: tuple[np.ndarray, ...] | None,
+    frames: dict[tuple[str, str], _PairLatch] | None,
+) -> list[tuple[list[str], np.ndarray]]:
+    """Split the joint QP into independent problems with the same optimum.
+
+    Returns (agents, row indices into pairs_in_qp) per problem; agents whose
+    rows are all dropped come as one problem with no rows. A pair row
+    coef . (a_i - a_j) + s >= rhs is dropped when every acceleration in the
+    box (``_world_accel_limits``, a hard constraint) meets it with s = 0, that
+    is when min over the box of coef . (a_i - a_j) >= rhs. Its slack then
+    costs (linear or quadratic, both > 0 for s > 0) and buys nothing, so it is
+    0 at every optimum and the row never binds: removing it changes neither
+    the feasible set of the accelerations nor the optimum. A braking row is
+    kept when its tie-break acts (nominal violates it), since that shifts the
+    target. The objective is a sum over agents, so after the drop the QP
+    separates over the connected components of the remaining pair graph; a
+    component's QP has the joint QP's optimum restricted to its agents, and
+    with KKT-certified solves (``_solve_exact``) the solutions agree within
+    the certificate whichever way the QP is split. A small margin (1e-9
+    relative) keeps rows within round-off of the test.
+    """
+    agent_ids = sorted(states)
+    index = {aid: k for k, aid in enumerate(agent_ids)}
+    low, high = _world_accel_limits(
+        np.array([states[aid].position_m for aid in agent_ids], dtype=np.float64).reshape(-1, 3),
+        np.array([states[aid].velocity_mps for aid in agent_ids], dtype=np.float64).reshape(-1, 3),
+        config,
+    )
+    n_pairs = len(pairs_in_qp)
+    escape_signs = escape_signs or {}
+    coef = np.zeros((n_pairs, 3))
+    rhs = np.zeros(n_pairs)
+    keep = np.zeros(n_pairs, dtype=bool)
+    if backup is not None:
+        coef[:], rhs[:] = backup[0], backup[1]
+    for k, (id_i, id_j) in enumerate(pairs_in_qp):
+        if (id_i, id_j) in escape_signs:
+            coef[k], rhs[k] = _escape_constraint(
+                states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
+            )
+        elif backup is None:
+            coef[k], rhs[k], _ = _pair_constraint(states[id_i], states[id_j], config)
+            nominal = np.subtract(actions[id_i].proposed_accel_mps2, actions[id_j].proposed_accel_mps2)
+            keep[k] = config.tie_break_mps2 > 0.0 and float(coef[k] @ nominal) < rhs[k] + 1e-9 * (1.0 + abs(rhs[k]))
+    i = np.array([index[p[0]] for p in pairs_in_qp], dtype=np.intp)
+    j = np.array([index[p[1]] for p in pairs_in_qp], dtype=np.intp)
+    if n_pairs:
+        lowest = (np.minimum(coef * low[i], coef * high[i]) - np.maximum(coef * low[j], coef * high[j])).sum(axis=1)
+        keep |= ~(lowest >= rhs + 1e-9 * (1.0 + np.abs(rhs)))
+    parent = list(range(len(agent_ids)))
+
+    def find(a: int) -> int:
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    for k in np.flatnonzero(keep):
+        parent[find(int(i[k]))] = find(int(j[k]))
+    groups: dict[int, list[str]] = {}
+    for aid in agent_ids:
+        groups.setdefault(find(index[aid]), []).append(aid)
+    rows: dict[int, list[int]] = {}
+    for k in np.flatnonzero(keep):
+        rows.setdefault(find(int(i[k])), []).append(int(k))
+    problems = [(agents, np.array(rows[root], dtype=np.intp)) for root, agents in groups.items() if root in rows]
+    free = [aid for root, agents in groups.items() if root not in rows for aid in agents]
+    if free:
+        problems.append((free, np.zeros(0, dtype=np.intp)))
+    return problems
+
+
+def _solve_one_qp(
+    states: dict[str, DroneState],
+    actions: dict[str, MARLAction],
+    pairs_in_qp: list[tuple[str, str]],
+    config: FilterConfig,
+    escape_signs: dict[tuple[str, str], tuple[float, float]] | None,
+    backup: tuple[np.ndarray, ...] | None,
+    frames: dict[tuple[str, str], _PairLatch] | None,
+) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float]] | None:
+    """One QP of ``build_hocbf_qp_matrices``, KKT-certified: (safe_accels, pair_slack), None on solver error."""
+    P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
+        states, actions, pairs_in_qp, config, escape_signs, backup, frames
+    )
+    x = _solve_exact(P, q, A, l, u, config, bool(escape_signs))
+    if x is None:
+        logger.warning("filter: no solver returned a KKT-certified solution")
+        return None
+    u_max = MAX_ACCEL_COMPONENT_MPS2
+    safe_accels = {}
+    for idx, aid in enumerate(agent_ids):
+        ax = float(np.clip(x[3 * idx], -u_max, u_max))
+        ay = float(np.clip(x[3 * idx + 1], -u_max, u_max))
+        az = float(np.clip(x[3 * idx + 2], -u_max, u_max))
+        safe_accels[aid] = (ax, ay, az)
+    slacks = x[3 * len(agent_ids):]
+    pair_slack = {
+        pair: float(s)
+        for pair, s in zip(pairs_in_qp, slacks, strict=True)
+        if s > SHIELD_INTERVENTION_TOLERANCE_MPS2
+    }
+    return safe_accels, pair_slack
 
 
 # The QP is solved to KKT accuracy (founder decision 2026-10-24,
 # docs/architecture/PROPOSAL-scale-qp.md option 1), so its solution is the
 # optimum (unique: the objective is strictly convex in the accelerations, and
 # each slack is then fixed) and not an artefact of the solver or of which
-# drones share the QP. Measured on 21 258 fuzz QPs and joint QPs at N = 8-64
-# (docs/results/solver-exact-2026-10-24.md): DAQP (dual active set, dense) and
-# OSQP at eps 1e-9 agree to 3e-13 m/s² and reach KKT residuals <= 2e-11; DAQP
-# is faster up to about 170 variables (2.9 against 12.5 ms at 168), OSQP above
-# (44 against 106 ms at 592). OSQP at the old eps 1e-5 with polish was off by
-# up to 0.05 m/s² on 0.7 % of the fuzz QPs.
+# drones share the QP. Measured on 21 259 fuzz QPs and joint QPs at N = 16-64
+# (docs/results/solver-exact-2026-10-24.md): DAQP (dual active set, dense),
+# OSQP at eps 1e-9 and proxsuite agree within 5e-8 m/s² and all pass the
+# certificate; DAQP is faster up to about 300 variables (2.3 against 12 ms at
+# 168), OSQP above (49 against 117 ms at 592). OSQP at the old eps 1e-5 with
+# polish was off by up to 0.05 m/s² on 0.7 % of the fuzz QPs.
 _EXACT_MAX_VARS = 256
 # Certificate tolerances, in the form of OSQP's own test: primal feasibility
 # per row relative to its bound (backup rows reach |rhs| ~ 1e3), stationarity

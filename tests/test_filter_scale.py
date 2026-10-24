@@ -6,6 +6,9 @@
   replaced, bit for bit (``_dense_row_build`` is that build, kept as the oracle).
 - A closed loop of ``apply_filter`` above 256 pairs gives the same actions with
   the threaded rollout as with the serial one (the fuzz tier never reaches it).
+- ``_solve_hocbf_qp`` solved as independent problems has the optimum of the one
+  joint QP (within the KKT certificate), and every row it drops holds for every
+  acceleration in the box.
 """
 
 import numpy as np
@@ -146,3 +149,37 @@ def test_threaded_rollout_gives_the_same_closed_loop(monkeypatch, barrier) -> No
         return np.array(out)
 
     assert fly(10**9).tobytes() == fly(0).tobytes()
+
+
+def test_independent_problems_have_the_joint_optimum() -> None:
+    # Two or three encounters in one sky: rows across them are dropped, and the
+    # split solves agree with the joint QP within the KKT certificate.
+    rng = np.random.default_rng(2)
+    config = F.FilterConfig()
+    split = 0
+    for _ in range(40):
+        p, v = _traffic(rng, 9, spread=40.0)
+        p[3:6] += (150.0, 0.0, 0.0)
+        p[6:] += (0.0, 150.0, 0.0)
+        states, actions, pairs = _maps(p, v, rng)
+        frames = F._update_latches(states, pairs, config, {})
+        backup = F._backup_constraints(states, pairs, config, frames)
+        problems = F._independent_problems(states, actions, pairs, config, None, backup, frames)
+        split += len(problems) > 1
+        joint = F._solve_one_qp(states, actions, pairs, config, None, backup, frames)
+        parts, slack, ok = F._solve_hocbf_qp(states, actions, pairs, config, backup=backup, frames=frames)
+        assert ok and joint is not None
+        for aid in states:
+            assert np.max(np.abs(np.subtract(parts[aid], joint[0][aid]))) <= 1e-7
+        assert set(slack) == set(joint[1])
+        # A dropped row holds for every acceleration in the box (sampled at its corners).
+        kept = {int(k) for _, rows in problems for k in rows}
+        ids = sorted(states)
+        low, high = F._world_accel_limits(np.array([states[a].position_m for a in ids]),
+                                          np.array([states[a].velocity_mps for a in ids]), config)
+        index = {a: k for k, a in enumerate(ids)}
+        samples = np.where(rng.uniform(size=(200, len(ids), 3)) < 0.5, low, high)
+        for k, (a, b) in enumerate(pairs):
+            if k not in kept:
+                assert np.all((samples[:, index[a]] - samples[:, index[b]]) @ backup[0][k] >= backup[1][k])
+    assert split > 0
