@@ -49,11 +49,13 @@ def _p50(x: float) -> float:
 
 # ZED-F9P RTK 0.01 m + 1 ppm CEP (vertical R50 likewise) at a 10 km baseline.
 RTK = Gnss("rtk_f9p", _cep(0.02), _p50(0.02), _p50(0.05), "u-blox ZED-F9P-02B datasheet R03")
-# GAGAN APV-1 measured 95 %: horizontal about 3.0 m, vertical about 4.0 m (ISRO, ICG-11 2016).
+# GAGAN APV 1.0 service requirement (the guaranteed bound; measured is about
+# 3.0 m / 4.0 m): horizontal < 7.6 m 95 %, vertical < 7.6 m 95 % (ISRO, ICG-11 2016).
 # Velocity: GPS SPS PS 2020, 0.2 m/s 95 % on any axis.
-SBAS = Gnss("sbas_gagan", _r95(3.0), _v95(4.0), _v95(0.2), "ISRO ICG-11 2016; GPS SPS PS 2020")
-# GPS SPS PS 2020: a well-designed receiver gives 3 m horizontal and 5 m vertical, 95 %.
-SPS = Gnss("gps_sps", _r95(3.0), _v95(5.0), _v95(0.2), "GPS SPS PS 5th ed. 2020")
+SBAS = Gnss("sbas_gagan", _r95(7.6), _v95(7.6), _v95(0.2), "ISRO ICG-11 2016; GPS SPS PS 2020")
+# GPS SPS PS 2020 standard, global average position domain accuracy:
+# <= 8 m horizontal and <= 13 m vertical, 95 %.
+SPS = Gnss("gps_sps", _r95(8.0), _v95(13.0), _v95(0.2), "GPS SPS PS 5th ed. 2020")
 # GPS SPS PS 2020 worst-site standard: 15 m horizontal, 33 m vertical, 95 %.
 SPS_WORST = Gnss("gps_sps_worst_site", _r95(15.0), _v95(33.0), _v95(0.2), "GPS SPS PS 5th ed. 2020")
 
@@ -96,14 +98,47 @@ def dryden(w20_mps: float, h_m: float) -> tuple[float, float, float, float]:
 
 # --- Airframe and autopilot (P3-SA-03 §2.4) --------------------------------
 
-# Faessler et al. 2018: mass-normalised linear rotor drag, largest identified
-# coefficient (d_x, circle trajectory), 0.610 kg quadrotor. Used on all axes.
-DRAG_PER_S = 0.544
-# PX4 MPC_TILTMAX_AIR default 45 deg: horizontal acceleration up to g tan 45.
-# Per component (inscribed box of the horizontal disc): g tan 45 / sqrt 2.
-A_PHYS_MPS2 = G * math.tan(math.radians(45.0)) / math.sqrt(2.0)
+
+@dataclass(frozen=True)
+class Airframe:
+    """Registration data of one drone type: the manufacturer's published figures.
+
+    The wind limit is the declared max wind resistance. Drag and authority
+    are derived (P3-SA-03 §3.3): at the top speed the tilt limit balances
+    the drag, so the horizontal authority is g tan(tilt) and the
+    mass-normalised drag D = g tan(tilt) / v_max (1/s). D is an upper bound
+    if v_max is a software limit; the plant uses the same D on all axes.
+    """
+
+    name: str
+    wind_max_mps: float     # declared max wind (speed) resistance
+    tilt_deg: float         # max pitch (tilt) angle
+    v_max_mps: float        # max horizontal speed
+    source: str
+
+    @property
+    def a_phys_mps2(self) -> float:
+        return G * math.tan(math.radians(self.tilt_deg))
+
+    @property
+    def drag_per_s(self) -> float:
+        return self.a_phys_mps2 / self.v_max_mps
+
+
+# DJI spec pages (retrieved 2026-10-24). A type without all three figures
+# cannot register: DJI Agras T40 publishes no tilt angle (wind 6 m/s, speed
+# 10 m/s); Garuda Agri Kisan GA-AD publishes neither (rated speed 5 m/s).
+FLEET = (
+    Airframe("dji_m350_rtk", 12.0, 30.0, 23.0, "enterprise.dji.com/matrice-350-rtk/specs"),
+    Airframe("dji_m30", 12.0, 35.0, 23.0, "enterprise.dji.com/matrice-30/specs"),
+    Airframe("dji_mavic3e", 12.0, 35.0, 21.0, "enterprise.dji.com/mavic-3-enterprise/specs (sport mode)"),
+    Airframe("dji_flycart30", 12.0, 30.0, 20.0, "dji.com/support/product/flycart-30"),
+)
 # PX4 COM_OF_LOSS_T default: offboard loss timeout before the lost action.
 OFFBOARD_LOSS_S = 1.0
 # Actuator (attitude) time constant: the former PX4 MC_ROLL_TC range was
-# 0.15-0.25 s (QGroundControl metadata). The upper end is used.
+# 0.15-0.25 s (QGroundControl metadata). The upper end is the declared lag.
 TAU_ACT_S = 0.25
+# PX4 EKF2_ACC_NOISE default: accelerometer noise for covariance prediction,
+# per axis. Used as the noise of the acceleration in the telemetry.
+ACC_NOISE_MPS2 = 0.35

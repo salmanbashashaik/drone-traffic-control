@@ -15,9 +15,11 @@ and T the backup's stopping time:
          + delta_sample(V_rel)                          closest approach between samples
          + EPS_LIN_M                                    filter gap (measured, PR #12)
 
-    T = (V_c + K sigma_vc) / (a_rel - rho),  rho = K sqrt(lmax(P_dd,i(T) + P_dd,j(T)))
+    T = (V_c + K sigma_vc) / (a_rel - rho),  rho = K sqrt(lmax(Cov d_i(T) + Cov d_j(T)))
 
-The filter takes one margin, the largest over all pairs.
+with d = D (w - v) the drag acceleration left after the feedforward. The
+filter takes one margin, the largest over all pairs, and raises it no
+faster than the barrier can absorb (``absorbable``, P3-SA-03 §3.6).
 """
 
 from __future__ import annotations
@@ -35,10 +37,11 @@ from shared.contracts import (
     WORLD_XY_MIN_M,
     WORLD_Z_MAX_M,
     WORLD_Z_MIN_M,
+    DroneState,
 )
 from utm_services.safety import filter as F
 
-from research.adaptive_margin.envelope import A_PHYS_MPS2, OFFBOARD_LOSS_S, P_RISK, TAU_ACT_S
+from research.adaptive_margin.envelope import FLEET, OFFBOARD_LOSS_S, P_RISK, TAU_ACT_S, Airframe
 from research.adaptive_margin.tracker import H, CommandLog, Tracker, transition
 
 U_MAX = MAX_ACCEL_COMPONENT_MPS2
@@ -54,10 +57,10 @@ DC_MAX = 2.0 * math.sqrt(3.0) * U_MAX
 EPS_LAG_M = 0.5 * TAU_ACT_S**2 * 2.0 * DC_MAX
 # A command lost in the cycle being sent now is seen by the next cycle's
 # margin (it is then unconfirmed); until then it moves the drone by at most
-# 0.5 |dc| dt^2 with |dc| up to 2 sqrt(3) a_phys per drone.
-DU_NOW_M = 0.5 * 2.0 * math.sqrt(3.0) * A_PHYS_MPS2 * 0.1**2
+# 0.5 |dc| dt^2. Thrust lies in a horizontal disc of radius a_phys and
+# |c_z| <= a_phys, so |dc| <= 2 sqrt(2) a_phys; the fleet's largest a_phys.
+DU_NOW_M = 0.5 * 2.0 * math.sqrt(2.0) * max(a.a_phys_mps2 for a in FLEET) * 0.1**2
 EPS_LIN_M = 0.137   # measured, PR #12 ablation (docs/results/pr12-final-report.md); not proven
-HEADROOM_MPS2 = A_PHYS_MPS2 - U_MAX
 
 
 def delta_sample(v_rel: float) -> float:
@@ -87,14 +90,25 @@ def _lmax(m: np.ndarray) -> float:
 class Pred:
     """One drone's prediction at the filter's action time."""
 
-    x: np.ndarray       # (p, v, d)
+    x: np.ndarray       # (p, v, w)
     P: np.ndarray       # 9 x 9, position floored
     tracker: Tracker
     log: CommandLog
+    airframe: Airframe
 
     def at(self, horizon_s: float) -> np.ndarray:
-        phi, qm = transition(horizon_s, self.tracker.q)
+        phi, qm = transition(horizon_s, self.tracker.drag, self.tracker.q)
         return phi @ self.P @ phi.T + qm
+
+    @property
+    def drag(self) -> np.ndarray:
+        """Drag acceleration D (w - v) at the action time; the feedforward cancels it."""
+        return self.tracker.drag * (self.x[6:] - self.x[3:6])
+
+    def drag_cov(self, S: np.ndarray) -> np.ndarray:
+        """Covariance of D (w - v) under the state covariance S."""
+        M = np.hstack([np.zeros((3, 3)), -np.eye(3), np.eye(3)]) * self.tracker.drag
+        return M @ S @ M.T
 
 
 @dataclass
@@ -119,7 +133,7 @@ def margin(preds: dict[str, Pred], tick_a: int) -> Result:
             svc = math.sqrt(float(n @ (a.P[3:6, 3:6] + b.P[3:6, 3:6]) @ n))
             T = 0.0
             for _ in range(3):   # fixed point: rho grows with T
-                rho = K * math.sqrt(_lmax(a.P[6:, 6:] + b.P[6:, 6:] + np.diag(a.tracker.q + b.tracker.q) * T))
+                rho = K * math.sqrt(_lmax(a.drag_cov(a.at(T)) + b.drag_cov(b.at(T))))
                 if rho >= A_REL:
                     res.alarms.add("authority")
                     T = T_MAX_S
@@ -142,11 +156,18 @@ def monitor(preds: dict[str, Pred], res: Result, tick_now: int) -> set[str]:
     cfg = F.FilterConfig(margin_m=res.margin_m)
     for p in preds.values():
         S = p.at(res.horizon_s)
-        # Wind: feedforward plus K sigma of the disturbance must fit the headroom.
-        if np.any(np.abs(p.x[6:]) + K * np.sqrt(np.diag(S)[6:]) > HEADROOM_MPS2):
+        # Wind: the estimate plus K sigma must stay within the declared max wind.
+        if float(np.linalg.norm(p.x[6:8])) + K * math.sqrt(_lmax(S[6:8, 6:8])) > p.airframe.wind_max_mps:
             res.alarms.add("wind")
+        # Headroom: drag feedforward plus K sigma, plus u_max in any one
+        # horizontal direction, must fit the tilt authority a_phys.
+        if (float(np.linalg.norm(p.drag[:2])) + K * math.sqrt(_lmax(p.drag_cov(S)[:2, :2]))
+                > p.airframe.a_phys_mps2 - U_MAX):
+            res.alarms.add("headroom")
         if p.tracker.nis_alarm():
             res.alarms.add("nis")
+        if p.tracker.lag.alarm():
+            res.alarms.add("lag")
         # Link: the drone holds the last command and brakes after OFFBOARD_LOSS_S;
         # two lost commands in a row are 1e-6 under the 3GPP rate (single-loss bound broken).
         if (tick_now - p.log.delivered) * H > OFFBOARD_LOSS_S or p.log.streak >= 2:
@@ -156,3 +177,29 @@ def monitor(preds: dict[str, Pred], res: Result, tick_now: int) -> set[str]:
         if np.any(low > -U_MAX + 1e-9) or np.any(high < U_MAX - 1e-9):
             res.alarms.add("wall")
     return res.alarms
+
+
+def absorbable(states: list[DroneState], latch: dict, cfg: F.FilterConfig) -> float:
+    """m*: the largest margin the states still satisfy under main's backup barrier (P3-SA-03 §3.6).
+
+    Main's barrier for a pair is h = min |r| over the backup rollout -
+    (SAFE_SEPARATION_M + margin), so h >= 0 for every pair exactly when the
+    margin is at most min over pairs of (min |r| - SAFE_SEPARATION_M). The
+    rollout uses the latched frames in ``latch`` (read only) and ``cfg``'s
+    wall standoff and horizon: those of the previous cycle's margin.
+    """
+    by_id = {s.agent_id: s for s in states}
+    pairs = [(i, j) for k, i in enumerate(sorted(by_id)) for j in sorted(by_id)[k + 1:]]
+    if not pairs:
+        return math.inf
+
+    def col(attr: str, k: int) -> np.ndarray:
+        return np.array([getattr(by_id[pr[k]], attr) for pr in pairs], dtype=float)
+
+    traj, *_ = F._backup_rollout(
+        col("position_m", 0), col("position_m", 1), col("velocity_mps", 0), col("velocity_mps", 1), cfg,
+        np.array([F._latch_axis(latch, pr) for pr in pairs]).reshape(-1, 3),
+        np.array([latch[pr].up if pr in latch else 0.0 for pr in pairs]),
+    )
+    dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
+    return float(dist.min()) - SAFE_SEPARATION_M
