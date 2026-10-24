@@ -19,8 +19,8 @@ Frames (docs/integration/PX4_SETUP.md, "Frames"):
 
 Setpoint mapping (``setpoint``): a velocity setpoint v_cmd = v_meas + a_safe dt,
 speed-clipped to MAX_SPEED_MPS, plus a_safe as acceleration feedforward. The
-velocity term alone realises only 10-15 % of a_safe at PX4's default velocity
-gain; with the feedforward 77-98 % (scripts/px4/accel_tracking.py, PX4_SETUP.md).
+velocity term alone realises only 10-16 % of a_safe at PX4's default velocity
+gain; with the feedforward 66-96 % (scripts/px4/accel_tracking.py, PX4_SETUP.md).
 
 ``states`` and ``observed_states`` in the records are the same PX4 EKF
 estimate: SITL gives the bridge no separate ground truth.
@@ -236,8 +236,8 @@ def summarize(records: Sequence[dict[str, Any]], d_eff: float) -> dict[str, Any]
 def warm_up_filter(filter_config: FilterConfig, n: int = 2) -> float:
     """Run apply_filter on n drones closing on a point so numba compiles its kernels before flight; seconds taken.
 
-    Without this the first in-flight step takes about 14 s in WSL (PX4 meanwhile flies the
-    previous setpoint, which MAVSDK keeps re-sending).
+    Without this the first in-flight step takes about 9 s in WSL (8.95 s measured cold), and the
+    stale-state abort would stop the run.
     """
     t0 = time.perf_counter()
     dirs = [(math.cos(2 * math.pi * k / n), math.sin(2 * math.pi * k / n)) for k in range(n)]

@@ -12,12 +12,12 @@ recommendation is "adapt, do not adopt". Section 4 designs its broadcast message
 
 | Observation | Number | Source |
 |---|---|---|
-| Loop latency, telemetry snapshot to last setpoint sent | p95 7.2 ms (headon2), 20.7 ms (cross3); max 33.9 ms | `docs/results/px4/*/summary.json` |
-| Telemetry age when the step reads it | p95 16 to 19 ms, max 24.7 ms | same |
+| Loop latency, telemetry snapshot to last setpoint sent | p95 7.5 ms (headon2), 10.3 ms (cross3); max 37.9 ms | `docs/results/px4/*/summary.json` |
+| Telemetry age when the step reads it | p95 16 to 19 ms, max 20.4 ms (filter-on runs) | same |
 | Step period | 100 ms, no catch-up; a step over 500 ms late aborts | `px4_bridge.py` |
-| Realised acceleration vs commanded | median 84 to 87 %, p10 50 % | `PX4_SETUP.md` §7 |
+| Realised acceleration vs commanded | median 82 to 86 %, p10 47 to 51 % | `PX4_SETUP.md` §7 |
 | PX4 offboard-loss timeout `COM_OF_LOSS_T` | 1.0 s | manifests |
-| Failsafe after the last *fresh* setpoint | 1.35 s, because MAVSDK re-sent the stale setpoint until the process exited | `PX4_SETUP.md` §11 |
+| Failsafe after the last *fresh* setpoint | 1.27 s: MAVSDK re-sent the stale setpoint until the process exited (0.16 s), then PX4's 1.0 s timeout ran | `PX4_SETUP.md` §11 |
 | Failsafe action without RC | RTL at 31 m, filter out of the loop | same |
 
 The main finding: the vehicle cannot tell a fresh command from a re-sent one. MAVLink offboard setpoints carry no
@@ -48,7 +48,7 @@ Vehicle rules:
 
 1. Apply a command only if `seq` is greater than the last applied `seq` of the same session. Drop it otherwise (`out_of_order`).
 2. Apply it only inside its window. After `t_valid_until` with no newer command, switch to its backup (section 4), not to the last command and not to RTL.
-3. A re-sent command keeps its `seq` and window, so re-sending can never extend its life. This closes the 1.35 s vs 1.0 s gap seen in SITL.
+3. A re-sent command keeps its `seq` and window, so re-sending can never extend its life. This closes the 1.27 s vs 1.0 s gap seen in SITL.
 
 Proposal for the window: `t_valid_until = t_sent + 2 × step = 200 ms`. One lost command is then tolerated, and a second loss
 hands the drone to its backup. Clock offset between ground and vehicle must be estimated (for example MAVLink `TIMESYNC`) and
@@ -81,8 +81,9 @@ Who sends it:
 
 - **Centralised (today's architecture):** the server sends each drone its own `(candidate, clock_steps)` next to the setpoint, and the
   drone ACKs both (section 2). After link loss (command window expired, section 3) the drone flies that candidate from that clock, then
-  hovers, instead of RTL. Its neighbours, if still linked, are switched to their own backups by the server (section 2) because the
-  certificate holds only when *every* drone of a pair flies its backup.
+  hovers, instead of RTL. Its neighbours, if still linked, stay under the filter, whose rows now treat the lost drone as flying
+  its committed backup (section 2). Each neighbour's own backup stays a feasible choice for those rows, because "every drone flies its
+  backup" satisfies every row at once (CSA Theorem 1, P3-SA-02 §5).
 - **Decentralised:** each drone broadcasts its choice to its neighbours, in the fixed order of CSA Algorithm 1. Each drone selects after the
   drones before it in the order. The step then takes the ordering depth times (selection time + one message delay), which is not measured (P3-SA-02 §6.3).
 
@@ -94,7 +95,8 @@ Open issues before CBK can be a safety claim:
   full library takes 273 ms per step at N = 16. Building the message is useful only after the adapted CBK is accepted.
 - Delay and loss of the broadcast are not covered by CSA or TBC as used here. A stale `clock_steps` shifts the receiver's rollout by the delay.
   The receiver must advance it by `(now − t_state) / dt`, and the barrier needs a margin for the clock uncertainty.
-- Tracking. Backups assume the plant flies 3.5 m/s² exactly (`lag_s = 0`); PX4 realises a median 84 to 87 % in SITL, and its default vertical
+- Tracking. Backups assume the plant flies 3.5 m/s² exactly. CBK's horizon adds a 5-step lag allowance (P3-SA-02 §2.2), but
+  the bridge runs main's filter with `lag_s = 0`, which has no lag term. PX4 realises a median 82 to 86 % in SITL, and its default vertical
   speed limits (3 m/s up, 1.5 m/s down) cap vertical candidates. An onboard backup must be flown by the autopilot's own controller,
   which needs a PX4-side mode or companion process that can execute a candidate.
 - Contract: adding `BackupBroadcast` to `shared/contracts.py` is a contract version change (founder), and P3-SA-02 §9 question 7 asks whether to add it now.
@@ -104,12 +106,12 @@ Open issues before CBK can be a safety claim:
 | Segment | Measured in SITL | Budget proposal | Note |
 |---|---|---|---|
 | Telemetry age at read (vehicle estimate to bridge) | p95 16 to 19 ms | 30 ms | local UDP; a radio link adds its own latency |
-| Bridge loop (convert, policy, filter, send) | p95 7 to 21 ms, max 34 ms (2 to 3 drones) | 40 ms | the filter grows with N; at N = 64 `apply_filter` p95 is 2136 ms (DECISIONS.md), which does not fit |
+| Bridge loop (convert, policy, filter, send) | p95 7 to 10 ms, max 38 ms (2 to 3 drones) | 40 ms | the filter grows with N; at N = 64 `apply_filter` p95 is 2136 ms (DECISIONS.md), which does not fit |
 | Command uplink (bridge to vehicle) | not measured (local UDP) | 20 ms | |
 | Vehicle response to a new setpoint | 0.5 to 1 s to steady tracking (whole-phase vs last-1 s gap in `PX4_SETUP.md` §7) | modelled in `lag_s`, not in the step | today `lag_s = 0`, a mismatch |
-| Total, telemetry to setpoint applied | ≈ 25 to 45 ms in SITL | ≤ 100 ms | |
+| Total, telemetry to setpoint applied | ≈ 25 to 30 ms at p95 in SITL, under 60 ms in the worst step | ≤ 100 ms | |
 | Command validity | n/a | 200 ms (section 3) | |
-| Offboard-loss failsafe | 1.0 s after the last packet, 1.35 s after the last fresh command | replaced by the validity window + CBK | RTL today |
+| Offboard-loss failsafe | 1.0 s after the last packet, 1.27 s after the last fresh command | replaced by the validity window + CBK | RTL today |
 
 Rules:
 

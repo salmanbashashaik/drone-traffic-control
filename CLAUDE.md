@@ -9,7 +9,7 @@
 - **Built (on main):** shared contracts (`shared/contracts.py`, `INTERFACES.md`, contract v1.4); mock airspace API; point-mass simulator `DroneEnv` with T1 (ideal) and T2 (wind, noise, delay, command dropout) disturbances; reference controller; the safety filter (OSQP QP with the backup-set barrier, latch, escape stage, world-box limits, evasive fallback on solver error); `utm-run` CLI and three scenarios; MAPPO training (`utm-train`), two trained policy artifacts, 3D replay viewer; verification scripts and tiers in `scripts/verify/`; optional PyBullet quadrotor backend (Linux/WSL only).
 - **Simulation only (all of it):** every safety result is a simulation measurement under stated assumptions, not a proof or a flight claim. The trained MARL policy only proposes actions; the filter decides. Geofences are counted, not enforced. Zero observed failures in finite runs is not zero risk.
 - **Not built:** production drone link, telemetry or command protocol (a PX4 SITL demo bridge exists: `src/utm_services/integration/`, `docs/integration/PX4_SETUP.md`); onboard safety layer; disturbance margin in the filter (BL-06, BL-07); consistent per-drone backup (BL-03); flight plans or strategic deconfliction; persistence and results UI; ONNX edge benchmark (P4); a defined first customer and service (P5). The filter misses the 100 ms step budget around 64 drones.
-- Known limits accepted by the founder are listed in `TASKS.md` (backlog BL-01 to BL-12) and `docs/DECISIONS.md`. BL-02 to BL-08 must close before any real-drone test.
+- Known limits accepted by the founder are listed in `TASKS.md` (backlog BL-01 to BL-15) and `docs/DECISIONS.md`. BL-02 to BL-08 must close before any real-drone test.
 
 ## Architecture today and likely direction
 - **Today:** one Python process. `DroneEnv` (truth) -> observations -> policy proposes acceleration -> `apply_filter` (all true states, one joint QP) -> `SafeAction` -> `DroneEnv.step`, every 100 ms. The server is the only collision avoider, and the output is the drone's command.
@@ -61,7 +61,7 @@ python -m pip install -e ".[dev,plot,train]"            # extras: physics (Linux
 - **CBK (consistent backup):** research design with one backup per drone chosen jointly with neighbours (answers BL-03). Prototype result: adapt, do not adopt. Lives on `research/consistent-backup`.
 - **Adaptive margin:** research design that sets the margin every step from measured GNSS error, delay, wind and lag, plus an envelope monitor (P3-SA-03). Lives on `research/adaptive-margin`.
 - **Tiers T1-T5:** disturbance levels of the simulator. T1 ideal (default); T2 mild wind and noise (implemented); T3 degraded comms; T4 stress; T5 real-world proxies (T3-T5 not built). `docs/simulation/SIMULATOR_NOTE.md`.
-- **BL items:** backlog entries BL-01 to BL-12 in `TASKS.md`, issues to close before any real-drone test.
+- **BL items:** backlog entries BL-01 to BL-15 in `TASKS.md`, issues to close before any real-drone test.
 - **SafeAction:** the filter's return type. The name does not mean proven safe. **Fallback:** evasive action used only on a solver error, unverified.
 - **P-codes:** task ids in `TASKS.md` (P0 formulation ... P5 first real service).
 

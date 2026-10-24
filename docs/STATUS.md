@@ -27,7 +27,7 @@ Known weak points (all in the backlog below): no disturbance margin (under T2 th
 | Adaptive-margin research (P3-SA-03) | `research/adaptive-margin`, `../dtc-margin` | A run is active. Do not touch the worktree. | Margin computed each step from GNSS error, delay, wind and lag, plus an envelope monitor. In-model result: no separation loss in 282 recoverable in-limit runs. The monitor missed a doubled actuator lag. Open founder decisions in P3-SA-03 section 8. Nothing in `src/` changes yet. |
 | Consistent backup (CBK) research (P3-SA-02) | `research/consistent-backup`, `../dtc-research` | Finished, recommendation "adapt, do not adopt". | Fails 3 of 4 acceptance bar items (worse than main in 15 cases, 2 of 20 noisy vertical runs enter `d_eff`, full CBK takes 273 ms at N = 16). Next: fix the hysteresis rule, then rerun. Feeds BL-03. |
 | Scale | `perf/scale` (cloud session) | Active. | At 64 drones `osqp.solve` (45 %) and `_update_latches` (40 %) dominate (research scale run). The lane builds a standard benchmark, explains the 2136 ms p95, then tries per-cluster QPs, a braking-derived range gate, vectorised latch and matrix build, and OSQP reuse; each change must pass compare_results on the full tier. Target p95 < 100 ms at N = 64. |
-| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Demo done, PR open to main (not merged). | PX4 v1.17.0 SITL in Gazebo Harmonic: headon2 and cross3 flown live through the filter with 0 violation pair-steps (min separation 8.46 m and 7.22 m; loop p95 7 and 21 ms). Link loss: PX4 flies RTL 1 s after the bridge exits, 1.35 s after the last fresh setpoint, because MAVSDK re-sends it. `docs/integration/PX4_SETUP.md`, design notes in `PROTOCOL_NOTES.md`. The production link still needs an ADR. |
+| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Demo done, PR open to main (not merged). | PX4 v1.17.0 SITL in Gazebo Harmonic: headon2 and cross3 flown live through the filter with 0 violation pair-steps (min separation 8.53 m and 7.14 m; loop p95 7.5 and 10.3 ms; idle machine). Link loss: PX4 flies RTL 1.12 s after the bridge exits, 1.27 s after the last fresh step, because MAVSDK re-sends the last setpoint until exit. Findings filed as BL-13 to BL-15. `docs/integration/PX4_SETUP.md`, design notes in `PROTOCOL_NOTES.md`. The production link still needs an ADR. |
 
 ## Open backlog
 
@@ -46,6 +46,9 @@ Source of truth: `TASKS.md`. BL-02 to BL-08 must close before any real-drone tes
 | BL-10 | TBD | Latch colouring order in a bent sandwich | Open; closes with BL-03 |
 | BL-11 | TBD | Continuous escape-axis normalisation | Open |
 | BL-12 | TBD | Small findings (text, ignored seed count, coincident positions) | Open |
+| BL-13 | TBD | PX4 realises only part of a_safe (measured lag, SITL) | Open; with BL-05 and adaptive-margin research |
+| BL-14 | TBD | Stale setpoint re-sent after link loss | Open; design in `PROTOCOL_NOTES.md` |
+| BL-15 | TBD | Uncoordinated RTL after link loss | Open; design in `PROTOCOL_NOTES.md` §4 |
 
 BL-01 is done (PR #12). Items marked TBD have no owner: assign them when the lane picks them up.
 

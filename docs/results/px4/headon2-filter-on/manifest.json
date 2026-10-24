@@ -89,13 +89,14 @@
   },
   "origin_check_errors_m": [
     0.0,
-    0.134
+    0.155
   ],
   "setpoint_mapping": "velocity v_meas + a_safe*dt (|v| <= 15 m/s) + a_safe acceleration feedforward",
   "loop_latency_boundary": "telemetry snapshot to last setpoint sent, time.perf_counter",
   "d_safe_m": 5.0,
-  "filter_warm_up_s": 0.29,
-  "started_utc": "2026-10-24T06:37:13+00:00",
+  "filter_warm_up_s": 8.95,
+  "started_utc": "2026-10-24T09:14:27+00:00",
   "end_reason": "completed",
-  "encounter_s": 10.5
+  "encounter_s": 10.5,
+  "last_step_unix": 1792833298.555
 }
