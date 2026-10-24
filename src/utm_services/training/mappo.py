@@ -88,6 +88,8 @@ class TrainConfig:
     bc_lr: float = 1e-3
     # shield in the training loop (the unshielded policy is the default)
     shield: bool = False
+    # disturbance profile flown in training and validation (simulation.env.PROFILES); ideal = T1
+    profile: str = "ideal"
     # validation / model selection (validation seeds only)
     eval_every: int = 10
     val_episodes: int = 60
@@ -187,6 +189,7 @@ def _train_jobs(cfg: TrainConfig, it: int, weights: dict, log_std: np.ndarray) -
             "scenario": sample_scenario(seed, n, conflict, cfg.episode_limit_steps).model_dump(mode="json"),
             "max_agents": cfg.max_agents, "rng_entropy": [cfg.run_seed, it, ep, 1], "mode": "policy",
             "weights": weights, "log_std": log_std, "shield": cfg.shield, "keep_arrays": True,
+            "profile": cfg.profile,
         })
     return jobs
 
@@ -209,7 +212,8 @@ def validate(cfg: TrainConfig, runner: _Runner, weights: dict) -> dict[str, floa
     """Greedy policy on the fixed validation set (validation seeds, never trained on)."""
     scen = eval_scenarios(VAL_SEED_BASE, cfg.val_episodes, cfg.max_agents, cfg.val_conflict, cfg.episode_limit_steps)
     jobs = [{"scenario": s.model_dump(mode="json"), "max_agents": cfg.max_agents, "rng_entropy": [0],
-             "mode": "greedy", "weights": weights, "shield": cfg.shield, "keep_arrays": False} for s in scen]
+             "mode": "greedy", "weights": weights, "shield": cfg.shield, "keep_arrays": False,
+             "profile": cfg.profile} for s in scen]
     stats = _episode_stats([r["summary"] for r in runner.map(jobs)])
     # Model-selection heuristic only; it is not a safety metric.
     stats["val_score"] = stats["completion_pct"] - min(100.0, stats["violation_pair_steps_per_ep"])
@@ -355,7 +359,8 @@ def _metadata(cfg: TrainConfig, weights: dict, it: int, val: dict, total_steps: 
         "env_version": ENV_VERSION,
         "reward_version": REWARD_VERSION,
         "scenario_family": FAMILY_VERSION,
-        "disturbance_tier_trained": "T1 (ideal; no wind, noise, delay or dropout)",
+        "disturbance_tier_trained": ("T1 (ideal; no wind, noise, delay or dropout)" if cfg.profile == "ideal" else
+                                    f"T2 profile '{cfg.profile}' (placeholder parameters, simulation.env.PROFILES)"),
         "shield_in_training_loop": cfg.shield,
         "bc_warmstart_from_reference": cfg.bc_warmstart,
         "hyperparameters": asdict(cfg),

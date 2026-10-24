@@ -24,7 +24,7 @@ from shared.contracts import MARLAction, SafeAction, ScenarioConfig
 from utm_services.policy.learned import ACTION_SCALE_MPS2, OBS_DIM, actor_mean, normalize_obs
 from utm_services.policy.reference import compute_reference_action
 from utm_services.safety.filter import FilterConfig, apply_filter
-from utm_services.simulation.env import DroneEnv
+from utm_services.simulation.env import PROFILES, DroneEnv
 
 
 def _safe_action(agent_id: str, accel: np.ndarray, ts: int) -> SafeAction:
@@ -48,6 +48,7 @@ def collect_episode(job: dict[str, Any]) -> dict[str, Any]:
       log_std       (3,) array, for policy
       bc_noise      noise std in network units, for reference
       shield        bool: run the HOCBF filter on the proposals
+      profile       disturbance profile name from simulation.env.PROFILES (default "ideal" = T1)
       filter_config dict | None
       keep_arrays   bool: False skips storing arrays (validation)
     """
@@ -62,7 +63,7 @@ def collect_episode(job: dict[str, Any]) -> dict[str, Any]:
     filter_config = FilterConfig(**job["filter_config"]) if job.get("filter_config") else FilterConfig()
     latch: dict = {}
 
-    env = DroneEnv()
+    env = DroneEnv(disturbances=PROFILES[job.get("profile", "ideal")])
     observations, _ = env.reset(config)
 
     obs_t, alive_t, act_t, rew_t, label_t = [], [], [], [], []
