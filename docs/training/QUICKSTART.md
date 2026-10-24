@@ -2,7 +2,7 @@
 
 This gets a new person from a fresh clone to a 3D, rotatable replay of trained drones flying over scenery buildings (which the controller cannot see), and shows how to evaluate and retrain the policy. Everything here is simulation only. The learned policy is a nominal action proposer, not a safety controller; read [`MARL_TRAINING.md`](./MARL_TRAINING.md) for what the results do and do not show.
 
-Sections 2, 3, 5 and 6 were run from a fresh clone of the pushed branch in a brand-new virtual environment on macOS (Apple silicon, Python 3.11). Section 4 (PyBullet) was run in my working environment only, because compiling PyBullet takes several minutes and I did not repeat it in a clean one. Linux and Windows steps that I could not run myself are marked **untested**.
+Sections 2 to 6 were run from a fresh clone of the pushed branch (commit `c7372ba`) in a brand-new virtual environment on macOS (Apple silicon, Python 3.11). The PyBullet build in section 4 took several minutes. Linux, Windows, Intel Macs and Python versions other than 3.11 were not tested; steps for them are marked **untested**.
 
 ## 1. Requirements
 
