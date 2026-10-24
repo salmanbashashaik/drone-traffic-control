@@ -67,6 +67,21 @@ The command also prints a result line (drones arrived, minimum separation, viola
 - Right panel: each drone's speed and altitude. A halo is **amber** while the safety filter is changing that drone's command and **red** when two drones are closer than 5 m.
 - Drones are drawn about 20 times their real size and level (the simulator has no tilt). Buildings are scenery: the policy and the filter do not see them.
 
+### The head-on test: two drones swap places
+
+`swap:` builds a deliberate collision course: **d0 starts where d1 wants to go and d1 starts where d0 wants to go**, 25 m apart, at the same altitude and at rest, plus 4 other drones with random routes (6 in total).
+
+```bash
+utm-replay swap:24900003:6 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
+    --variant unshielded_marl --html --out runs/viz/swap-unshielded
+utm-replay swap:24900003:6 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
+    --variant shielded_marl --html --out runs/viz/swap-shielded
+```
+
+Open both `replay3d.html` files. Without the filter, d0 and d1 only drift 1.2 m and 0.7 m off their straight lines and pass through each other (closest 1.70 m, 7 violation pair-steps in this episode). With the filter, it acts on exactly those two drones for about 1.8 s (0.9 to 2.7 s), they sidestep 5.2 m and 2.4 m, and the closest approach is 6.68 m; the other four drones are untouched. In the viewer, click **Follow d0** and drag the time slider to about 2.3 s: both drones have an amber halo and "filter active" in the right panel. The command also prints an `avoidance:` block (how far each drone strayed from its straight route and when the filter acted).
+
+Forms: `swap:<seed>` (repeatable), `swap:random` (new random scenario every run, seed printed), `swap:<seed|random>:<n>:<gap>` (for example `swap:random:6:20` for 20 m, any gap you like; 20 to 30 m is the range tested). Seed `24900003` was picked from 20 probe seeds as a clear example, so it is not a typical episode.
+
 ### Compare with and without the safety filter
 
 Run the same scenario with `--variant unshielded_marl` (learned policy alone) and `--variant shielded_marl` (policy plus the HOCBF safety filter), then open both pages:
@@ -82,6 +97,7 @@ In that scenario the unshielded run ends with 6 violation pair-steps (closest 3.
 
 The first argument of `utm-replay` is one of:
 
+- `swap:<seed|random>[:<n>[:<gap>]]`: the mirrored head-on above (default 6 drones, 25 m).
 - `random:<n>`: `n` drones with new random starts and destinations every run (add `:0.3` for fewer forced head-ons, default conflict is 0.8).
 - `heldout:<seed>:<n>`: a generated scenario with `n` drones (1 or more; the policy was trained on 2 to 4, so 6 or more is outside its training), for example `heldout:12000008:4` or `heldout:18000044:6`. The same seed always gives the same scenario.
 - `dense16:<seed>`: 16 drones with random starts and goals.
@@ -121,7 +137,7 @@ utm-eval-policy artifacts/policies/marl-mappo-s42-it300-08e745b853 \
     --suite six --episodes 50 --out runs/eval/six
 ```
 
-It flies four variants on identical scenarios: `reference` (hand-written controller), `unshielded_marl`, `shielded_marl`, and `shielded_reference` (reference plus filter, as a baseline). It writes `summary.md` (the table), `episodes.jsonl` (one row per episode) and `manifest.json`. Suites: `heldout` (2 to 4 drones), `six` (6 drones), `dense16` (16 drones), `shipped` (the three scenarios in `scenarios/`). Time: a few seconds per episode, so 50 episodes of `six` takes roughly 10 to 15 minutes; use `--episodes 3` to try it. Other options: `--profile`, `--seed-base`.
+It flies four variants on identical scenarios: `reference` (hand-written controller), `unshielded_marl`, `shielded_marl`, and `shielded_reference` (reference plus filter, as a baseline). It writes `summary.md` (the table), `episodes.jsonl` (one row per episode) and `manifest.json`. Suites: `heldout` (2 to 4 drones), `six` (6 drones), `swap` (6 drones, two of them swapping places 25 m apart; `--swap-gap` changes the distance), `dense16` (16 drones), `shipped` (the three scenarios in `scenarios/`). Time: a few seconds per episode, so 50 episodes of `six` takes roughly 10 to 15 minutes; use `--episodes 3` to try it. Other options: `--profile`, `--seed-base`.
 
 To measure how close the drones came to the buildings over many scenarios: `python -m utm_services.training.city_eval <artifact> --episodes 50 --out runs/eval/city`.
 

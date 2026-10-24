@@ -16,6 +16,7 @@ Suites
 heldout   procedural family, sizes 2..4, conflict 0.8, seeds from --seed-base (default: the
           development TEST seeds, which are not clean held-out for the final design)
 shipped   scenarios/*.json (head-on-40, crossing-90, sandwich-3)
+swap      6 drones; d0 and d1 swap places --swap-gap metres apart (default 25), the other 4 fly random routes; seeds 24,000,000+
 six       6 drones per episode, conflict 0.8, seeds 18,000,000+ (the policy was trained on 2-4)
 dense16   16 drones, random starts and goals (same generator as tests/test_random_traffic.py);
           far outside the trained team size
@@ -37,9 +38,14 @@ from utm_services.policy.reference import ReferencePolicy
 from utm_services.safety.filter import FilterConfig
 from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import VARIANTS, run_episode
-from utm_services.training.scenarios import TEST_SEED_BASE, eval_scenarios, fixed_size_scenarios
+from utm_services.training.scenarios import (
+    TEST_SEED_BASE,
+    eval_scenarios,
+    fixed_size_scenarios,
+    swap_scenarios,
+)
 
-SUITES = ("heldout", "shipped", "dense16", "six")
+SUITES = ("heldout", "shipped", "dense16", "six", "swap")
 # Baseline for context: the reference controller behind the same filter. Not a learned policy.
 SHIELDED_REFERENCE = "shielded_reference"
 ALL_VARIANTS = (*VARIANTS, SHIELDED_REFERENCE)
@@ -59,11 +65,13 @@ def random_traffic(seed: int, n: int = 16) -> ScenarioConfig:
     return ScenarioConfig(scenario_id=f"random-{n}", seed=seed, episode_limit_steps=1000, drones=drones)
 
 
-def suite_scenarios(name: str, count: int, seed_base: int | None = None) -> list[ScenarioConfig]:
+def suite_scenarios(name: str, count: int, seed_base: int | None = None, swap_gap: float = 25.0) -> list[ScenarioConfig]:
     if name == "heldout":
         return eval_scenarios(TEST_SEED_BASE if seed_base is None else seed_base, count, max_agents=4, conflict=0.8, episode_limit_steps=800)
     if name == "shipped":
         return [ScenarioConfig.model_validate_json(p.read_text()) for p in sorted((_REPO / "scenarios").glob("*.json"))]
+    if name == "swap":
+        return swap_scenarios(24_000_000 if seed_base is None else seed_base, count, 6, swap_gap)
     if name == "six":
         return fixed_size_scenarios(18_000_000 if seed_base is None else seed_base, count, 6)
     if name == "dense16":
@@ -140,6 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--episodes", type=int, default=30, help="scenarios per procedural suite (heldout, dense16)")
     p.add_argument("--seed-base", type=int, default=None,
                    help="first seed of the procedural suites (heldout default 9000000, dense16 default 0)")
+    p.add_argument("--swap-gap", type=float, default=25.0, help="distance (m) between the two swapping drones in the swap suite")
     p.add_argument("--profile", choices=PROFILES, default="ideal")
     p.add_argument("--out", type=Path, required=True)
     a = p.parse_args(argv)
@@ -148,14 +157,14 @@ def main(argv: list[str] | None = None) -> int:
     suites = a.suite or ["heldout", "shipped"]
     rows: list[dict[str, Any]] = []
     for suite in suites:
-        rows += evaluate(policy, suite_scenarios(suite, a.episodes, a.seed_base), suite, a.profile)
+        rows += evaluate(policy, suite_scenarios(suite, a.episodes, a.seed_base, a.swap_gap), suite, a.profile)
         print(f"{suite}: {len(rows)} episode rows", file=sys.stderr, flush=True)
     a.out.mkdir(parents=True, exist_ok=True)
     (a.out / "episodes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     agg = aggregate(rows)
     table = markdown_table(agg)
     manifest = {"artifact_id": policy.artifact_id, "weights_sha256": policy.metadata["weights_sha256"],
-                "suites": suites, "episodes": a.episodes, "seed_base": a.seed_base, "profile": a.profile,
+                "suites": suites, "episodes": a.episodes, "swap_gap_m": a.swap_gap, "seed_base": a.seed_base, "profile": a.profile,
                 "filter_config": vars(FilterConfig()), "git": policy.metadata.get("git")}
     (a.out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     (a.out / "summary.md").write_text(

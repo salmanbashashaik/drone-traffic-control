@@ -10,7 +10,8 @@ The simulation is the project's own ``DroneEnv`` (or its PyBullet backend) throu
 Buildings come from ``city.py``: scenery with a clear nominal route, NOT something the policy or
 the filter knows about. Drone glyphs are drawn larger than real size so they can be seen.
 
-Scenario spec: ``random:<n>`` (n drones, new random starts and destinations every run, seed
+Scenario spec: ``swap:<seed|random>[:<n>[:<gap m>]]`` (d0 and d1 swap places a few tens of metres apart, the rest
+fly random routes: a deliberate head-on), ``random:<n>`` (n drones, new random starts and destinations every run, seed
 printed), ``heldout:<seed>:<n>`` (the same generator with a fixed seed), ``dense16:<seed>``, or a
 ScenarioConfig JSON path.
 """
@@ -32,13 +33,22 @@ from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import VARIANTS, run_episode
 from utm_services.training.city import Building, clearance_report, generate_city
 from utm_services.training.evaluate import random_traffic
-from utm_services.training.scenarios import sample_scenario
+from utm_services.training.scenarios import sample_scenario, swap_scenario
 from utm_services.training.viewer3d import build_payload, write_viewer
 
 PALETTE = ["#1a73e8", "#f57c00", "#2e9e5b", "#d81b60", "#7e57c2", "#00acc1", "#c0a000", "#6d6d6d"]
 
 
 def load_scenario(spec: str) -> ScenarioConfig:
+    if spec.startswith("swap:"):
+        # swap:<seed|random>[:<n drones>[:<gap m>]] -> d0 and d1 swap places `gap` metres apart; the rest fly random routes
+        parts = spec.split(":")
+        seed = int.from_bytes(os.urandom(4), "little") % 1_000_000 + 25_000_000 if parts[1] == "random" else int(parts[1])
+        n = int(parts[2]) if len(parts) > 2 else 6
+        gap = float(parts[3]) if len(parts) > 3 else 25.0
+        print(f"swap scenario: {n} drones, d0 and d1 swap places {gap:g} m apart, seed {seed} "
+              f"(reproduce with swap:{seed}:{n}:{gap:g})", flush=True)
+        return swap_scenario(seed, n, gap)
     if spec.startswith("random:"):
         # random:<n>[:<conflict 0-1>] -> fresh random starts and goals each call; the seed is printed to reproduce it.
         parts = spec.split(":")
@@ -189,9 +199,30 @@ def animate(records, ids, goals, buildings, path: Path, title: str, stride: int 
     plt.close(fig)
 
 
+def avoidance_summary(records, ids, config) -> str:
+    """How each drone deviated from its straight start-goal line, and when the filter acted (from the records)."""
+    pos = _positions(records, ids)
+    shield = np.zeros((len(records), len(ids)), dtype=bool)
+    for t, rec in enumerate(records):
+        for aid, info in rec["infos"].items():
+            shield[t, ids.index(aid)] = bool(info.get("shield_active", False))
+    by_id = {d.agent_id: d for d in config.drones}
+    lines = []
+    for k, aid in enumerate(ids):
+        a, b = np.array(by_id[aid].initial_position_m), np.array(by_id[aid].goal_m)
+        ab = b - a
+        pts = pos[:, k][np.isfinite(pos[:, k, 0])]
+        frac = np.clip((pts - a) @ ab / (ab @ ab), 0.0, 1.0)
+        dev = np.linalg.norm(pts - (a + frac[:, None] * ab), axis=1)
+        acts = np.flatnonzero(shield[:, k])
+        when = f"filter acted on {len(acts)} steps (t = {acts[0] / 10:.1f}-{acts[-1] / 10:.1f} s)" if len(acts) else "filter never acted"
+        lines.append(f"    {aid}: max {dev.max():.1f} m off its straight route; {when}")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="utm-replay", description=__doc__.splitlines()[0])
-    p.add_argument("scenario", help="random:<n> | heldout:<seed>:<n> | dense16:<seed> | ScenarioConfig JSON path")
+    p.add_argument("scenario", help="swap:<seed|random>[:n[:gap]] | random:<n> | heldout:<seed>:<n> | dense16:<seed> | ScenarioConfig JSON path")
     p.add_argument("--artifact", type=Path, help="policy artifact directory (omit for the reference controller)")
     p.add_argument("--variant", choices=VARIANTS, default="unshielded_marl")
     p.add_argument("--profile", choices=PROFILES, default="ideal")
@@ -238,6 +269,7 @@ def main(argv: list[str] | None = None) -> int:
         write_viewer(a.out / "replay3d.html",
                      build_payload(result.records, ids, goals, buildings, result.summary, title, note))
     clear = clearance_report(result.records, buildings)
+    avoid = avoidance_summary(result.records, ids, config)
     s = result.summary
     extra = ""
     if holder:
@@ -252,7 +284,7 @@ def main(argv: list[str] | None = None) -> int:
           f"interventions {s['shield_interventions']}  fallbacks {s['fallback_events']}\n"
           f"  buildings {clear['n_buildings']}  min clearance "
           f"{'n/a' if clear['min_clearance_m'] is None else format(clear['min_clearance_m'], '.1f') + ' m'}  "
-          f"track samples inside a building {clear['samples_inside']}{extra}\n  -> {a.out}")
+          f"track samples inside a building {clear['samples_inside']}{extra}\n  avoidance:\n{avoid}\n  -> {a.out}")
     if holder:
         if a.gui:
             import time
