@@ -84,6 +84,7 @@
     "neighbour_gate": "if index 15 (distance) > 250 m: indices 9-14 := 0 and index 15 := -1 (no-neighbour values) before scaling",
     "version": "obs-norm-v3"
   },
+  "obs_normalization_fingerprint": "103c0c22f9a037a29df243f14b8b65b8876139e564f3a18df0cfee9fa429b5eb",
   "reward_version": "P1-SA-01-reward-v1",
   "role": "nominal action proposer; not a safety controller; output is not labelled safe",
   "scenario_family": "scenario-family-v2",
