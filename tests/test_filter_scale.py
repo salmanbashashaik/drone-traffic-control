@@ -247,7 +247,7 @@ def test_rows_beyond_the_range_gate_cannot_bind(config) -> None:
         states, actions, pairs = _maps(np.array([p0, p1]), np.array([v0, v1]), rng)
         escape = {pairs[0]: (float(rng.choice([-1, 0, 1])), float(rng.choice([-1, 0, 1])))}
         for signs in (None, escape):
-            _, q, A, l, u_, _ = F.build_hocbf_qp_matrices(states, actions, pairs, config, signs, None, {}, True)
+            _, _, A, l, _, _ = F.build_hocbf_qp_matrices(states, actions, pairs, config, signs, None, {}, True)
             coef = np.concatenate([A[0, :3], A[0, 3:6]])
             lowest = np.sum(np.minimum(coef * -u, coef * u))
             assert lowest >= l[0]

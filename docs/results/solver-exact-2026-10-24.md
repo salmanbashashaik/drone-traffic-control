@@ -1,6 +1,6 @@
 # KKT-exact filter QP and the new per-seed reference, 2026-10-24
 
-Founder decision 2026-10-24: option 1 of `docs/architecture/PROPOSAL-scale-qp.md`. Branch perf/solver-exact, rebased on main 75b41c0. **Status: candidate reference, for the founder's review.** Per-cluster QPs and the range gate (step 3) wait until this reference is accepted.
+Founder decision 2026-10-24: option 1 of `docs/architecture/PROPOSAL-scale-qp.md`. Branch perf/solver-exact, rebased on main 75b41c0. **Status: accepted by the founder as the per-seed reference (2026-10-24).** Step 3 (per-cluster QPs, range gate) followed on the same branch: `scale-step3-2026-10-24.md`.
 
 Machine: Intel Xeon @ 2.80 GHz (KVM), 4 logical cores, Linux 6.18, Python 3.12.3, numpy 1.26.4, scipy 1.17.1, osqp 0.6.7.post3, daqp 0.10.3, numba 0.68.0.
 
@@ -163,7 +163,7 @@ The joint QP is unchanged in size, so at N ≥ 32 the tight OSQP is slow, slowes
 | 64 | dense, groups of 8 | 196 / 338 | 422 / 1599 | 476 |
 | 64 | city | 154 / 197 | 2257 / 2584 | 2236 |
 
-**Do not run this branch at N ≥ 32 before step 3.** Step 3's per-cluster QPs bring every solve under 256 variables (DAQP, about 1 ms at a group of 8). If step 3 were not to follow, the large-QP path would need another solver: Clarabel and PIQP solve the N = 64 joint QP in 43-70 ms but fail the certificate on some QPs. N = 128 was not timed on this branch.
+**Resolved by step 3** (`scale-step3-2026-10-24.md`: N = 64 city p95 49 ms, dense 78 ms). The text below describes step 2 alone. **Do not run step 2 alone at N ≥ 32.** Step 3's per-cluster QPs bring every solve under 256 variables (DAQP, about 1 ms at a group of 8). If step 3 were not to follow, the large-QP path would need another solver: Clarabel and PIQP solve the N = 64 joint QP in 43-70 ms but fail the certificate on some QPs. N = 128 was not timed on this branch.
 
 ## Known limits
 

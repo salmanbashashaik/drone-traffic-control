@@ -1,6 +1,6 @@
 # Proposal: a solver-independent QP so the filter can scale (needs the founder)
 
-Status: **option 1 approved by the founder (2026-10-24)**; being built on perf/solver-exact, stopping for review after the new reference. Originally proposed, not built: Written by the scale lane on perf/scale (2026-10-24) because the N = 64 step-time target needs a change that the exactness rule does not allow. Measurements: `docs/results/scale-2026-10-24.md`.
+Status: **option 1 approved by the founder (2026-10-24) and built on perf/solver-exact**: KKT-exact QP and new reference (`docs/results/solver-exact-2026-10-24.md`), then per-cluster QPs and the range gate (`docs/results/scale-step3-2026-10-24.md`; N = 64 p95 49-78 ms). The proposal as first written: Written by the scale lane on perf/scale (2026-10-24) because the N = 64 step-time target needs a change that the exactness rule does not allow. Measurements: `docs/results/scale-2026-10-24.md`.
 
 ## The problem
 
@@ -30,7 +30,7 @@ A backup row coef . (a_i - a_j) + s >= rhs, with |coef| = 1, rhs = m . a_first -
 
     d0 >= d_eff + max over k of [2 v_max (k + 1) dt + 4 sqrt(3) u (k + 0.5) dt / gamma] = 595.6 m
 
-at the defaults (u = 3.5 m/s², v_max = 15 m/s, dt = 0.1 s, gamma = 1, d_eff = 5.5 m). Beyond that distance a pair needs neither its rollout nor its row. Measured on perf/scale with `range_gate_m = 596`: actions bit-identical to main at N = 64 and N = 128 city (the dropped rows happened not to move OSQP there), N = 128 city p95 987 → 728 ms, and no change at N = 64 dense (no pair is 596 m apart). It is not part of perf/scale for three reasons. It does nothing at the target. It changes `n_pairs_in_qp`, `backup_rollout_steps` and the episode `p99_backup_rollout_steps`. And because it removes rows from OSQP's problem, the fuzz tier (all pairs within about 100 m) cannot check it. Under option 1 it becomes exact by construction.
+at the defaults (u = 3.5 m/s², v_max = 15 m/s, dt = 0.1 s, gamma = 1, d_eff = 5.5 m). As built (`_exact_range_gate`), the gate also covers escape rows (coef 0.5 t*² m with t* <= 3 s, rhs <= d_eff - d0 / sqrt(3) + 2 v_max t*: 260 m) and braking rows with their tie-break (rhs <= -gamma B(s) + (gamma + 2u / sqrt(4us + c²)) 2 v_max: 167 m), and takes the largest of the three. Beyond that distance a pair needs neither its rollout nor its row. Measured on perf/scale with `range_gate_m = 596`: actions bit-identical to main at N = 64 and N = 128 city (the dropped rows happened not to move OSQP there), N = 128 city p95 987 → 728 ms, and no change at N = 64 dense (no pair is 596 m apart). It is not part of perf/scale for three reasons. It does nothing at the target. It changes `n_pairs_in_qp`, `backup_rollout_steps` and the episode `p99_backup_rollout_steps`. And because it removes rows from OSQP's problem, the fuzz tier (all pairs within about 100 m) cannot check it. Under option 1 it becomes exact by construction.
 
 ## Decision needed
 
