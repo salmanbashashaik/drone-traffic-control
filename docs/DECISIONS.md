@@ -159,9 +159,12 @@ Founder decision 2026-10-24 (before merging PR #26): per-cluster solve deadlines
   - Full tier bit-identical to the step-3 tier: no deadline hit in fuzz or in any verify script.
   - N = 64 (groups of 2-16, city) has no deadline hit; p95 62 ms dense (groups of 8) and city.
   - The single 64-drone cluster's worst step is 134 ms instead of 55 s.
-- **Safety cost, founder decision needed:**
+- **Safety cost, accepted by the founder 2026-10-24 ("yes for now"):**
   - Groups of 32: min sep 5.591 m → 3.232 m, 21 steps inside d_eff (12 deadline steps).
   - One cluster of 64: 3.738 m → 1.264 m, 29 steps inside d_eff (19 deadline steps).
   - Both are against step 3 without a deadline, and both are still better than main (1.753 m and 0.909 m). The cause is that the pairwise backup (BL-02, BL-03) is weak in large clusters.
   - N = 128 misses on some steps (13 dense, 5 city), with min sep 5.612 m and 8.019 m.
   - Options, not built: warm-start large-cluster OSQP from the previous step, a faster certified path for large clusters, a consistent per-drone backup (BL-03).
+- **Founder decision 2026-10-24, logged by Claude (CTO session):**
+  - The separation loss above in clusters of 32 and 64 drones is accepted for now, in exchange for a bounded step time. Reason: an unbounded step (55 s measured) cannot be flown, so step 3 without a deadline is not a real alternative. Revisit when strategic deconfliction (keeping clusters small) or a consistent per-drone backup (BL-03) lands.
+  - Contract v1.5 (`deadline_fallback`, `deadline_fallback_agents`, `deadline_fallbacks`) is approved. `ScenarioConfig.disturbances` moves to v1.6.
