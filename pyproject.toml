@@ -63,6 +63,9 @@ packages = [
     "utm_services.training",
 ]
 
+[tool.setuptools.package-data]
+"utm_services.training" = ["viewer/*"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
