@@ -402,6 +402,59 @@ def _new_latch(n: np.ndarray, dist: float, escape: tuple[float, float] = (0.0, 0
     return _PairLatch(axis=np.cross(n, lateral), signs=signs, up=up)
 
 
+def _pair_states(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Positions and velocities of the first and second drone of each pair, (M, 3) each.
+
+    The same float64 values ``_relative`` and ``_backup_constraints`` read from
+    the states, gathered with one array per agent instead of one per pair.
+    """
+    index = {aid: k for k, aid in enumerate(state_map)}
+    pos = np.array([s.position_m for s in state_map.values()], dtype=np.float64).reshape(-1, 3)
+    vel = np.array([s.velocity_mps for s in state_map.values()], dtype=np.float64).reshape(-1, 3)
+    i = np.array([index[p[0]] for p in pairs], dtype=np.intp)
+    j = np.array([index[p[1]] for p in pairs], dtype=np.intp)
+    return pos[i], pos[j], vel[i], vel[j]
+
+
+# Relative distance from a threshold within which the vectorised screen defers
+# to the scalar code. The two differ by a few ulps (summation order), far below.
+_SCREEN_RTOL = 1e-9
+
+
+def _conflict_screen(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]], limit: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per pair (M,): whether min(|r|, |r + v t*|) < limit, and whether r . v >= 0.
+
+    The two tests of ``_update_latches``, vectorised. numpy's row sums can
+    differ from ``_relative``'s 1-D dot products by a few ulps, so a pair whose
+    value lies within _SCREEN_RTOL of a threshold is decided by the scalar code,
+    which keeps every decision identical to the per-pair loop.
+    """
+    if not pairs:
+        return np.zeros(0, dtype=bool), np.zeros(0, dtype=bool)
+    p_i, p_j, v_i, v_j = _pair_states(state_map, pairs)
+    r, v = p_i - p_j, v_i - v_j
+    rv = np.einsum("ij,ij->i", r, v)
+    vv = np.einsum("ij,ij->i", v, v)
+    t_star = np.clip(-rv / np.maximum(vv, 1e-9), 0.1, _ESCAPE_HORIZON_S)
+    dist = np.sqrt(np.einsum("ij,ij->i", r, r))
+    miss_v = r + v * t_star[:, None]
+    miss = np.sqrt(np.einsum("ij,ij->i", miss_v, miss_v))
+    speed = np.sqrt(vv)
+    scale = _SCREEN_RTOL * (1.0 + dist + speed * _ESCAPE_HORIZON_S)
+    in_conflict = np.minimum(dist, miss) < limit
+    separating = rv >= 0.0
+    near = (np.abs(dist - limit) <= scale) | (np.abs(miss - limit) <= scale) | (np.abs(rv) <= scale * (1.0 + speed))
+    for k in np.flatnonzero(near):
+        r_k, v_k, _, t_k = _relative(state_map[pairs[k][0]], state_map[pairs[k][1]])
+        in_conflict[k] = min(float(np.linalg.norm(r_k)), float(np.linalg.norm(r_k + v_k * t_k))) < limit
+        separating[k] = float(r_k @ v_k) >= 0.0
+    return in_conflict, separating
+
+
 def _update_latches(
     state_map: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig,
     latch: dict[tuple[str, str], _PairLatch],
@@ -429,12 +482,12 @@ def _update_latches(
     """
     limit = SAFE_SEPARATION_M + config.margin_m + _PLUMB_OFFSET_M
     entering = []
-    for pair in pairs:
-        r, v, n, t_star = _relative(state_map[pair[0]], state_map[pair[1]])
-        if min(float(np.linalg.norm(r)), float(np.linalg.norm(r + v * t_star))) < limit:
+    in_conflict, separating = _conflict_screen(state_map, pairs, limit)
+    for pair, inside, apart in zip(pairs, in_conflict, separating, strict=True):
+        if inside:
             if pair not in latch:
                 entering.append(pair)
-        elif float(r @ v) >= 0.0:
+        elif apart:
             latch.pop(pair, None)
     for pair in set(latch) - set(pairs):
         del latch[pair]
