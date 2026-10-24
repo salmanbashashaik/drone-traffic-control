@@ -58,6 +58,7 @@ def _git() -> dict:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout.strip()
     # The filter file the run actually imported, by content (solver variants, founder 2026-10-24).
     return {"git": git("rev-parse", "--short=12", "HEAD"), "filter_sha": git("hash-object", sim.F.__file__)[:12],
+            "step_deadline": sim.F.FilterConfig().__dict__.get("step_deadline"),
             # The run's own output files are not code changes.
             "dirty": bool(git("status", "--porcelain", "--", "research/adaptive_margin",
                               ":(exclude)research/adaptive_margin/results"))}
@@ -265,8 +266,18 @@ if __name__ == "__main__":
     ap.add_argument("--lost", choices=M.LOST_TERMS, default=M.LOST_TERM)
     ap.add_argument("--freeze-margin", action="store_true", help="diagnostic: hold the margin from clearance on")
     ap.add_argument("--select", nargs="*", default=[], help="key=a|b terms, e.g. cond=sbas_gagan/calm family=ring6")
+    ap.add_argument("--no-step-deadline", action="store_true",
+                    help="filters with a wall-clock step deadline (PR #26): run without it, so rows do not depend on load")
     a = ap.parse_args()
     M.LOST_TERM, sim.FREEZE_MARGIN = a.lost, a.freeze_margin
+    if a.no_step_deadline:
+        assert "step_deadline" in sim.F.FilterConfig.__dataclass_fields__, "this filter has no step deadline"
+        _init = sim.F.FilterConfig.__init__
+
+        def _no_deadline(self, *args, **kw):
+            kw.setdefault("step_deadline", False)
+            _init(self, *args, **kw)
+        sim.F.FilterConfig.__init__ = _no_deadline
     if a.rerecord:
         rerecord(a.rerecord)
     elif a.table:
