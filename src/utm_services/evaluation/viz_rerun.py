@@ -48,7 +48,8 @@ def log_to_rerun(path: Path, save: Path | None = None) -> None:
         rr.save(save, default_blueprint=blueprint)
     rr.log("world", rr.ViewCoordinates.RIGHT_HAND_Z_UP, static=True)
     short = {k: f"{v[:16]}…" if k.endswith("sha256") and v else v for k, v in header.items()}  # full hashes in the log
-    rr.log("about", rr.TextDocument("\n".join(f"- **{k}**: {short[k]}" for k in (
+    rr.log("about", rr.TextDocument("Simulation replay, not live data. Every value comes from the decision log.\n\n"
+                                    + "\n".join(f"- **{k}**: {short[k]}" for k in (
         "episode_id", "backend", "truth_source", "filter_on", "scenario_sha256", "script_sha256", "replay_check",
         "backup_paths_for")), media_type="text/markdown"), static=True)
     for name, colour in (("min_sep", (230, 230, 230)), ("d_eff", (255, 160, 0)), ("d_safe", (230, 40, 40))):

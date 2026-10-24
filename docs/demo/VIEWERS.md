@@ -32,12 +32,18 @@ Each step of the log holds, per drone:
 - true position and velocity;
 - proposed and safe acceleration;
 - `intervened`, `fallback_used` and `deadline_fallback` (always `null` on main: the solve deadline is contract v1.5);
-- conflict cluster, latch directions, and the nearest neighbour with its distance.
+- conflict cluster, latch directions, and the nearest neighbour with its distance. A cluster is a group of drones linked by pairs latched in conflict at that step, not every pair in the QP; a drone with no latched pair has cluster `null`.
 
 Per pair in the QP it holds the separation, `d_eff`, the backup's minimum separation and its
 length. The backup trajectory is stored for pairs latched in conflict, escape pairs and pairs
 with slack. The header carries the scenario and script hashes, the code version of the run and
 of the log, and the replay check.
+
+The log uses two frames, listed in the header field `frames`. Positions, velocities,
+separations and nearest neighbours are truth. Backup paths, backup minima, latches and
+clusters are computed from the observed state the filter received. Without noise (`ideal`)
+they are the same. The replay checks the filter's outputs; the truth fields are copied from the
+record and not checked.
 
 ## 2. Rerun
 
@@ -52,11 +58,11 @@ The view shows:
 - drones with 15 s trails;
 - spheres of radius d_eff/2, so two spheres touch at d_eff, coloured by the distance to the nearest neighbour (red inside d_eff, yellow at 2 d_eff, green from 4 d_eff);
 - proposed (blue) and safe (green) acceleration arrows, 2 m per m/s²;
-- backup trajectories, coloured by their minimum separation;
+- backup trajectories, coloured by their minimum separation. They are computed from the state the filter received (the observed state). Under the `nominal` and `realistic` profiles this differs from the true position, so the first segment can jump;
 - plots of minimum separation (with d_safe and d_eff) and of interventions per step;
 - a run panel with the hashes.
 
-Scrub with the timeline at the bottom. `*` after a drone id marks a filter intervention.
+Scrub with the timeline at the bottom. `*` after a drone id marks a filter intervention, `FALLBACK` a step that used the evasive fallback after a solver error.
 
 ## 3. CesiumJS
 
@@ -66,7 +72,7 @@ utm-viz-cesium runs/demo/city24-shielded_marl runs/demo/city24-unshielded_marl -
 
 Then open http://127.0.0.1:8002/. The command writes `on.czml`, `off.czml`, `index.html` and
 `manifest.json`, and `--serve` serves them on 127.0.0.1 only. It refuses two runs with different
-`script_sha256`. A single log gives a page without the toggle. This is the case for PX4: a
+`script_sha256`. With a single log the other toggle option is disabled. This is the case for PX4: a
 `utm-px4-demo --filter off` run flies the drones at other altitudes, so its script differs from
 the filter-on run.
 
@@ -78,9 +84,9 @@ The page shows:
 - Cesium's timeline, at half speed by default, with 0.1x to 1x buttons;
 - a filter on / filter off toggle.
 
-**Placement.** World point (500, 500, 0) sits at a fixed origin, by default Cubbon Park, Bengaluru (12.9763, 77.5929) at the WGS84 ellipsoid. Change it with `--origin LAT,LON[,H]`. The mapping is an exact east-north-up rotation, so distances on the globe equal the logged ones. The origin is in `manifest.json`.
+**Placement.** World point (500, 500, 0) sits at a fixed origin, by default Cubbon Park, Bengaluru (12.9763, 77.5929) at the WGS84 ellipsoid. Change it with `--origin LAT,LON[,H]` (write `--origin=-12.9,77` for a negative latitude). The mapping is an exact east-north-up rotation, so distances on the globe equal the logged ones. The origin is in `manifest.json`.
 
-**Basemap and keys.** Keys come only from environment variables. `--serve` reads them at request time and answers `keys.js` from memory, so no key is ever written to disk. Never put a key in a file in this repo. A Google key used in a browser is visible to that browser, so restrict it by HTTP referrer in the Google Cloud console.
+**Basemap and keys.** Keys come only from environment variables. `--serve` reads them at request time and answers them from memory at a random path that only the `index.html` it serves names, so no key is ever written to disk. It answers only requests addressed to `127.0.0.1:<port>` or `localhost:<port>`, so another web page cannot load the keys, also not through DNS rebinding. Never put a key in a file in this repo. A Google key used in a browser is visible to that browser, so restrict it by HTTP referrer in the Google Cloud console.
 
 | Basemap | Needs | Choose with |
 |---|---|---|
@@ -92,7 +98,7 @@ Credits are shown on screen. In Google mode the tiles are created with `showCred
 
 **Google 3D Tiles coverage.** Google's coverage map (developers.google.com/maps/documentation/javascript/3d/coverage, updated 2026-10-21) showed no high-resolution coverage at Bengaluru or Hyderabad on 2026-10-24. London rendered as a control. This is why Google mode is not the default.
 
-**Heights.** World z = 0 is placed at the origin height `H` (default 0, the ellipsoid). With World Terrain the ground at Bengaluru is several hundred metres above the ellipsoid. Pass the ground height as `H`, or the drones fly inside the terrain.
+**Heights.** World z = 0 is placed at the origin height `H` (default 0, the ellipsoid). With World Terrain the ground at Bengaluru is several hundred metres above the ellipsoid. Pass the ground height as `H`, or the drones fly inside the terrain; the page warns when a terrain basemap is used with `H` = 0.
 
 ## 4. Screenshots
 

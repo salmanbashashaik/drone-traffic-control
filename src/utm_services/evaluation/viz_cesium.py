@@ -13,8 +13,9 @@ between the two runs. Every value comes from the decision logs.
 Basemap: Cesium World Terrain + OSM Buildings when CESIUM_ION_TOKEN is set, Google
 Photorealistic 3D Tiles with ``--basemap google`` and GOOGLE_MAPS_API_KEY (no high-resolution
 Google coverage at Bengaluru or Hyderabad on 2026-10-24), otherwise OpenStreetMap imagery on the
-ellipsoid. Keys are read from the environment only by ``--serve``, which answers ``keys.js`` on
-127.0.0.1 from memory: no key is ever written to disk.
+ellipsoid. Keys are read from the environment only by ``--serve``, which answers them on
+127.0.0.1 from memory, at a random path that only its own ``index.html`` names: no key is ever
+written to disk, and no other web page can load them.
 """
 
 from __future__ import annotations
@@ -24,7 +25,9 @@ import functools
 import html
 import http.server
 import json
+import math
 import os
+import secrets
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -115,6 +118,7 @@ def run_czml(header: dict, steps: list[dict], origin: tuple[float, float, float]
         def sampled(points):
             ecef = enu_to_ecef(origin, np.array(points))
             return {"epoch": epoch, "referenceFrame": "FIXED", "interpolationAlgorithm": "LINEAR",
+                    "forwardExtrapolationType": "HOLD", "forwardExtrapolationDuration": header["dt_s"],
                     "cartesian": [x for t, p in zip(times, ecef) for x in _row(t, p)]}
 
         def held(values, key):
@@ -155,6 +159,8 @@ def build(logs: list[Path], out: Path, origin: tuple[float, float, float], basem
     tags = ["on" if h["filter_on"] else "off" for h, _ in runs]
     if len(set(tags)) != len(tags):
         raise ValueError("give at most one run with the filter on and one with it off")
+    if len(runs) == 2 and not all(h["script_sha256"] for h, _ in runs):
+        raise ValueError("a log has no script_sha256: cannot show that both runs fly the same script")
     if len({h["script_sha256"] for h, _ in runs}) != 1:
         raise ValueError("the runs come from different scripts (script_sha256 differs): no on/off toggle")
     end_s = max(s[-1]["t_ms"] / 1000.0 + h["dt_s"] for h, s in runs if s)
@@ -174,22 +180,35 @@ def build(logs: list[Path], out: Path, origin: tuple[float, float, float], basem
         (out / f"{tag}.czml").write_text(json.dumps(run_czml(header, steps, origin, end_s), separators=(",", ":")))
         manifest["runs"][tag] = {k: header[k] for k in ("episode_id", "scenario_id", "backend", "truth_source",
                                                         "scenario_sha256", "script_sha256", "replay_check", "d_eff_m")}
-        manifest["runs"][tag]["log"] = str(log)
+        manifest["runs"][tag]["log"] = f"{log.parent.name}/{log.name}"  # no local path (user name) in a shared page
         manifest["runs"][tag]["min_sep_m"] = min((s["min_sep_m"] for s in steps if s["min_sep_m"] is not None), default=None)
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
-    (out / "index.html").write_text(PAGE.replace("__CESIUM__", CESIUM).replace("__META__", json.dumps(manifest)),
-                                    encoding="utf-8")
+    meta = json.dumps(manifest).replace("<", "\\u003c")  # no "</script>" from a log field can end the script
+    (out / "index.html").write_text(PAGE.replace("__CESIUM__", CESIUM).replace("__META__", meta), encoding="utf-8")
     return manifest
 
 
 class _Handler(http.server.SimpleHTTPRequestHandler):
+    """Serves --out. Keys only at the server's random ``keys_path``, named only in the index.html it serves,
+    so another web page cannot load them with a script tag (it cannot read our index.html across origins)."""
+
     def do_GET(self) -> None:
-        if self.path.split("?")[0] != "/keys.js":
-            return super().do_GET()
-        keys = {"google": os.environ.get("GOOGLE_MAPS_API_KEY", ""), "ion": os.environ.get("CESIUM_ION_TOKEN", "")}
-        body = f"window.UTM_KEYS = {json.dumps(keys)};".encode()
+        port = self.server.server_address[1]
+        if self.headers.get("Host") not in (f"127.0.0.1:{port}", f"localhost:{port}"):  # DNS rebinding
+            return self.send_error(403)
+        path = self.path.split("?")[0]
+        if path == self.server.keys_path:
+            keys = {"google": os.environ.get("GOOGLE_MAPS_API_KEY", ""), "ion": os.environ.get("CESIUM_ION_TOKEN", "")}
+            return self._send(f"window.UTM_KEYS = {json.dumps(keys)};".encode(), "text/javascript")
+        if path in ("/", "/index.html"):
+            page = Path(self.directory, "index.html").read_text(encoding="utf-8")
+            page = page.replace('<script src="keys.js">', f'<script src="{self.server.keys_path[1:]}">')
+            return self._send(page.encode(), "text/html; charset=utf-8")
+        return super().do_GET()
+
+    def _send(self, body: bytes, content_type: str) -> None:
         self.send_response(200)
-        self.send_header("Content-Type", "text/javascript")
+        self.send_header("Content-Type", content_type)
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
@@ -198,6 +217,10 @@ class _Handler(http.server.SimpleHTTPRequestHandler):
 
 class _Server(http.server.ThreadingHTTPServer):
     allow_reuse_address = sys.platform != "win32"  # on Windows it lets a second server share the port silently
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.keys_path = f"/keys-{secrets.token_urlsafe(16)}.js"
 
 
 def serve(out: Path, port: int) -> None:
@@ -211,7 +234,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="utm-viz-cesium", description=__doc__.splitlines()[0])
     parser.add_argument("logs", type=Path, nargs="+", help="decisions.jsonl or its run directory: filter on, and off")
     parser.add_argument("--out", type=Path, required=True)
-    parser.add_argument("--origin", default=",".join(map(str, BENGALURU)), help="LAT,LON[,H] of world (500, 500, 0)")
+    parser.add_argument("--origin", default=",".join(map(str, BENGALURU)), help="LAT,LON[,H] of world (500, 500, 0); H = ground height above the ellipsoid for terrain "
+                             "basemaps; write --origin=-12.9,77 for a negative latitude")
     parser.add_argument("--basemap", choices=["auto", "google", "ion", "osm"], default="auto",
                         help="auto: ion if CESIUM_ION_TOKEN is set, else osm")
     parser.add_argument("--serve", action="store_true", help="serve --out on 127.0.0.1 with keys from the environment")
@@ -223,7 +247,8 @@ def main(argv: list[str] | None = None) -> int:
         origin = [float(v) for v in args.origin.split(",")]
     except ValueError:
         origin = []
-    if len(origin) not in (2, 3) or not (-90 <= origin[0] <= 90 and -180 <= origin[1] <= 180):
+    if (len(origin) not in (2, 3) or not all(map(math.isfinite, origin))
+            or not (-90 <= origin[0] <= 90 and -180 <= origin[1] <= 180)):
         parser.error("--origin is LAT,LON or LAT,LON,H in degrees and metres")
     origin = (origin + [0.0])[:3]
     logs = [p / "decisions.jsonl" if p.is_dir() else p for p in args.logs]
@@ -281,7 +306,9 @@ const KEYS = window.UTM_KEYS || {};
                  ion: "Cesium World Terrain + Cesium OSM Buildings",
                  google: "3D buildings, terrain and imagery: Google Photorealistic 3D Tiles. Drones and overlays: this replay." };
   document.getElementById("basemap").textContent = "Basemap: " + text[mode] + ". Origin " + META.origin.lat_deg + ", "
-    + META.origin.lon_deg + "; world z = 0 at " + META.origin.height_m + " m above the ellipsoid.";
+    + META.origin.lon_deg + "; world z = 0 at " + META.origin.height_m + " m above the ellipsoid."
+    + (mode !== "osm" && META.origin.height_m === 0
+       ? " Warning: the ground here is above the ellipsoid, so the drones may be underground; pass --origin LAT,LON,H." : "");
   if (mode === "ion") {
     viewer.scene.setTerrain(Cesium.Terrain.fromWorldTerrain());
     viewer.scene.primitives.add(await Cesium.createOsmBuildingsAsync());
@@ -296,9 +323,12 @@ const KEYS = window.UTM_KEYS || {};
   for (const tag of Object.keys(META.runs)) {
     sources[tag] = await viewer.dataSources.add(Cesium.CzmlDataSource.load(tag + ".czml"));
     const r = META.runs[tag];
-    document.getElementById("runs").innerHTML += "<div><b>filter " + tag + "</b>: " + r.episode_id + ", min sep "
-      + (r.min_sep_m === null ? "n/a" : r.min_sep_m.toFixed(2) + " m") + "<br><span class='small'>" + r.backend
-      + " (" + r.truth_source + "), script " + r.script_sha256.slice(0, 12) + "…</span></div>";
+    const div = document.createElement("div"), small = document.createElement("div");
+    div.textContent = "filter " + tag + ": " + r.episode_id + ", min sep "
+      + (r.min_sep_m === null ? "n/a" : r.min_sep_m.toFixed(2) + " m");
+    small.className = "small";
+    small.textContent = r.backend + " (" + r.truth_source + "), script " + (r.script_sha256 || "none").slice(0, 12) + "…";
+    div.append(small); document.getElementById("runs").append(div);
   }
   const first = sources.on || sources.off;
   viewer.clock.startTime = first.clock.startTime; viewer.clock.stopTime = first.clock.stopTime;

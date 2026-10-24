@@ -7,8 +7,14 @@ one header line, then one line per step. Nothing is estimated or smoothed. Posit
 velocities are the recorded truth (simulator, or the PX4 EKF for PX4 runs); proposed and safe
 accelerations are the recorded actions. The filter's internals (conflict clusters, latches,
 backup manoeuvres) are recovered by replaying ``apply_filter`` with ``capture_internals`` on the
-recorded filter inputs, and every replayed action must equal the recorded one exactly, or no
-log is written: the internals shown are the ones that produced the flown actions.
+recorded filter inputs, and every replayed action must equal the recorded one exactly (same JSON
+text, so -0.0 and 0.0 differ), or no log is written: the internals shown are the ones that
+produced the flown actions.
+
+Two frames (header ``frames``): positions, velocities, separations and nearest neighbours are
+truth; backup paths, backup minima, latch directions and clusters are computed from the
+observed states the filter received. Under noise the two differ. Truth fields are not checked
+by the replay; they are copied from the record.
 
 known limit: replay needs a deterministic filter; a filter with a wall-clock solve deadline
 (contract v1.5, not on main) can differ on replay, and then the log refuses. Capture live then.
@@ -133,9 +139,12 @@ def decision_steps(records: list[dict[str, Any]], config: F.FilterConfig | None)
             with F.capture_internals() as calls:
                 replayed, diag = F.apply_filter(
                     observed, [MARLAction.model_validate(a) for a in rec["proposed_actions"]], config, latch=latch)
-            if [a.model_dump(mode="json") for a in replayed] != sorted(rec["returned_actions"],
-                                                                     key=lambda a: a["agent_id"]):
+            recorded = sorted(rec["returned_actions"], key=lambda a: a["agent_id"])
+            if (json.dumps([a.model_dump(mode="json") for a in replayed], sort_keys=True)
+                    != json.dumps(recorded, sort_keys=True)):
                 raise ReplayMismatch(f"t={rec['timestamp_ms']} ms: the replayed filter differs from the recorded actions")
+            if len(calls) != 1:
+                raise ReplayMismatch(f"t={rec['timestamp_ms']} ms: expected one captured filter call, got {len(calls)}")
             call = calls[0]
 
         pos = {aid: np.array(truth[aid]["position_m"]) for aid in ids}
@@ -154,6 +163,7 @@ def decision_steps(records: list[dict[str, Any]], config: F.FilterConfig | None)
             }
         pairs = []
         if call is not None:
+            # cluster: connected components of the pairs latched in conflict this step (not every pair in the QP)
             for aid, c in _clusters(list(call["latches"])).items():
                 drones[aid]["cluster"] = c
             state = {s.agent_id: s for s in observed}
@@ -227,6 +237,9 @@ def write_decision_log(run_dir: Path) -> Path:
         "steps": len(steps),
         "replay_check": (f"all {len(steps)} replayed filter actions equal the recorded ones" if config is not None
                          else "filter off: no replay"),
+        "frames": {"truth": "drones.pos, drones.vel, drones.nearest, pairs.sep_m, min_sep_m",
+                   "observed (filter input)": "pairs.backup, pairs.backup_min_m, pairs.backup_steps, drones.latch, "
+                                              "drones.cluster"},
         "backup_paths_for": "pairs latched in conflict, escape pairs and pairs with slack; every pair in the QP "
                             "has backup_min_m and backup_steps",
     }

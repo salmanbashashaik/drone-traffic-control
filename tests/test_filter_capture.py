@@ -4,7 +4,8 @@ The capture hook records the filter's internals for the decision log (utm-decisi
 test runs the same inputs twice, once inside ``capture_internals`` and once outside, and
 compares every SafeAction field, every FilterDiagnostics field and the caller's latch with
 ``==`` (exact floats). Covers closed-loop episodes (ideal and realistic disturbances, so noisy
-inputs and latches carried over steps) and a fuzz of dense random clusters near the world box.
+inputs and latches carried over steps), a fuzz of dense random clusters near the world box, and
+the evasive fallback after an injected solver error.
 The decision log's own checks (replay equals the record, backup paths equal the filter's
 rollout) are tested at the end.
 """
@@ -102,6 +103,34 @@ def test_fuzz_actions_diagnostics_and_latch_are_bit_identical_with_capture() -> 
             assert len(calls) == 1 and set(calls[0]["latches"]) == set(latch_on)
 
 
+def test_solver_error_fallback_is_bit_identical_with_capture(monkeypatch) -> None:
+    def solver_error(*args, **kwargs):
+        raise RuntimeError("injected solver error")
+
+    monkeypatch.setattr(F, "_solve_hocbf_qp", solver_error)
+    rng = np.random.default_rng(5)
+    centre = np.array([500.0, 500.0, 100.0])
+    fallbacks = 0
+    for trial in range(10):
+        ids = [f"d{k}" for k in range(int(rng.integers(2, 7)))]
+        latch_off, latch_on = {}, {}
+        for step in range(4):
+            states, actions = [], []
+            for aid in ids:
+                p = centre + rng.uniform(-5.0, 5.0, 3)
+                states.append(DroneState(agent_id=aid, position_m=tuple(p), velocity_mps=tuple(1.5 * (centre - p)),
+                                         goal_m=tuple(centre), timestamp_ms=100 * step))
+                actions.append(MARLAction(agent_id=aid, proposed_accel_mps2=tuple(rng.uniform(-3.5, 3.5, 3)),
+                                          timestamp_ms=100 * step))
+            off = F.apply_filter(states, actions, latch=latch_off)
+            with F.capture_internals() as calls:
+                on = F.apply_filter(states, actions, latch=latch_on)
+            assert on[0] == off[0] and on[1] == off[1] and _same_latch(latch_on, latch_off), (trial, step)
+            assert not off[1].qp_feasible and len(calls) == 1
+            fallbacks += off[1].fallback_used
+    assert fallbacks > 0, "the converging clusters must reach the evasive fallback"
+
+
 def test_capture_is_off_by_default_and_ends_with_its_context() -> None:
     rng = np.random.default_rng(1)
     states, actions = _random_step(rng, ["a", "b"], 0)
@@ -110,6 +139,14 @@ def test_capture_is_off_by_default_and_ends_with_its_context() -> None:
         F.apply_filter(states, actions, latch={})
     F.apply_filter(states, actions, latch={})
     assert len(calls) == 1 and F._CAPTURE.get() is None
+    with pytest.raises(RuntimeError), F.capture_internals():
+        raise RuntimeError("exit by exception")
+    assert F._CAPTURE.get() is None
+    with F.capture_internals() as outer:
+        with F.capture_internals() as inner:
+            F.apply_filter(states, actions, latch={})
+        F.apply_filter(states, actions, latch={})
+    assert len(inner) == 1 and len(outer) == 1 and F._CAPTURE.get() is None
 
 
 def test_backup_paths_reproduce_the_filter_rollout_bit_for_bit() -> None:

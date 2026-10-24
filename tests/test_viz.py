@@ -2,7 +2,9 @@
 
 import functools
 import json
+import re
 import threading
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -61,20 +63,55 @@ def test_cesium_refuses_runs_of_different_scripts(runs, tmp_path) -> None:
         viz_cesium.build([runs["on"], other], tmp_path / "cesium", viz_cesium.BENGALURU, "auto")
 
 
-def test_keys_are_served_from_the_environment_on_localhost_only(tmp_path, monkeypatch) -> None:
+def test_cesium_refuses_a_toggle_without_script_hashes(runs, tmp_path) -> None:
+    logs = []
+    for tag in ("on", "off"):
+        lines = runs[tag].read_text().splitlines()
+        logs.append(tmp_path / f"{tag}.jsonl")
+        logs[-1].write_text("\n".join([json.dumps(json.loads(lines[0]) | {"script_sha256": None}), *lines[1:]]) + "\n")
+    with pytest.raises(ValueError, match="no script_sha256"):
+        viz_cesium.build(logs, tmp_path / "cesium", viz_cesium.BENGALURU, "auto")
+
+
+def test_cesium_page_escapes_log_fields(runs, tmp_path) -> None:
+    lines = runs["on"].read_text().splitlines()
+    log = tmp_path / "x.jsonl"
+    log.write_text("\n".join([json.dumps(json.loads(lines[0]) | {"episode_id": "</script><b>x"}), *lines[1:]]) + "\n")
+    viz_cesium.build([log], tmp_path / "cesium", viz_cesium.BENGALURU, "auto")
+    assert "</script><b>" not in (tmp_path / "cesium" / "index.html").read_text(encoding="utf-8")
+
+
+def _get(url: str, host: str | None = None) -> tuple[int, str, dict]:
+    req = urllib.request.Request(url, headers={"Host": host} if host else {})
+    try:
+        with urllib.request.urlopen(req) as r:
+            return r.status, r.read().decode(), dict(r.headers)
+    except urllib.error.HTTPError as e:
+        return e.code, "", {}
+
+
+def test_keys_are_served_from_the_environment_to_our_page_only(runs, tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("CESIUM_ION_TOKEN", "sentinel-ion-token")
     monkeypatch.delenv("GOOGLE_MAPS_API_KEY", raising=False)
-    server = viz_cesium._Server(("127.0.0.1", 0), functools.partial(viz_cesium._Handler, directory=str(tmp_path)))
+    out = tmp_path / "cesium"
+    viz_cesium.build([runs["on"]], out, viz_cesium.BENGALURU, "auto")
+    before = {f: f.read_bytes() for f in out.iterdir()}
+    server = viz_cesium._Server(("127.0.0.1", 0), functools.partial(viz_cesium._Handler, directory=str(out)))
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
     try:
-        with urllib.request.urlopen(f"http://127.0.0.1:{server.server_address[1]}/keys.js") as r:
-            body = r.read().decode()
-            assert r.headers["Cache-Control"] == "no-store"
+        status, page, _ = _get(base + "/")
+        name = re.search(r'<script src="(keys-[^"]+\.js)">', page).group(1)
+        status, body, headers = _get(f"{base}/{name}")
+        assert status == 200 and headers["Cache-Control"] == "no-store"
+        assert '"ion": "sentinel-ion-token"' in body and '"google": ""' in body
+        assert _get(base + "/keys.js")[0] == 404  # a guessable path that any web page could load
+        assert _get(f"{base}/{name}", host="evil.example")[0] == 403  # DNS rebinding
+        assert _get(base + "/", host="evil.example")[0] == 403
     finally:
         server.shutdown()
         server.server_close()
-    assert '"ion": "sentinel-ion-token"' in body and '"google": ""' in body
-    assert not list(tmp_path.iterdir())
+    assert {f: f.read_bytes() for f in out.iterdir()} == before  # nothing written
 
 
 def test_rerun_recording_is_written(runs, tmp_path) -> None:
