@@ -218,3 +218,38 @@ def test_seed_alongs_make_the_per_pair_decisions() -> None:
             assert (abs(got[k]) > 0.5) == (abs(want) > 0.5)
             if abs(want) > 0.5:
                 assert np.sign(got[k]) == np.sign(want)
+
+
+@pytest.mark.parametrize("config", [F.FilterConfig(), F.FilterConfig(barrier="braking"), F.FilterConfig(lag_s=0.3),
+                                    F.FilterConfig(gamma=10.0)], ids=["backup", "braking", "lag", "gamma10"])
+def test_rows_beyond_the_range_gate_cannot_bind(config) -> None:
+    # Pairs just beyond _exact_range_gate, closing at up to 2 v_max from any
+    # direction, near walls or not: every row (backup or braking, and escape
+    # with any signs) holds for every acceleration in the box, and the nominal
+    # meets the braking row (no tie-break).
+    rng = np.random.default_rng(4)
+    gate = F._exact_range_gate(config)
+    u = F.MAX_ACCEL_COMPONENT_MPS2
+    for _ in range(300):
+        d = rng.normal(size=3) * (1.0, 1.0, 0.1)
+        d /= np.linalg.norm(d)
+        p0 = np.array([rng.uniform(5, 995 - gate * abs(d[0])), rng.uniform(5, 995 - gate * abs(d[1])), 0.0])
+        p0[:2] = np.where(d[:2] < 0, 1000.0 - p0[:2], p0[:2])
+        p0[2] = rng.uniform(31.0, 199.0 - 1.0)
+        p1 = p0 + d * gate * (1.0 + rng.uniform(1e-9, 1e-3))
+        p1[2] = np.clip(p1[2], 31.0, 199.0)
+        if np.linalg.norm(p1 - p0) <= gate or not (0 <= p1[0] <= 1000 and 0 <= p1[1] <= 1000):
+            continue
+        n = (p0 - p1) / np.linalg.norm(p0 - p1)
+        v0 = -n * 14.9 if rng.random() < 0.7 else rng.normal(size=3) * 5
+        v1 = n * 14.9 if rng.random() < 0.7 else rng.normal(size=3) * 5
+        v0, v1 = (w * min(1.0, 14.9 / np.linalg.norm(w)) for w in (v0, v1))
+        states, actions, pairs = _maps(np.array([p0, p1]), np.array([v0, v1]), rng)
+        escape = {pairs[0]: (float(rng.choice([-1, 0, 1])), float(rng.choice([-1, 0, 1])))}
+        for signs in (None, escape):
+            _, q, A, l, u_, _ = F.build_hocbf_qp_matrices(states, actions, pairs, config, signs, None, {}, True)
+            coef = np.concatenate([A[0, :3], A[0, 3:6]])
+            lowest = np.sum(np.minimum(coef * -u, coef * u))
+            assert lowest >= l[0]
+            nominal = np.concatenate([actions[a].proposed_accel_mps2 for a in sorted(actions)])
+            assert coef @ nominal >= l[0]

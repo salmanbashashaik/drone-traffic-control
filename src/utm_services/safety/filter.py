@@ -74,8 +74,8 @@ from shared.contracts import (
 
 logger = logging.getLogger(__name__)
 
-# Default range gate: None means include all pairs (correct for small N).
-# Set to a positive float (metres) to exclude distant pairs from the QP.
+# Default range gate: None means the derived gate (``_exact_range_gate``), which
+# drops only pairs whose rows cannot bind. A positive float (metres) gates closer.
 _DEFAULT_RANGE_GATE_M: float | None = None
 
 
@@ -107,7 +107,10 @@ class FilterConfig:
         set to the measured tau when actuators lag.
     range_gate_m:
         If set, pairs further apart than this distance are excluded
-        from the QP constraint set. None = include all pairs.
+        from the QP constraint set. None = the derived gate
+        ``_exact_range_gate`` (595.6 m at the defaults), beyond which no row of
+        a pair can bind, so excluding it leaves the optimum unchanged; a set
+        value larger than that gate is capped at it.
     solver_eps:
         Absolute and relative tolerance for OSQP, which solves QPs above
         _EXACT_MAX_VARS variables (and any QP DAQP fails on). Tight enough
@@ -1062,6 +1065,39 @@ def _rollout_kernel_parallel(
 _PARALLEL_MIN_PAIRS = 256
 
 
+def _exact_range_gate(config: FilterConfig) -> float:
+    """Separation (m) beyond which no row of a pair can bind (docs/architecture/PROPOSAL-scale-qp.md).
+
+    Every row reads coef . (a_i - a_j) + s >= rhs with each acceleration
+    component in [-u, u], so |a_i - a_j| <= a = 2 sqrt(3) u. A row with
+    rhs <= -a |coef| holds for every acceleration in the box with s = 0, so
+    its slack is 0 at every optimum and dropping the pair leaves the optimum
+    unchanged. The returned distance is the largest of the three row types'
+    thresholds, from bounds that hold for any state (speeds <= v_max):
+
+    - backup: rhs = m . a_first - gamma (d* - d_eff) / ((k* + 0.5) dt) with
+      m . a_first <= a, k* < ``_backup_max_steps`` and d* >= d0 - 2 v_max (k* + 1) dt
+      (each drone moves at most v_max dt per rollout step);
+    - escape (t* <= 3 s): coef = 0.5 t*^2 m, rhs = d_eff - m . (r + v t*) <=
+      d_eff - d0 / sqrt(3) + 2 v_max t* (m . n >= 1 / sqrt(3));
+    - braking: rhs <= -gamma B(s) + (gamma + 2 u / sqrt(4 u s + c^2)) 2 v_max with
+      s >= d0 - d_eff - 2 v_max lag_s; then the nominal (also in the box) meets
+      the row too, so no tie-break acts.
+    """
+    u, v_max, dt = MAX_ACCEL_COMPONENT_MPS2, MAX_SPEED_MPS, SIMULATION_STEP_MS / 1000.0
+    a, gamma, c = 2.0 * math.sqrt(3.0) * u, config.gamma, config.barrier_offset_mps
+    d_eff = SAFE_SEPARATION_M + config.margin_m
+    backup = max(d_eff + 2.0 * v_max * (k + 1) * dt + 2.0 * a * (k + 0.5) * dt / gamma
+                 for k in range(_backup_max_steps(config)))
+    t = _ESCAPE_HORIZON_S
+    escape = math.sqrt(3.0) * (d_eff + 2.0 * v_max * t + 0.5 * t * t * a)
+    # gamma R - 4 u v_max / R >= gamma c + 2 v_max gamma + a with R = sqrt(4 u s + c^2)
+    k = gamma * c + 2.0 * v_max * gamma + a
+    root = (k + math.sqrt(k * k + 16.0 * gamma * u * v_max)) / (2.0 * gamma)
+    braking = (root * root - c * c) / (4.0 * u) + d_eff + 2.0 * v_max * config.lag_s
+    return max(backup, escape, braking)
+
+
 def _backup_constraints(
     states: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig,
     frames: dict[tuple[str, str], _PairLatch] | None = None,
@@ -1768,6 +1804,11 @@ def apply_filter(
     h_min: float | None = None
     n_pairs_total = 0
     pairs_in_qp: list[tuple[str, str]] = []
+    # Pairs within the configured gate (all when None) go to _update_latches,
+    # as before the derived gate; the rollout and the QP take only those within
+    # the derived gate as well, whose rows can bind.
+    pairs_in_range: list[tuple[str, str]] = []
+    gate_sq = _exact_range_gate(config) ** 2
 
     for idx, id_i in enumerate(agent_ids):
         for id_j in agent_ids[idx + 1:]:
@@ -1778,10 +1819,13 @@ def apply_filter(
                 h_min = h
 
             # Range gate: skip pairs too far apart.
+            sep_sq = _separation_sq(state_map[id_i], state_map[id_j])
             if config.range_gate_m is not None:
-                sep = math.sqrt(_separation_sq(state_map[id_i], state_map[id_j]))
-                if sep > config.range_gate_m:
+                if math.sqrt(sep_sq) > config.range_gate_m:
                     continue
+            pairs_in_range.append((id_i, id_j))
+            if sep_sq > gate_sq:
+                continue
 
             pairs_in_qp.append((id_i, id_j))
 
@@ -1800,7 +1844,7 @@ def apply_filter(
             step_ts, diag.world_limit_conflict_agents,
         )
 
-    frames = _update_latches(state_map, pairs_in_qp, config, latch)
+    frames = _update_latches(state_map, pairs_in_range, config, latch)
 
     # --- QP solve ---
     backup = None
