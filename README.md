@@ -2,7 +2,7 @@
 
 We are building a startup around software services for unmanned aircraft traffic management (UTM) and assurance. The product direction is real services that help operators and airspace stakeholders coordinate drone activity and manage traffic risk. We are starting with a simulation/API prototype so we can build and evaluate the core workflow before connecting it to live data, partners, or operations.
 
-This repository currently contains the shared product and engineering plan and its supporting research report; owner briefs live on the three workstream branches. Implementation and measured results are still planned. The prototype is the first milestone in the startup’s product path, not the company’s end state. Real-service scope, operating domain, users, and deployment model must be decided and validated in the post-prototype product-definition phase.
+This repository holds the product plan, the shared contracts, and a working simulation prototype: a mock API, a simulator, a model-based safety filter, a trained multi-agent policy, a command-line runner and a 3D replay. Everything runs in simulation; nothing flies. For the current state and next steps read [`CLAUDE.md`](./CLAUDE.md) and [`docs/STATUS.md`](./docs/STATUS.md). The prototype is the first milestone in the startup’s product path, not the company’s end state. Real-service scope, operating domain, users, and deployment model must be decided and validated in the post-prototype product-definition phase.
 
 ## The problem we are exploring
 
@@ -25,11 +25,11 @@ flowchart LR
     OBS --> POLICY["Salman's MARL/reference policy"]
     POLICY -->|"proposed acceleration"| NOM["MARLAction"]
 
-    STATE --> FILTER["Salman's CBF/HOCBF QP filter<br/>modeled active pairs"]
+    STATE --> FILTER["Safety filter: backup-set barrier QP<br/>modeled active pairs"]
     NOM --> FILTER
-    FILTER --> FEAS{"QP feasible?"}
+    FILTER --> FEAS{"QP solved?"}
     FEAS -->|"yes"| PASS["SafeAction<br/>filtered or pass-through action"]
-    FEAS -->|"no or solver error"| FALL["Fallback SafeAction<br/>zero acceleration<br/>qp_feasible=false<br/>fallback_used=true"]
+    FEAS -->|"solver error"| FALL["Fallback SafeAction<br/>evasive acceleration<br/>qp_feasible=false<br/>fallback_used=true"]
 
     PASS --> APPLY["Anas's simulator applies action<br/>and advances one step"]
     FALL --> APPLY
@@ -46,7 +46,7 @@ flowchart LR
     LOG --> OUT["Run record and summary metrics"]
 ```
 
-The simulator owns ground-truth state. The policy receives the documented, deliberately simplified 18-value observation. The filter may alter the policy's proposed acceleration using the simulator's modeled state. If the filter fails or its optimization problem is infeasible, v1 emits a zero-acceleration command. That is an **unverified fallback**: it is not a hover controller and does not guarantee separation, especially when a drone already has velocity.
+The simulator owns ground-truth state. The policy receives the documented, deliberately simplified 18-value observation. The filter may alter the policy's proposed acceleration using the simulator's modeled state. The QP always has a solution (every pair constraint has a penalised slack variable). Only a solver error triggers the **fallback**: an evasive acceleration for the drones in the conflict cluster, clipped to the world box. It is unverified and does not guarantee separation.
 
 The shared simulation-only v1 data types, units, API routes, timing, logging, and error behavior are specified in [`INTERFACES.md`](./INTERFACES.md). That document is the contract for all branches. Pydantic v2 models in [`shared/contracts.py`](./shared/contracts.py) validate the structured inputs and outputs; install the schema and test dependencies with `python -m pip install -r requirements-dev.txt`. If code and contract differ, record the mismatch and resolve it through a change to `main` before treating either version as authoritative.
 
@@ -54,27 +54,26 @@ The shared simulation-only v1 data types, units, API routes, timing, logging, an
 
 - A deterministic, seeded multi-drone simulation with configurable scenarios and disturbances.
 - Mock API routes for synthetic airspace rules, notices, and drone registration.
-- A deterministic reference controller, an unshielded MARL policy, and the same policy with a CBF/HOCBF filter.
-- An explicitly unverified zero-acceleration fallback for solver errors or infeasible filter problems.
+- A deterministic reference controller, an unshielded MARL policy, and the same policy with the safety filter.
+- An explicitly unverified evasive fallback for solver errors.
 - Matched scenario comparisons over multiple seeds, with completion, separation, intervention, infeasibility, fallback, and latency measurements.
 - A demo visualization/logging path and a model packaging and edge inference benchmark. Benchmark hardware and runtime must be named in the result; a CPU proxy must be labeled as a proxy.
 
-These are planned deliverables. They are not claims that working implementations, performance numbers, or safety results already exist. V1 is intended to retire engineering and product questions that can be answered in simulation; it is not the startup’s complete service offering.
+Built: the simulator, API, filter, policy training, runner and replay. Not built: the matched evaluation campaign (P3), the edge benchmark (P4) and a results UI. Simulation results are measurements under stated assumptions, not claims of real-world safety. V1 is intended to retire engineering and product questions that can be answered in simulation; it is not the startup’s complete service offering.
 
-## Run the current local baseline
+## Run it locally
 
-No shared cloud machine is needed for the current phase. Each contributor can work from the repository root on their own development machine; the mock API binds only to `127.0.0.1` and uses synthetic data. Python 3.11 or newer is required.
+No shared cloud machine is needed. Python 3.11 or newer.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-utm-mock-api
+python -m pip install -e ".[dev,plot]"
+utm-run scenarios/head-on-40.json --variant shielded_marl --plot --out runs/head-on
+pytest
 ```
 
-On macOS or Linux, activate the environment with `source .venv/bin/activate` instead. Open `http://127.0.0.1:8000/docs` to inspect and call the mock routes. Stop the server with `Ctrl+C`.
-
-This starts **only the synthetic API baseline**. The reference policy and a pass-through safety-filter stub exist as library code, but the simulator, real QP solve, end-to-end run orchestrator, and complete demo are still planned, so there is not yet a full V1 simulation run command. Do not point this API at live aircraft, sensor, USS/UTM, or registration services.
+On macOS or Linux, activate with `source .venv/bin/activate`. `utm-run` flies one scenario file and writes `manifest.json`, `summary.json`, `records.jsonl` and (with `--plot`) `replay.png`. `utm-mock-api` starts the synthetic airspace API on `127.0.0.1:8000` (docs at `/docs`); it is not connected to the run loop. Do not point it at live aircraft, sensor, USS/UTM, or registration services. The `MARL` variants of `utm-run` use the reference controller as a labelled stand-in; the trained policy runs through `utm-eval-policy` and `utm-replay`. All commands and the test tiers are listed in [`CLAUDE.md`](./CLAUDE.md).
 
 ## Run the trained-drone simulation (MARL)
 
@@ -82,7 +81,7 @@ To train, evaluate and watch the learned drone policy in an interactive 3D view 
 
 ## Long-term research direction
 
-The supporting report describes a broader layered architecture: strategic UTM intent and reservation coordination; tactical MARL or trajectory planning; CBF/HOCBF action filtering; a recoverability supervisor informed by Hamilton–Jacobi reachability; deterministic or independently validated backup behavior; and state-integrity, communication-trust, and conformance monitoring. This is a research direction, not the v1 architecture. V1 does not implement the full report architecture or inherit its possible assurance properties by using a simplified CBF filter.
+The supporting report describes a broader layered architecture: strategic UTM intent and reservation coordination; tactical MARL or trajectory planning; control-barrier-function action filtering (built in v1 as the backup-set barrier); a recoverability supervisor informed by Hamilton–Jacobi reachability; deterministic or independently validated backup behavior; and state-integrity, communication-trust, and conformance monitoring. This is a research direction, not the v1 architecture. V1 does not implement the full report architecture or inherit its possible assurance properties by using a simplified CBF filter.
 
 Real sensor feeds, live USS/UTM integration, actual drone registration, operational flight use, hardware-in-the-loop, certification work, MPC, HJ reachability, and a verified backup controller are outside v1. These are potential later product and assurance milestones, with scope decided against a selected service and operating domain. A simulator chaos injector is a repeatable test input, not a defense against real attacks.
 
@@ -103,7 +102,7 @@ The first real service may be an information or coordination service; whether it
 
 Compare the deterministic reference, unshielded MARL, and shielded MARL on the same scenarios, traffic demand, dynamics, disturbance seeds, and episode limits. Report results over multiple paired runs and include uncertainty or run-to-run variation. Record at least mission completion and aborts, minimum pairwise separation, separation-violation samples, shield interventions, infeasible filter steps, fallback events, and simulation/policy latency. Do not use average reward as a safety measure.
 
-Zero observed failures in a finite simulation campaign does not prove zero risk. A CBF/HOCBF safety claim is conditional on the model, initial conditions, control authority, uncertainty bounds, sample timing, and a feasible optimization problem. The v1 interfaces and fallback do not provide the report's full state-integrity or runtime-assurance architecture.
+Zero observed failures in a finite simulation campaign does not prove zero risk. A control-barrier-function safety claim is conditional on the model, initial conditions, control authority, uncertainty bounds, sample timing, and a feasible optimization problem. The v1 interfaces and fallback do not provide the report's full state-integrity or runtime-assurance architecture.
 
 ## Codebase structure
 
@@ -116,7 +115,7 @@ The repository uses a single Python package with component ownership aligned to 
 | Branch | Owner and responsibility | Owner brief |
 | --- | --- | --- |
 | `aman/product-platform` | **Aman** — product and system architecture, ML system design, integration, API/platform design, and platform-level scalability. | [`docs/workstreams/aman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/aman/product-platform/docs/workstreams/aman.md) |
-| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF/HOCBF design, and the assumptions and limits behind safety claims. | [`docs/workstreams/salman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/docs/workstreams/salman.md) |
+| `salman/marl-safety` | **Salman** — MARL/ML algorithm research, mathematical foundations, CBF design, and the assumptions and limits behind safety claims. | [`docs/workstreams/salman.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/salman/marl-safety/docs/workstreams/salman.md) |
 | `anas/simulation-edge` | **Anas** — simulator and scenario design, stress evaluation, and edge ML packaging and benchmarking. | [`docs/workstreams/anas.md`](https://github.com/salmanbashashaik/drone-traffic-control/blob/anas/simulation-edge/docs/workstreams/anas.md) |
 
 Each workstream sends pull requests directly to `main`. Before using an AI coding agent, read this README, [`TASKS.md`](./TASKS.md), [`INTERFACES.md`](./INTERFACES.md), and the owner brief on your branch. Keep changes within the assigned workstream, use the shared contract, identify assumptions, and summarize changed files, evidence, open issues, and handoff needs in the pull request. A change to a shared contract requires review from the affected owners and an update to every affected consumer.
@@ -125,4 +124,4 @@ Each workstream sends pull requests directly to `main`. Before using an AI codin
 
 The [26-page report](./TLDR_Enterprise_UTM_MARL_Formal_Safety.1.pdf) is background research for the product direction. It synthesizes public material and proposed methods; it is not the startup’s product specification, an implementation record, vendor performance validation, or a report of new simulation, benchmark, or flight experiments. Its vendor analysis does not demonstrate this prototype's capabilities.
 
-The report discusses CBF/HOCBF, MARL, reachability, and layered runtime assurance with explicit assumptions and open limitations. Use it as technical context while using the shared v1 contract to build the first milestone and the service-definition phase to decide what must change before real integrations and deployment.
+The report discusses CBF, MARL, reachability, and layered runtime assurance with explicit assumptions and open limitations. Use it as technical context while using the shared v1 contract to build the first milestone and the service-definition phase to decide what must change before real integrations and deployment.

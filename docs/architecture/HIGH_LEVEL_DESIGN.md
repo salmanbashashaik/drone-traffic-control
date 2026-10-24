@@ -1,6 +1,6 @@
 # High-Level Design: Simulation-to-Service Architecture
 
-**Status:** V1 target architecture and service-evolution proposal. The V1 runtime is not yet fully implemented. This document does not authorize live integrations or operational use.
+**Status:** Updated 2026-10-24. The V1 runtime (simulator, policy, safety filter, runner) is built and runs in simulation; the run logger, results view, matched evaluation and everything after V1 are not. The service-evolution sections are a proposal. This document does not authorize live integrations or operational use. Current state and backlog: [`docs/STATUS.md`](../STATUS.md).
 
 **Audience:** Aman, Salman, Anas, and AI coding agents working in this repository.
 
@@ -18,8 +18,8 @@ The startup is building software services for unmanned aircraft traffic manageme
 
 The HLD separates three things that must not be conflated:
 
-1. **The current repository baseline:** canonical Pydantic contracts, a local synthetic FastAPI mock API, and a scenario-validation adapter.
-2. **The V1 target runtime:** Anas's simulator, Salman's policy and safety filter, Aman's orchestration/logging/demo, and matched evaluation. These components are still planned unless their implementation and evidence are merged.
+1. **What is built and merged:** canonical Pydantic contracts, a local synthetic FastAPI mock API, the scenario adapter, the point-mass simulator (ideal and mild-disturbance profiles) with an optional PyBullet backend, the reference controller, the trained MARL policy, the backup-set barrier safety filter, the `utm-run` runner, and the 2D/3D replay.
+2. **The V1 target runtime still to build:** run logger with persistence and a results view, the matched three-variant evaluation (P3), and the edge benchmark (P4).
 3. **The later service direction:** a real service selected after prototype evidence and customer/operator discovery. Its user, domain, effect on operations, integrations, production topology, and assurance requirements are open decisions.
 
 This design supports a path from prototype to real services by keeping component responsibilities and contracts explicit. It does not assume that the first service will control aircraft, that V1 outputs can be used operationally, or that a particular cloud, microservice, or deployment topology has been selected.
@@ -65,13 +65,13 @@ The mock HTTP API is configured for loopback development at `127.0.0.1:8000`. Th
 | --- | --- | --- | --- |
 | Canonical contract package | Shared | Pydantic v2 models used at component boundaries. No branch-local duplicates. | Present in `shared/contracts.py`. |
 | Synthetic airspace/registration API | Aman | `GET /airspace/rules`, `GET /airspace/notam`, and `POST /drone/register`; explicit mock errors and in-memory registration. | Present as a local FastAPI baseline in `src/utm_services/api/app.py`. |
-| Scenario adapter | Aman | Validate `ScenarioConfig` and pass that canonical model to a simulator reset boundary. | Present as an adapter protocol/helper in `src/utm_services/application/scenario_adapter.py`; it is not yet a complete run orchestrator. |
-| Run orchestration and controller selection | Aman | Create run metadata, order reset/observe/policy/filter/step calls, and coordinate outputs. | Planned; no end-to-end run service is present yet. |
-| Simulator and scenario engine | Anas | Ground truth, dynamics, seeded reset/step, termination, disturbances, and per-step simulator outputs. | Planned; implement under `src/utm_services/simulation/`. |
-| Reference/MARL policy adapter | Salman | Consume `ObservationV1`, apply declared preprocessing/model metadata, and emit bounded `MARLAction`. | Deterministic reference controller and adapter present in `src/utm_services/policy/`; MARL policy planned. |
-| CBF/HOCBF filter | Salman | Consume all modeled states required by the formulation plus proposed actions; return action and feasibility/intervention metadata. | Pass-through stub present in `src/utm_services/safety/filter.py` (computes barrier diagnostics, does not modify actions); HOCBF QP solve planned. |
-| Run logger and results view | Aman | Record run manifest, per-step proposed/applied actions, filter outcomes, metrics, and artifacts for review. | Planned; output format and storage location remain to be chosen. |
-| Matched evaluation and edge benchmark | Anas | Run paired scenarios, report distributions, package/benchmark policy inference, and preserve manifests. | Planned under `src/utm_services/evaluation/`. |
+| Scenario adapter | Aman | Validate `ScenarioConfig` and pass that canonical model to a simulator reset boundary. | Present in `src/utm_services/application/scenario_adapter.py`. |
+| Run orchestration and controller selection | Aman | Create run metadata, order reset/observe/policy/filter/step calls, and coordinate outputs. | Present as `run_episode` (`simulation/runner.py`) and the `utm-run` CLI (`evaluation/cli.py`); writes manifest, summary and per-step records to a folder. No service wrapper. |
+| Simulator and scenario engine | Anas | Ground truth, dynamics, seeded reset/step, termination, disturbances, and per-step simulator outputs. | Present: `DroneEnv` in `src/utm_services/simulation/env.py` (ideal and T2 profiles) and optional `PyBulletDroneEnv`. |
+| Reference/MARL policy adapter | Salman | Consume `ObservationV1`, apply declared preprocessing/model metadata, and emit bounded `MARLAction`. | Reference controller, adapter and the trained MAPPO policy (`learned.py`, trained by `utm-train`) present in `src/utm_services/policy/` and `src/utm_services/training/`. |
+| Safety filter (backup-set barrier QP) | Salman | Consume all modeled states required by the formulation plus proposed actions; return action and feasibility/intervention metadata. | Present in `src/utm_services/safety/filter.py`: joint OSQP QP, backup-set barrier, latch, escape stage, world-box limits, evasive fallback on solver error. Known backlog: `TASKS.md` BL-02 to BL-12. |
+| Run logger and results view | Aman | Record run manifest, per-step proposed/applied actions, filter outcomes, metrics, and artifacts for review. | Partly present: `utm-run` writes files and `utm-replay` renders them. No persistence service or results UI. |
+| Matched evaluation and edge benchmark | Anas | Run paired scenarios, report distributions, package/benchmark policy inference, and preserve manifests. | Partly present: `utm-eval-policy` evaluates a policy artifact. The matched three-variant campaign and the edge benchmark are not built. |
 
 The one-repository layout and owner paths are documented in [`REPOSITORY_STRUCTURE.md`](./REPOSITORY_STRUCTURE.md). Component ownership does not grant permission to redefine shared fields or units.
 
@@ -84,7 +84,7 @@ The full step-level flow is shown in the root README. At HLD level, one run foll
 3. The simulator resets from the validated scenario and returns initial policy observations plus metadata. It retains ground truth and owns transition, action application, and termination.
 4. For each active controlled agent, the policy receives `ObservationV1` and emits one timestamp-matched, bounded `MARLAction`. The deterministic reference and unshielded/shielded variants must be separately identified.
 5. The filter receives the proposed actions and the full set of modeled active `DroneState` values required by Salman's formulation. A feasible solve may pass through or modify the proposed actions and reports filter status.
-6. If the joint filter problem is infeasible or the solver errors, the V1 fallback returns zero acceleration for the affected joint solve, with `qp_feasible=false` and `fallback_used=true`. The filter result goes back to the simulator, which applies it and advances one step.
+6. The filter QP is always feasible (penalised slack per pair). If the solver errors, the V1 fallback returns an evasive acceleration for the conflict cluster, clipped to the world box, with `qp_feasible=false` and `fallback_used=true`. The filter result goes back to the simulator, which applies it and advances one step.
 7. The run layer records observations, modeled state where specified, proposed and returned actions, filter status, timing, and simulator results. At termination it aggregates the shared metrics and retains the run configuration and versions.
 
 The application layer coordinates calls, but does not own simulator dynamics, policy math, or the CBF formulation. The control loop does not depend on the visualization. Exact models and required log fields are in [`INTERFACES.md`](../../INTERFACES.md).
@@ -148,11 +148,11 @@ These are design constraints for the prototype, not claims that acceptance evide
 | Mock scenario data unavailable | Return HTTP 503 with the shared error envelope. | Aman |
 | Unknown mock route | Return HTTP 404 with the shared error envelope. | Aman |
 | Policy emits an invalid action | Reject it at the shared contract boundary; do not silently clip or reinterpret it. | Salman / integration owner |
-| Filter infeasible or solver error | Emit the documented zero-acceleration fallback and explicit flags; log the event. It is unverified and may not maintain separation. | Salman |
+| Solver error | Emit the documented evasive fallback for the conflict cluster and explicit flags; log the event. It is unverified and may not maintain separation. | Salman |
 | Run interrupted or incomplete | Preserve status and accounting so incomplete/aborted runs are not mistaken for successful missions. | Aman / Anas |
 | Missing component or version metadata | Fail run setup visibly or mark metadata unavailable; do not produce an untraceable result as reproducible evidence. | Aman |
 
-The filter's CBF/HOCBF assumptions and proof limits belong to Salman. A feasible QP, a `SafeAction` object, or zero observed violations in finite simulation runs does not prove zero risk. Chaos injections are test scenarios, not defenses against real attacks.
+The filter's barrier assumptions and proof limits belong to Salman. A feasible QP, a `SafeAction` object, or zero observed violations in finite simulation runs does not prove zero risk. Chaos injections are test scenarios, not defenses against real attacks.
 
 ## 10. Evolution toward a real service
 
@@ -176,7 +176,7 @@ The lower band in the diagram is a **capability planning view**, not a committed
 | Decision / handoff | Accountable owner | Needed before |
 | --- | --- | --- |
 | Confirm dynamics, deterministic reset behavior, concrete reset/step signatures, episode semantics, and scenario fields. | Anas | Aman wires the end-to-end run loop; Salman binds controller adapters. |
-| Document the relative-state formulation, CBF/HOCBF constraints, solver inputs, bounds, timing assumptions, infeasibility behavior, and proof limitations. | Salman | Filter implementation and any safety-related claims. |
+| Document the relative-state formulation, barrier constraints, solver inputs, bounds, timing assumptions, infeasibility behavior, and proof limitations. | Salman | Filter implementation and any safety-related claims. |
 | Confirm policy preprocessing, model/version metadata, batch semantics, and filter result details against shared contracts. | Salman, with Anas and Aman | Integrated controller variants. |
 | Select the V1 run entry point, manifest format, artifact location, and result inspection surface. | Aman, with team input | P2 integrated demo and matched evaluation freeze. |
 | Define workload and environment for platform-level scalability measurement. | Aman | P4 platform characterization. |

@@ -1,6 +1,6 @@
 """Seeded building layouts for replay scenes (viewer layer; not part of the simulator contract).
 
-v1 has no static obstacles (INTERFACES.md): neither the policy nor the HOCBF filter has any
+v1 has no static obstacles (INTERFACES.md): neither the policy nor the backup-set barrier filter has any
 notion of a building, and ``DroneEnv`` ignores them. These buildings are scenery that makes a
 replay readable and gives the PyBullet world solid objects. They are *not* avoided by the
 controller. What keeps a drone away from them is the layout itself:
