@@ -6,7 +6,7 @@ artifact loads on any machine that can run the simulator, and the forward pass
 is plain numpy (an ONNX export for P4 is a straight translation of these ops).
 
 This policy is a nominal action *proposer*. Its output is never labelled safe;
-the HOCBF filter sits after it in the shielded variant, and the unshielded
+the backup-set barrier filter sits after it in the shielded variant, and the unshielded
 variant is exactly this policy with no filter.
 
 Artifact directory (written by ``save_policy_artifact``)::
