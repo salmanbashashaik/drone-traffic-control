@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import osqp
 import scipy.sparse as sp
-from numba import njit
+from numba import njit, prange
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
     MAX_SPEED_MPS,
@@ -402,6 +402,59 @@ def _new_latch(n: np.ndarray, dist: float, escape: tuple[float, float] = (0.0, 0
     return _PairLatch(axis=np.cross(n, lateral), signs=signs, up=up)
 
 
+def _pair_states(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]]
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Positions and velocities of the first and second drone of each pair, (M, 3) each.
+
+    The same float64 values ``_relative`` and ``_backup_constraints`` read from
+    the states, gathered with one array per agent instead of one per pair.
+    """
+    index = {aid: k for k, aid in enumerate(state_map)}
+    pos = np.array([s.position_m for s in state_map.values()], dtype=np.float64).reshape(-1, 3)
+    vel = np.array([s.velocity_mps for s in state_map.values()], dtype=np.float64).reshape(-1, 3)
+    i = np.array([index[p[0]] for p in pairs], dtype=np.intp)
+    j = np.array([index[p[1]] for p in pairs], dtype=np.intp)
+    return pos[i], pos[j], vel[i], vel[j]
+
+
+# Relative distance from a threshold within which the vectorised screen defers
+# to the scalar code. The two differ by a few ulps (summation order), far below.
+_SCREEN_RTOL = 1e-9
+
+
+def _conflict_screen(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]], limit: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per pair (M,): whether min(|r|, |r + v t*|) < limit, and whether r . v >= 0.
+
+    The two tests of ``_update_latches``, vectorised. numpy's row sums can
+    differ from ``_relative``'s 1-D dot products by a few ulps, so a pair whose
+    value lies within _SCREEN_RTOL of a threshold is decided by the scalar code,
+    which keeps every decision identical to the per-pair loop.
+    """
+    if not pairs:
+        return np.zeros(0, dtype=bool), np.zeros(0, dtype=bool)
+    p_i, p_j, v_i, v_j = _pair_states(state_map, pairs)
+    r, v = p_i - p_j, v_i - v_j
+    rv = np.einsum("ij,ij->i", r, v)
+    vv = np.einsum("ij,ij->i", v, v)
+    t_star = np.clip(-rv / np.maximum(vv, 1e-9), 0.1, _ESCAPE_HORIZON_S)
+    dist = np.sqrt(np.einsum("ij,ij->i", r, r))
+    miss_v = r + v * t_star[:, None]
+    miss = np.sqrt(np.einsum("ij,ij->i", miss_v, miss_v))
+    speed = np.sqrt(vv)
+    scale = _SCREEN_RTOL * (1.0 + dist + speed * _ESCAPE_HORIZON_S)
+    in_conflict = np.minimum(dist, miss) < limit
+    separating = rv >= 0.0
+    near = (np.abs(dist - limit) <= scale) | (np.abs(miss - limit) <= scale) | (np.abs(rv) <= scale * (1.0 + speed))
+    for k in np.flatnonzero(near):
+        r_k, v_k, _, t_k = _relative(state_map[pairs[k][0]], state_map[pairs[k][1]])
+        in_conflict[k] = min(float(np.linalg.norm(r_k)), float(np.linalg.norm(r_k + v_k * t_k))) < limit
+        separating[k] = float(r_k @ v_k) >= 0.0
+    return in_conflict, separating
+
+
 def _update_latches(
     state_map: dict[str, DroneState], pairs: list[tuple[str, str]], config: FilterConfig,
     latch: dict[tuple[str, str], _PairLatch],
@@ -429,12 +482,12 @@ def _update_latches(
     """
     limit = SAFE_SEPARATION_M + config.margin_m + _PLUMB_OFFSET_M
     entering = []
-    for pair in pairs:
-        r, v, n, t_star = _relative(state_map[pair[0]], state_map[pair[1]])
-        if min(float(np.linalg.norm(r)), float(np.linalg.norm(r + v * t_star))) < limit:
+    in_conflict, separating = _conflict_screen(state_map, pairs, limit)
+    for pair, inside, apart in zip(pairs, in_conflict, separating, strict=True):
+        if inside:
             if pair not in latch:
                 entering.append(pair)
-        elif float(r @ v) >= 0.0:
+        elif apart:
             latch.pop(pair, None)
     for pair in set(latch) - set(pairs):
         del latch[pair]
@@ -786,7 +839,8 @@ def _backup_rollout(
         raise ValueError("backup rollout needs (M, 3) states and axes and (M,) up_latched")
     if not all(np.isfinite(x).all() for x in arrays):
         raise ValueError("backup rollout inputs must be finite")
-    traj, a_first, closing, used, still = _rollout_kernel(
+    kernel = _rollout_kernel_parallel if count >= _PARALLEL_MIN_PAIRS else _rollout_kernel
+    traj, a_first, closing, used, still = kernel(
         *arrays,
         _WORLD_MIN_M, _WORLD_MAX_M, float(config.margin_m), float(config.gamma),
         float(config.barrier_offset_mps), *_NEAR_VERTICAL_SIN, MAX_ACCEL_COMPONENT_MPS2,
@@ -886,58 +940,85 @@ def _evasive_kernel(n, up, low, high, w, lo, hi, u_max, out):
 
 
 @njit(cache=True)
+def _rollout_pair(
+    q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+    lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still,
+):
+    pi, pj, vi, vj = p_i[q].copy(), p_j[q].copy(), v_i[q].copy(), v_j[q].copy()
+    wi, wj, n, m = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    ai, aj = np.empty(3), np.empty(3)
+    low_i, high_i, low_j, high_j = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    for k in range(steps):
+        r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+        size = _max(_norm3(r0, r1, r2), 1e-9)
+        n[0], n[1], n[2] = r0 / size, r1 / size, r2 / size
+        m[0], m[1], m[2] = -n[0], -n[1], -n[2]
+        # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
+        up = (1.0 if n[2] > 0.0 else -1.0) if abs(n[2]) > 1e-3 else 1.0
+        if up_latched[q] != 0.0:
+            up = up_latched[q]
+        _limits_kernel(pi, vi, world_min, world_max, margin, gamma, c, u_max, low_i, high_i)
+        _limits_kernel(pj, vj, world_min, world_max, margin, gamma, c, u_max, low_j, high_j)
+        _evasive_kernel(n, up, low_i, high_i, axis[q], lo, hi, u_max, ai)
+        _evasive_kernel(m, -up, low_j, high_j, axis[q], lo, hi, u_max, aj)
+        if k == 0:
+            for d in range(3):
+                a_first[q, d] = ai[d] - aj[d]
+        for d in range(3):
+            wi[d] = vi[d] + ai[d] * dt
+            wj[d] = vj[d] + aj[d] * dt
+        cap_i = _min(1.0, v_max / _max(_norm3(wi[0], wi[1], wi[2]), 1e-9))
+        cap_j = _min(1.0, v_max / _max(_norm3(wj[0], wj[1], wj[2]), 1e-9))
+        for d in range(3):
+            wi[d] = wi[d] * cap_i
+            wj[d] = wj[d] * cap_j
+            pi[d] = pi[d] + 0.5 * (vi[d] + wi[d]) * dt
+            pj[d] = pj[d] + 0.5 * (vj[d] + wj[d]) * dt
+            vi[d], vj[d] = wi[d], wj[d]
+        r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+        traj[k, q, 0], traj[k, q, 1], traj[k, q, 2] = r0, r1, r2
+        u0, u1, u2 = vi[0] - vj[0], vi[1] - vj[1], vi[2] - vj[2]
+        closing[q] = -(r0 * u0 + r2 * u2 + r1 * u1) / _max(_norm3(r0, r1, r2), 1e-9)
+        if k + 1 >= min_steps and closing[q] <= 0.0:
+            used[q] = k + 1
+            still[q] = False
+            break
+
+
+@njit(cache=True)
 def _rollout_kernel(
     p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
     lo, hi, u_max, v_max, dt, min_steps, steps,
 ):
     count = p_i.shape[0]
     traj = np.full((steps, count, 3), np.nan)
-    a_first = np.zeros((count, 3))
-    closing = np.zeros(count)
-    used = np.full(count, steps)
-    still = np.ones(count, dtype=np.bool_)
-    pi, pj, vi, vj = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
-    wi, wj, n, m = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
-    ai, aj = np.empty(3), np.empty(3)
-    low_i, high_i, low_j, high_j = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    a_first, closing = np.zeros((count, 3)), np.zeros(count)
+    used, still = np.full(count, steps), np.ones(count, dtype=np.bool_)
     for q in range(count):
-        pi[:], pj[:], vi[:], vj[:] = p_i[q], p_j[q], v_i[q], v_j[q]
-        for k in range(steps):
-            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
-            size = _max(_norm3(r0, r1, r2), 1e-9)
-            n[0], n[1], n[2] = r0 / size, r1 / size, r2 / size
-            m[0], m[1], m[2] = -n[0], -n[1], -n[2]
-            # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
-            up = (1.0 if n[2] > 0.0 else -1.0) if abs(n[2]) > 1e-3 else 1.0
-            if up_latched[q] != 0.0:
-                up = up_latched[q]
-            _limits_kernel(pi, vi, world_min, world_max, margin, gamma, c, u_max, low_i, high_i)
-            _limits_kernel(pj, vj, world_min, world_max, margin, gamma, c, u_max, low_j, high_j)
-            _evasive_kernel(n, up, low_i, high_i, axis[q], lo, hi, u_max, ai)
-            _evasive_kernel(m, -up, low_j, high_j, axis[q], lo, hi, u_max, aj)
-            if k == 0:
-                for d in range(3):
-                    a_first[q, d] = ai[d] - aj[d]
-            for d in range(3):
-                wi[d] = vi[d] + ai[d] * dt
-                wj[d] = vj[d] + aj[d] * dt
-            cap_i = _min(1.0, v_max / _max(_norm3(wi[0], wi[1], wi[2]), 1e-9))
-            cap_j = _min(1.0, v_max / _max(_norm3(wj[0], wj[1], wj[2]), 1e-9))
-            for d in range(3):
-                wi[d] = wi[d] * cap_i
-                wj[d] = wj[d] * cap_j
-                pi[d] = pi[d] + 0.5 * (vi[d] + wi[d]) * dt
-                pj[d] = pj[d] + 0.5 * (vj[d] + wj[d]) * dt
-                vi[d], vj[d] = wi[d], wj[d]
-            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
-            traj[k, q, 0], traj[k, q, 1], traj[k, q, 2] = r0, r1, r2
-            u0, u1, u2 = vi[0] - vj[0], vi[1] - vj[1], vi[2] - vj[2]
-            closing[q] = -(r0 * u0 + r2 * u2 + r1 * u1) / _max(_norm3(r0, r1, r2), 1e-9)
-            if k + 1 >= min_steps and closing[q] <= 0.0:
-                used[q] = k + 1
-                still[q] = False
-                break
+        _rollout_pair(q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+                      lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still)
     return traj, a_first, closing, used, still
+
+
+# The same kernel with pairs spread over threads. Pairs are independent and each
+# writes only its own slots, so the results are those of _rollout_kernel bit for
+# bit; used from _PARALLEL_MIN_PAIRS pairs, below which threading costs more.
+@njit(cache=True, parallel=True)
+def _rollout_kernel_parallel(
+    p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+    lo, hi, u_max, v_max, dt, min_steps, steps,
+):
+    count = p_i.shape[0]
+    traj = np.full((steps, count, 3), np.nan)
+    a_first, closing = np.zeros((count, 3)), np.zeros(count)
+    used, still = np.full(count, steps), np.ones(count, dtype=np.bool_)
+    for q in prange(count):
+        _rollout_pair(q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+                      lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still)
+    return traj, a_first, closing, used, still
+
+
+_PARALLEL_MIN_PAIRS = 256
 
 
 def _backup_constraints(
@@ -976,15 +1057,13 @@ def _backup_constraints(
     dt = SIMULATION_STEP_MS / 1000.0
     d_eff = SAFE_SEPARATION_M + config.margin_m
 
-    def column(attr: str, k: int) -> np.ndarray:
-        return np.array([getattr(states[pair[k]], attr) for pair in pairs], dtype=np.float64)
-
-    traj, a_first, _, used, capped = _backup_rollout(
-        column("position_m", 0), column("position_m", 1),
-        column("velocity_mps", 0), column("velocity_mps", 1), config,
-        np.array([_latch_axis(frames, pair) for pair in pairs]).reshape(-1, 3),
-        np.array([(frames or {})[pair].up if pair in (frames or {}) else 0.0 for pair in pairs]),
-    )
+    axis, up = np.zeros((len(pairs), 3)), np.zeros(len(pairs))
+    if frames:
+        for k, pair in enumerate(pairs):
+            frame = frames.get(pair)
+            if frame is not None:
+                axis[k], up[k] = frame.axis, frame.up
+    traj, a_first, _, used, capped = _backup_rollout(*_pair_states(states, pairs), config, axis, up)
     dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
     k_star = np.argmin(dist, axis=0)
     cols = np.arange(len(pairs))
@@ -1061,57 +1140,52 @@ def build_hocbf_qp_matrices(
     )
 
     # Pairwise braking-barrier constraints (P0-SA-01 Section 6-8):
-    # n_ij^T (a_i - a_j) >= rhs
-    cbf_rows = []
-    l_cbf = []
-    u_cbf = []
-
+    # n_ij^T (a_i - a_j) >= rhs, one row per pair with coef at agent i and
+    # -coef at agent j, built straight into sparse form (exact zeros dropped,
+    # as a dense row converted to CSC drops them).
     if config.barrier != "backup":
         backup = None
     elif backup is None:
         backup = _backup_constraints(states, pairs_in_qp, config, frames)
+    coef = np.zeros((n_pairs, 3), dtype=np.float64)
+    l_cbf = np.zeros(n_pairs, dtype=np.float64)
+    if backup is not None and n_pairs:
+        coef[:], l_cbf[:] = backup[0], backup[1]
     for k, (id_i, id_j) in enumerate(pairs_in_qp):
-        idx_i = agent_idx[id_i]
-        idx_j = agent_idx[id_j]
-        row = np.zeros(dim, dtype=np.float64)
-        if backup is not None or (id_i, id_j) in escape_signs:
-            if (id_i, id_j) in escape_signs:
-                coef, rhs = _escape_constraint(
-                    states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
-                )
-            else:
-                coef, rhs = backup[0][k], float(backup[1][k])
-            row[3 * idx_i : 3 * idx_i + 3] = coef
-            row[3 * idx_j : 3 * idx_j + 3] = -coef
-            cbf_rows.append(row)
-            l_cbf.append(rhs)
-            u_cbf.append(np.inf)
-            continue
+        if (id_i, id_j) in escape_signs:
+            coef[k], l_cbf[k] = _escape_constraint(
+                states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
+            )
+        elif backup is None:
+            idx_i, idx_j = agent_idx[id_i], agent_idx[id_j]
+            coef[k], l_cbf[k], _ = _pair_constraint(states[id_i], states[id_j], config)
+            row = np.zeros(dim, dtype=np.float64)
+            row[3 * idx_i : 3 * idx_i + 3] = coef[k]
+            row[3 * idx_j : 3 * idx_j + 3] = -coef[k]
 
-        n_ij, rhs, _ = _pair_constraint(states[id_i], states[id_j], config)
-        row[3 * idx_i : 3 * idx_i + 3] = n_ij
-        row[3 * idx_j : 3 * idx_j + 3] = -n_ij
-
-        # Symmetric pairs stall at d_eff with no lateral escape. When the
-        # nominal would violate the constraint, bias both agents apart
-        # sideways (``_lateral``: right turn about +z away from vertical).
-        if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < rhs:
-            lateral = config.tie_break_mps2 * _frame_lateral(n_ij, _latch_axis(frames, (id_i, id_j)))
-            target[3 * idx_i : 3 * idx_i + 3] += lateral
-            target[3 * idx_j : 3 * idx_j + 3] -= lateral
-
-        cbf_rows.append(row)
-        l_cbf.append(rhs)
-        u_cbf.append(np.inf)
+            # Symmetric pairs stall at d_eff with no lateral escape. When the
+            # nominal would violate the constraint, bias both agents apart
+            # sideways (``_lateral``: right turn about +z away from vertical).
+            if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < l_cbf[k]:
+                lateral = config.tie_break_mps2 * _frame_lateral(coef[k], _latch_axis(frames, (id_i, id_j)))
+                target[3 * idx_i : 3 * idx_i + 3] += lateral
+                target[3 * idx_j : 3 * idx_j + 3] -= lateral
 
     q = np.concatenate([-2.0 * target, np.where(is_escape, 0.0, config.slack_weight)])
 
-    if cbf_rows:
-        A_cbf = sp.hstack([sp.csc_matrix(np.vstack(cbf_rows)), sp.eye(n_pairs)])
+    if n_pairs:
+        idx_i = np.array([agent_idx[p[0]] for p in pairs_in_qp], dtype=np.intp)
+        idx_j = np.array([agent_idx[p[1]] for p in pairs_in_qp], dtype=np.intp)
+        cols = np.concatenate([3 * idx_i[:, None] + np.arange(3), 3 * idx_j[:, None] + np.arange(3)], axis=1)
+        data = np.concatenate([coef, -coef], axis=1)
+        rows = np.repeat(np.arange(n_pairs), 6).reshape(n_pairs, 6)
+        keep = data != 0.0
+        A_rows = sp.csc_matrix((data[keep], (rows[keep], cols[keep])), shape=(n_pairs, dim))
+        A_cbf = sp.hstack([A_rows, sp.eye(n_pairs)])
         A_slack = sp.hstack([sp.csc_matrix((n_pairs, dim)), sp.eye(n_pairs)])
         A = sp.vstack([A_cbf, A_box, A_slack], format="csc")
-        l = np.concatenate([np.array(l_cbf, dtype=np.float64), l_box, np.zeros(n_pairs)])
-        u = np.concatenate([np.array(u_cbf, dtype=np.float64), u_box, np.full(n_pairs, np.inf)])
+        l = np.concatenate([l_cbf, l_box, np.zeros(n_pairs)])
+        u = np.concatenate([np.full(n_pairs, np.inf), u_box, np.full(n_pairs, np.inf)])
     else:
         A = sp.csc_matrix(A_box)
         l = l_box
