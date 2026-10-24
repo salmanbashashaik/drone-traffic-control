@@ -132,6 +132,7 @@ def test_geofence_incursion_logged_not_enforced() -> None:
 # ---------------------------------------------------------------- runner
 
 
+@pytest.mark.slow
 def test_runner_variants_share_scenario_and_label_policy() -> None:
     ref = run_episode(_config(*PAIR), "reference")
     unsh = run_episode(_config(*PAIR), "unshielded_marl", policy=ReferencePolicy(), policy_id="stand-in")

@@ -21,6 +21,7 @@ dependencies = [
 dev = [
     "httpx>=0.27,<1",
     "pytest>=8,<10",
+    "pytest-xdist>=3.6,<4",
     "ruff>=0.8,<1",
 ]
 # PyBullet quadrotor backend (Linux/WSL only: pybullet has no Windows wheels).
@@ -56,6 +57,10 @@ packages = [
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src", "."]
+# Default run: the fast suite, in parallel. `pytest -m slow` runs the slow suite, `pytest -m ""` everything,
+# `-n0` one process (for debugging). CI runs the fast suite on every push and the slow suite on PRs to main.
+addopts = "-n auto -m 'not slow'"
+markers = ["slow: fuzz, sweeps and long closed-loop episodes (run with -m slow)"]
 
 [tool.ruff]
 line-length = 100

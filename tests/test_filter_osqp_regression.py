@@ -25,6 +25,7 @@ def _hard_fuzz(monkeypatch):
 
 
 @pytest.mark.parametrize("seed", [864, 977])
+@pytest.mark.slow
 def test_hard_fuzz_seed_solves_without_fallback(seed, monkeypatch) -> None:
     result = _hard_fuzz(monkeypatch).run((seed, "backup", 100))
 

@@ -1,12 +1,14 @@
 name: tests
 
+# Fast suite on every push; slow suite (fuzz, sweeps, long episodes: `-m slow`) on pull requests to main.
 on:
-  pull_request:
   push:
+  pull_request:
     branches: [main]
 
 jobs:
-  pytest:
+  fast:
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +18,14 @@ jobs:
       - run: pip install -e ".[dev]"
       # known limit: ruff is not run yet; main has 17 pre-existing lint errors. Add `ruff check .` once they are fixed.
       - run: pytest -q
+
+  slow:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest -q -m slow

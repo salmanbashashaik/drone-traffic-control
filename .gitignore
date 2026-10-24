@@ -27,3 +27,5 @@ runs/
 
 # scripts/verify/fuzz.py raw output
 fuzz_*.json
+fuzz_*.jsonl
+verify_*/

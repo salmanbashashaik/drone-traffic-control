@@ -1,8 +1,11 @@
 """scripts/disturbance_matrix.py: the BL-06 baseline table (a measurement, not a safety test)."""
 
+import pytest
+
 from scripts.disturbance_matrix import CASES, T2_PROFILES, main
 
 
+@pytest.mark.slow
 def test_matrix_writes_one_row_per_case_profile_and_seed(tmp_path) -> None:
     assert main(["--seeds", "1", "--out", str(tmp_path)]) == 0
 

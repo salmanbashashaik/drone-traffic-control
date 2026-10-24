@@ -201,6 +201,7 @@ def _run(scenario_id, drones, steps=600):
 
 
 @pytest.mark.parametrize("gap", [40.0, 50.0, 60.0, 80.0])
+@pytest.mark.slow
 def test_head_on_regression(gap) -> None:
     x0 = 500.0 - gap / 2
     drones = [
@@ -221,6 +222,7 @@ def _crossing():
     ]
 
 
+@pytest.mark.slow
 def test_crossing_90_degrees_regression() -> None:
     s = _run("crossing-90", _crossing())
 
@@ -228,6 +230,7 @@ def test_crossing_90_degrees_regression() -> None:
     assert s["fallback_events"] == 0
 
 
+@pytest.mark.slow
 def test_same_seed_runs_are_identical() -> None:
     # OSQP's default adaptive-rho interval depends on wall-clock setup time;
     # before it was pinned, this scenario hit a solver error on some runs only.
@@ -238,6 +241,7 @@ def test_same_seed_runs_are_identical() -> None:
     assert {k: first[k] for k in keys} == {k: second[k] for k in keys}
 
 
+@pytest.mark.slow
 def test_three_drone_sandwich_is_physically_unrecoverable() -> None:
     """d1 and d3 close on a hovering d2 at 10 m/s from 10 m each side.
 
