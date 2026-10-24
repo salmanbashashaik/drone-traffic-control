@@ -201,10 +201,43 @@ def check_margin() -> None:
     # A line of sight in the rollout that turns vertical picks the vertical error up.
     turned = M.margin({"a": _pred(x_a, tall), "b": _pred(x_b, tall)}, rk, {("a", "b"): np.array([[0.0, 0.0, 6.0]])})
     assert turned.gnss_m > 5.0 * r_tall.gnss_m
-    # Lost-command term: constant per pair, one segment per drone.
+    # Lost-command term: constant per pair, one segment per drone, through the lag and drag (re-review 3a).
     T = M.stopping_s(rk, math.sqrt(_pred(x_a, base).tracker.R[3, 3]), math.sqrt(_pred(x_a, base).tracker.R[3, 3]))
-    assert math.isclose(r_tall.lost_m, 2 * 0.1 * 2 * math.sqrt(2) * M350.a_phys_mps2 * (M.AGE_S + T))
+    assert math.isclose(r_tall.lost_m, 2 * M.dc_max(M350) * M.pulse_gain(M350.drag_per_s, round(M.AGE_S + T, 6)))
     assert math.isclose(r_tall.horizon_s, T) and math.isclose(r_tall.requested_m, r_tall.margin_m)
+
+
+def check_pulse_gain() -> None:
+    """The lost segment's position error (re-review 3a) against ten-tick plant steps; monotone; limit 0.1 / D."""
+    drag = M350.drag_per_s
+    p = v = a = np.zeros(3)
+    ts, ps = [], []
+    for k in range(1, 1001):
+        c = np.array([1.0, 0.0, 0.0]) if k <= 10 else np.zeros(3)
+        p, v, a = kin_step(p, v, a, c, np.zeros(3), drag, E.TAU_ACT_S)
+        if k % 10 == 0:
+            ts.append(k * H)
+            ps.append(p[0])
+    g = [M.pulse_gain(drag, t) for t in ts]
+    assert np.allclose(g, ps, atol=2e-3), max(abs(x - y) for x, y in zip(g, ps))
+    assert all(b >= a - 1e-12 for a, b in zip(g, g[1:]))
+    assert abs(M.pulse_gain(drag, 200.0) - 0.1 / drag) < 1e-6
+    assert M.pulse_gain(drag, 6.9) < 0.5 * 0.1 * 6.9   # at least a factor 2 against the held error
+
+
+def check_dc_bound() -> None:
+    """The thrust clip is non-expansive; the command-difference bound lies between the box and the airframe (3b)."""
+    rng = np.random.default_rng(11)
+    for _ in range(2000):
+        x, y = rng.normal(0.0, 8.0, 3), rng.normal(0.0, 8.0, 3)
+        cx, cy = sim._authority(x, M350)[0], sim._authority(y, M350)[0]
+        assert np.linalg.norm(cx - cy) <= np.linalg.norm(x - y) + 1e-12
+    pr = _pred(np.array([500.0, 500, 115, 10, 0, 0, 3, 0, 0]), np.eye(9) * 0.01)
+    box = 2.0 * math.sqrt(3.0) * M.U_MAX
+    dc = M.dc_bound(pr, M.risk(1e-5))
+    assert box < dc <= M.dc_max(M350) and math.isclose(box, 12.124, rel_tol=1e-4), dc
+    pr.tracker.corr = np.eye(9) * 1e4          # a huge correction: the airframe's own bound applies
+    assert M.dc_bound(pr, M.risk(1e-5)) == M.dc_max(M350)
 
 
 def check_absorbable() -> None:
@@ -241,6 +274,6 @@ def check_silent_los() -> None:
 if __name__ == "__main__":
     for f in (check_constants, check_transition, check_step_matrices, check_lagged_rollout, check_drag,
               check_cleared_speed, check_command_log, check_nis, check_lag_id, check_covariance_grows, check_margin,
-              check_absorbable, check_job_order, check_silent_los):
+              check_pulse_gain, check_dc_bound, check_absorbable, check_job_order, check_silent_los):
         f()
         print("ok", f.__name__)

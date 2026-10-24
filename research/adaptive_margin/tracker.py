@@ -190,6 +190,7 @@ class Tracker:
         self.q, self.tau_a, self.drag = np.asarray(q, float), tau_a, drag
         self.x = np.concatenate([z, np.zeros(3)])
         self.P = np.diag(np.concatenate([self.R.diagonal(), p_ww0]))
+        self.corr = self.P.copy()   # covariance of the latest update's correction K S K'; the prior before any
         self.tick, self.a = tick0, np.asarray(a0, float)
         self.nis: deque[float] = deque(maxlen=NIS_WINDOW)
         self.lag = LagMonitor(tau_a, a0, tick0)
@@ -223,6 +224,7 @@ class Tracker:
         S = P[:6, :6] + self.R
         K = np.linalg.solve(S, P[:6, :]).T
         self.x = x + K @ nu
+        self.corr = K @ S @ K.T
         IKH = np.eye(9) - K @ np.hstack([np.eye(6), np.zeros((6, 3))])
         self.P = IKH @ P @ IKH.T + K @ self.R @ K.T   # Joseph form
         self.tick = tick_m

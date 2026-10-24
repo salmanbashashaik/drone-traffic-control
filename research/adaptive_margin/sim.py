@@ -58,6 +58,7 @@ from research.adaptive_margin.margin import (
     Pred,
     Risk,
     absorbable,
+    dc_bound,
     margin,
     monitor,
     risk,
@@ -247,6 +248,7 @@ class _Out:
     absorb_cycles: int = 0
     absorb_max: float = 0.0
     saturated_cycles: int = 0
+    dc_ratio: float = 0.0
     fallbacks: int = 0
     solver_errors: int = 0
     cap_pairs: int = 0
@@ -317,6 +319,9 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
     up: dict[int, list[tuple[int, np.ndarray]]] = {}           # playout tick -> (drone, c)
     latch: dict = {}
     m_prev = 0.0
+    # Command-difference bound per drone, fixed at clearance (re-review 3b), and the last command sent.
+    dc_hold: list[float | None] = [None] * n
+    c_sent = c_now.copy()
     out = _Out()
 
     def alarm(name: str, t: int) -> None:
@@ -351,7 +356,10 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
                 preds = {}
                 for i, aid in enumerate(ids):
                     x, P, a0 = trackers[i].predict(t + P_TICKS, logs[i], floor=True)
-                    preds[aid] = Pred(x, P, trackers[i], logs[i], fleet[i], a0)
+                    preds[aid] = pr = Pred(x, P, trackers[i], logs[i], fleet[i], a0)
+                    pr.dc = dc_hold[i] if dc_hold[i] is not None else dc_bound(pr, rk)
+                    if t * H >= WARMUP_S and dc_hold[i] is None:
+                        dc_hold[i] = pr.dc
                     rollout.CTX[aid] = (a0, D[i], x[6:], fleet[i].a_phys_mps2)
                 states = [_state(aid, pr.x[:3], pr.x[3:6], t) for aid, pr in preds.items()]
                 # The backup each pair would fly now, through the lag (review B1, B4).
@@ -396,6 +404,13 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
                     c, sat = _authority(u - preds[aid].drag, fleet[i])
                     if sat:
                         res.alarms.add("saturation")
+                    # The lost-command term assumes |c_k - c_(k-1)| <= dc; the station checks it exactly.
+                    if t * H >= WARMUP_S:
+                        ratio = float(np.linalg.norm(c - c_sent[i])) / preds[aid].dc
+                        out.dc_ratio = max(out.dc_ratio, ratio)
+                        if ratio > 1.0 + 1e-9:
+                            res.alarms.add("dc")
+                    c_sent[i] = c
                     logs[i].plan(t + P_TICKS, c)
                 else:
                     c, sat = _authority(u + D[i] * routes[i][0](t_play), fleet[i])
@@ -440,6 +455,8 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
         "m_star_t0": out.t0_star and round(out.t0_star, 2),
         "absorb_cycles": out.absorb_cycles, "absorb_max_m": round(out.absorb_max, 3),
         "saturated_cycles": out.saturated_cycles,
+        "dc_bound": [round(float(x), 3) for x in dc_hold if x is not None] if mode == "adaptive" else None,
+        "dc_ratio_max": round(out.dc_ratio, 3) if mode == "adaptive" else None,
         "fallbacks": out.fallbacks, "solver_errors": out.solver_errors, "cap_pairs": out.cap_pairs,
         "uplink_lost": int(sum(lg.lost for lg in logs)) if mode == "adaptive" else None,
         "fleet": [af.name for af in fleet], "t_encounter_s": cond.preroll_s + T_C_S,

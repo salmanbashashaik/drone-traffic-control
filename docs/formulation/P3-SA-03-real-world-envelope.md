@@ -233,7 +233,7 @@ The backup rollout (§3.5) also flies each drone with its real thrust limit, so 
 
   T = (2 v_max + K1 σ_vc) / (√2 u_max) + τ_a.
 
-With RTK velocity accuracy T ≈ 6.3 s at either target. The earlier T, solved from the current closing speed with a fixed-point iteration on the drag uncertainty, could shrink as a pair approached; the reviewer showed that a constant T removes a path by which the margin fell just before an encounter. The `authority` alarm, which flagged the iteration's failure, is removed with it.
+T = 6.445 s with RTK velocity accuracy at 10⁻⁵ (6.459 s at 10⁻⁷) and 6.495 / 6.515 s with the SBAS and SPS velocity figure. The earlier T, solved from the current closing speed with a fixed-point iteration on the drag uncertainty, could shrink as a pair approached; the reviewer showed that a constant T removes a path by which the margin fell just before an encounter. The `authority` alarm, which flagged the iteration's failure, is removed with it.
 
 ### 3.4 Prediction through the delay (Singletary, Chen and Ames 2020)
 
@@ -263,13 +263,54 @@ EPS_LAG and DU_NOW (the cover for a command sent this cycle) are removed. No sep
 
 The 3GPP reliability of 99.9 % puts two consecutive losses of one drone's commands at 10⁻⁶. The margin covers one lost command per drone, and the monitor raises `link` at a streak of two.
 
-A lost command leaves its predecessor in force for one 100 ms segment. Both lie in the airframe's thrust set (a horizontal disc of radius a_phys and |c_z| ≤ a_phys), so they differ by at most dc_max = 2√2 a_phys. The resulting velocity error, at most 0.1 dc_max, is held open loop from the start of the segment to the end of the horizon. The lag only delays the error, so the bound holds through it.
+A lost command leaves its predecessor in force for one 100 ms segment (PX4 hold-last). The station learns of the loss only from the drone's command echo, at most AGE_S = 2 P + 2 cycles = 0.46 s after the segment started (one message lost, the next still in flight; telemetry older than AGE_S raises `link`). If the backup must start now, the backup from the station's estimate carries the lost segment's error for the whole horizon. The term is constant per drone (review B2): it assumes the lost segment started AGE_S before the action time, whatever the commands still unconfirmed are.
 
-**Constant per drone (review B2).** The term no longer looks at which commands are still unconfirmed. It assumes the worst: the lost segment started as early as the station's knowledge allows. The station knows the applied commands up to the latest telemetry it has. With one message lost and the next still in flight (up to P), that knowledge is at most AGE_S = 2 P + 2 cycles = 0.46 s older than the action time. So
+**The first version (`a5b5264`, rows `runs3`).** The two commands differ by at most dc_max = 2√2 a_phys (both lie in the airframe's thrust set), and the velocity error 0.1 dc_max was held for AGE_S + T:
 
-  lost_i = 0.1 · dc_max,i · (AGE_S + T).
+  lost_i = 0.1 · 2√2 a_phys,i · (AGE_S + T).
 
-At T = 6.3 s this is 10.8 m for the 30° airframes and 13.2 m for the 35° ones, so 21.7–26.3 m per pair. Telemetry older than AGE_S raises `link`. This term now dominates the RTK margin (§6, §8).
+With T = 6.45–6.52 s (§3.3) this is 11.06 m for the 30° airframes and 13.41 m for the 35° ones at RTK and 10⁻⁵ (up to 11.17 / 13.55 m under SBAS and SPS at 10⁻⁷), 22.1–26.8 m per pair. It was the largest term of every RTK margin (§6). The Fable re-review found the bound correct under the model and loose in two places, and the founder accepted tightening both (DECISIONS, 2026-10-24).
+
+**What exists (literature first).** Sources marked *secondary* were read through abstracts or search summaries only. This session could not fetch arXiv: the network policy blocks it.
+
+| Source | What it proves | Under which assumptions | Use here |
+|---|---|---|---|
+| Singletary, Chen, Ames 2020, CDC, [arXiv 2005.06418](https://arxiv.org/abs/2005.06418) (Algorithm 1, Corollary 1; read in the Fable re-review) | Safety of a sampled-data CBF controller with an input delay: predict the state at the moment the input acts, from the buffer of sent inputs, and enforce the barrier there; robust to a bounded prediction error | Delay known and an integer number of periods; every input arrives; bounded prediction error | Prediction through the delay (§3.4). Loss is outside the paper: the lost-command term is this note's own extension |
+| van Wijk, Coogan, Molnar, Majji, Hobbs 2024, L-CSS, [arXiv 2409.07700](https://arxiv.org/abs/2409.07700) (Lemmas 1, 2) | Backup CBF stays safe under a bounded disturbance if the safety function is tightened along the backup by the tube δ_max(τ) = (ξ / L_cl)(e^{L_cl τ} − 1) | Disturbance bounded by ξ; closed-loop backup flow Lipschitz with constant L_cl; terminal backup set | The lost segment is a bounded input disturbance of known area. Item (a) replaces the generic growth bound by the exact response of the linear lag-and-drag chain, which decays instead of growing |
+| Quevedo and Nešić 2011, IEEE TAC 56(2):370–375, doi:10.1109/TAC.2010.2095950 (*secondary*) | Input-to-state stability of packetized predictive control: the controller sends a sequence of inputs, the actuator plays the buffer on dropouts | Bounded number of consecutive dropouts; constrained nonlinear plant with bounded disturbances. Stability, not a barrier | §8 option (b) (a command plan per message); not used in the prototype |
+| Akbarzadeh, Ashoori, Mamduhi, Lavaei 2026, [arXiv 2606.24148](https://arxiv.org/abs/2606.24148) (*secondary*) | Packetized safety controllers from control barrier certificates (sum-of-squares) with a plant-side buffer; probabilistic safety over a finite horizon | Discrete-time polynomial stochastic systems; downlink losses Bernoulli; delayed uplink | The closest safety analogue of a command plan with loss; not the hold-last case here |
+| Seidel, Anand, Allgöwer 2026, [arXiv 2601.00494](https://arxiv.org/abs/2601.00494) (*secondary*, abstract) | Barrier functions for weakly-hard dropout patterns, with hold or zero actuation during open-loop intervals | Losses bounded within a window ((m, k) constraints) | The honest loss model once the operating link's burst statistics are measured (§7) |
+| Dean et al. 2020, CoRL (PMLR 155); Cosner et al. 2021, IROS, [arXiv 2104.14030](https://arxiv.org/abs/2104.14030) (*secondary*) | Measurement-robust CBFs: safety with a bounded state-estimate error, combined with backup sets (Cosner) | Bounded measurement error; Lipschitz barrier and dynamics | Item (c) below |
+| Beger, Chen, Hirche 2026, [arXiv 2603.29792](https://arxiv.org/abs/2603.29792) (*secondary*) | Where to enforce a CBF in a delayed networked loop: a local filter on fresh measurements tolerates larger disturbances than predictive constraints in a remote MPC | Delayed network; remote MPC | Supports the onboard-layer direction (§8); not used here |
+
+No source found bounds the effect of a single lost hold-last command on a backup certificate, or bounds the change between consecutive ground-station commands that carry a drag trim. Items (a) and (b) are this note's own, built on the van Wijk tube.
+
+**(a) The error decays through the drag.** The plant is linear in the perturbation: a thrust error δc held for one segment drives the actuator through the lag and the velocity through the drag, δa' = (δc − δa) / τ_a and δv' = δa − D δv, whatever the wind and the state (the drag D (w − v) is linear in v, so the wind estimate and its uncertainty do not enter). The position error at time t after the segment starts is |δc| g(t), with g the position response of that chain to a unit pulse of 0.1 s, computed exactly by matrix exponential (`margin.pulse_gain`). For a positive pulse the velocity stays non-negative, so g is non-decreasing and its value at AGE_S + T bounds the error over the whole horizon. Its limit is 0.1 / D; with the M350's D = 0.246 s⁻¹, g(6.9 s) = 0.326 s against the 0.69 s of the held error, a factor of 2.1 (2.3–2.6 for the other types).
+
+The founder's decision asked for "the tracker's drag estimate and its K σ bound". Under the linear drag model the perturbation decays at the registered D, which the tracker does not estimate and which carries no σ. The K σ of the wind and velocity estimates changes the drag force, not its decay rate. So no K σ term enters (a). The real exposure is model error: a true drag coefficient below the registered D, or drag that is not linear, slows the decay (§7). D is derived from the declared top speed and is an upper bound when that speed is a software limit (§3.3), which is the unsafe direction for (a). This is recorded as a limit and a founder item, not hidden in a factor (§8).
+
+The speed cap and the thrust clip are projections onto convex sets, so they cannot enlarge a perturbation, and the bound holds through them. Like the tube of §3.2, the response is taken open loop: the evasive backup's own feedback is not credited.
+
+**(b) The command difference is bounded by the filter's box and the trim, not by the airframe.** The station sends c = clip(u − D (ŵ − v̂)), with u the filter's acceleration, which main bounds per axis by u_max = 3.5 m/s². The clip is a projection onto the airframe's convex thrust set and so does not enlarge differences. For two consecutive commands:
+
+  |c_k − c_{k−1}| ≤ |u_k − u_{k−1}| + D |Δ(v̂ − ŵ)| ≤ 2√3 u_max + D |Δ(v̂ − ŵ)|.
+
+The first part is 12.12 m/s². The trim change has two parts between the predictions of consecutive cycles, which are 100 ms apart:
+
+- *Propagation.* The predicted velocity moves at the model's acceleration a_act + D (ŵ − v̂), with a_act in the thrust set (|a_act| ≤ √2 a_phys) and the airspeed at most v_max + the declared wind limit (the contract's 15 m/s plus 12 m/s; `wind` checks the second). The predicted wind has no drift. So the propagation adds at most 0.1 (√2 a_phys + D (v_max + w_lim)), 0.36–0.61 m/s² after the factor D for the fleet.
+- *Correction.* Each Kalman update moves the estimate by K ν, whose covariance is K S Kᵀ. Along v − w its size is at most K3 √λ_max(M K S Kᵀ Mᵀ), with M = [0, I, −I], K3 = √χ²₃(1 − q) for a three-dimensional vector at the per-check risk q, and at most N_UPD = 2 updates per cycle. A third update in one cycle needs a message delayed past the 99.9 % latency quantile.
+
+So
+
+  dc_i = min(2√2 a_phys,i, 2√3 u_max + D_i [0.1 (√2 a_phys,i + D_i (v_max + w_lim,i)) + N_UPD K3 √λ_max(M C_i Mᵀ)]),
+
+with C_i the correction covariance of drone i's latest update. To keep the term constant during an encounter (B2), dc_i is fixed per drone at clearance (the first cycle at or after the 2 s convergence) and held for the run. The station knows every command it sends, so it checks the assumption exactly. A new monitor condition `dc` fires when a sent command differs from the drone's previous one by more than dc_i. Each row records the largest ratio |Δc| / dc_i after clearance. `dc` counts as a warning: it says that the lost-command term's assumption failed. Two limits: the correction part rests on the tracker's Gaussian model at K3, and the propagation part on the airspeed bound, which `wind` checks only horizontally.
+
+**The term after (a) and (b):**
+
+  lost_i = dc_i · g_i(AGE_S + T).
+
+At clearance with RTK this is about 3.4–4.1 m per drone in calm air (`check.check_lost_bound` recomputes the pieces), against 11.06–13.41 m before. The matrix values are in §6.
 
 ### 3.7 Sampling and linearisation
 
@@ -315,7 +356,7 @@ A falling m_req is applied at once. A rising one is applied only up to m*, and n
 
 ### 3.10 Integrity, protection levels and the remaining design changes (review B5)
 
-**SBAS does not qualify for the margin's time to alert.** An integrity bound is useful to the margin only if the receiver alerts before the bound can be exceeded for the length of the horizon over which the margin relies on it, so the time to alert must be shorter than T. SBAS APV-I specifies a time to alert of 10 s (Kim et al. 2016, Table 2, ICAO SARPs). T is about 6.3 s (§3.3). A 10 s alert can arrive after the backup has run its course, so SBAS APV-I does not meet the rule. The previous version of this section said SBAS qualified; that was wrong.
+**SBAS does not qualify for the margin's time to alert.** An integrity bound is useful to the margin only if the receiver alerts before the bound can be exceeded for the length of the horizon over which the margin relies on it, so the time to alert must be shorter than T. SBAS APV-I specifies a time to alert of 10 s (Kim et al. 2016, Table 2, ICAO SARPs). T is 6.45–6.52 s (§3.3). A 10 s alert can arrive after the backup has run its course, so SBAS APV-I does not meet the rule. The previous version of this section said SBAS qualified; that was wrong.
 
 **No positioning grade qualifies for dense corridors today.** SBAS fails the time to alert. The ZED-F9P's protection level is a 5 % bound per epoch (§2.5). Integrity RTK exists only as vendor claims. A corridor whose lane spacing rests on a GNSS margin therefore has no positioning grade whose integrity was verified against this rule. See founder items 2 and 6 (§8).
 
@@ -329,6 +370,23 @@ Either way the position floor stays as the receiver's reported accuracy when no 
 **B8 is a stated limit.** A single receiver without integrity can report a σ five times smaller than its true error. A steady bias moves the fix and the track together, so the NIS cannot see it (§5). The design does not detect this fault and adds no bespoke bias detector (founder decision). It is a limit of single-receiver GNSS without integrity.
 
 **Lag: declared upper bound until identified (documented, not prototyped).** The lag monitor cannot tell lags apart while the command is steady (§5). The founder's interim design: each drone declares an upper bound τ_max beside τ_a, and the backup rollout of §3.5 flies τ_max until the identifier reports the lag *consistent*, then τ_a. The identifier reports *consistent*, *mismatch* (the `lag` alarm) or *not identifiable* (the window's non-centrality λ = Σ‖Δy‖² / σ²_acc for the nearest alternative is below the value that gives the F test 90 % power). It is not prototyped because no source gives a τ_max for any fleet type (§2.4). With the lag now inside the rollout, the change would be one parameter of `rollout.CTX`.
+
+### 3.11 Using the next measured state (design note only, §8 option c)
+
+Not prototyped (founder decision). The question is whether the station may bound a lost command's effect only until it sees it, instead of over the whole horizon.
+
+**What the measurement gives.** A velocity error of 0.1 dc_i ≈ 1.2 m/s is twelve or more times the receivers' velocity σ (0.074–0.102 m/s), so the next telemetry message shows it, about 0.1–0.2 s after the segment, well before the echo confirms the loss (up to AGE_S). The tracker's update then corrects most of the estimate's error. What is left is (I − K_v) δv plus the noise the gain lets through.
+
+**What it does not give.** Measuring the error makes it known, not absent. If the loss falls on the cycle at which the backup must start, the drone's true backup starts with the error, and the barrier at the next cycle is evaluated at a state whose backup is shorter by the error's effect. Recursive feasibility of a backup barrier (Gurriet et al. 2018; Chen, Singletary, Ames 2021) needs the next state on the certified backup's flow, or within the margin of it. So (c) does not remove the horizon part; it changes what bounds it. The bound becomes the closed-loop backup's sensitivity to an initial velocity error, after the station has re-planned from the measured state, plus the error accumulated in the detection window.
+
+**What it needs, in order.**
+
+1. *A closed-loop tube for the evasive backup.* van Wijk et al. need a Lipschitz closed-loop flow (L_cl). Main's evasive backup brakes bang-bang with a stop rule and a latch. The P3-SA-01 review records that a bang-bang brake gives no bounded tube while a contracting PD brake does. Without a Lipschitz backup there is no theorem to apply. With one, the sensitivity of a braking backup to an initial velocity error δv is about δv · (t_det + v / u_max) at speed v: at cruise speeds this is comparable to (a)'s δv (1 − e^{−DT}) / D, so the gain over (a) may be small.
+2. *A measurement-robust barrier condition at the next cycle* (Dean et al. 2020; Cosner et al. 2021), with the estimate error after the update bounded at the per-check risk, which needs the worst-case Kalman gain under the position floor (`Tracker.floored`) to be derived.
+3. *A recursive-feasibility step under a state jump.* Show that if the QP was feasible at cycle k with margin m and the state moves by at most the detection-window error before cycle k + 1, the backup from the new estimate keeps h ≥ 0 at the same margin. This is the B2 argument with a jump term. The sampled-data robust CBFs (Singletary 2020, Theorem 1; the doubly robust sampled-data CBF of arXiv 2309.08050, *secondary*) bound the state over one period and would supply the jump bound.
+4. *Re-prediction from the pre-loss posterior.* `CommandLog.confirm` corrects the log when the echo arrives, but the tracker's posterior is not re-propagated from before the loss (Fable re-review). The applied-command echo of contract v1.6 (founder D1) and a stored pre-loss posterior would give the exact correction.
+
+Conclusion of the note: (c) is sound only with a Lipschitz backup, so it depends on a change to main's evasive kernel. Its expected gain over (a) and (b) is small at cruise speeds. Option (b) of §8 (a command plan per message) waits for a consistent per-drone backup (BL-03) and an onboard-layer ADR.
 
 ## 4. Tracker
 
@@ -376,6 +434,7 @@ The margin of §3 is valid only while its assumptions hold. `margin.monitor` che
 | `lag` | F statistic of the lag identification (below) | ≤ F₁,₅₃(1 − P_RISK / 5) = 15.97 | the drone answers commands with a lag other than the declared one | Fly the drone's backup rollout at the largest lag in the grid (§3.10) and take the drone out of dense flows until it is re-identified. |
 | `nis` | Σ of the last 10 NIS | ≤ χ²₆₀(0.999) = 99.6 | the GNSS error or the wind is outside the tracker's model (GNSS noise larger than reported, a jump in the fix, a gust front); a steady bias is not seen | Treat the drone's position as unknown: set its σ to the worst-site figure (`SPS_WORST`), widen the margin, take it out of the flow and land it. |
 | `link` | age of the latest confirmed command; loss streak; age of the latest telemetry | ≤ 1.0 s (`COM_OF_LOSS_T`); streak < 2; ≤ AGE_S = 0.46 s | the drone is about to fall back to its own failsafe; or the single-loss bound of §3.6 is broken | Treat the drone as non-cooperative. Reserve its reachable set from the last estimate and move the others away. |
+| `dc` | the difference between consecutive thrust commands the station sends to one drone | ≤ dc_i, the bound fixed at clearance (§3.6) | the lost-command term's assumption no longer holds: a lost command could cost more than the margin covers | Hold new clearances in the area and widen the drone's term to the airframe bound 2√2 a_phys until the cause is found. Counted as a warning. |
 | `wall` | any world-box acceleration limit active | none active | the backup's A_REL holds only away from the walls | Keep traffic one stopping distance from the box edges, or plan with the reduced A_REL there. |
 | `margin` | required margin m_req | ≤ 48.57 m (`FilterConfig` bound) | the filter cannot express the margin | Deconflict strategically: wider spacing or a ground hold. Not counted as a warning in §6: it marks a condition outside the limits, not a fault. |
 | `absorb` | m_req − m_app (§3.9) | 0 | the margin in force is short of the one required this cycle | Hold new clearances in the area until the deficit is gone. Not counted as a warning in §6 (review B2). |
