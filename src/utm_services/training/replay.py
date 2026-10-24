@@ -10,13 +10,15 @@ The simulation is the project's own ``DroneEnv`` (or its PyBullet backend) throu
 Buildings come from ``city.py``: scenery with a clear nominal route, NOT something the policy or
 the filter knows about. Drone glyphs are drawn larger than real size so they can be seen.
 
-Scenario spec: a ScenarioConfig JSON path, ``heldout:<seed>:<n>`` (procedural family, n drones,
-conflict 0.8) or ``dense16:<seed>``.
+Scenario spec: ``random:<n>`` (n drones, new random starts and destinations every run, seed
+printed), ``heldout:<seed>:<n>`` (the same generator with a fixed seed), ``dense16:<seed>``, or a
+ScenarioConfig JSON path.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -37,6 +39,13 @@ PALETTE = ["#1a73e8", "#f57c00", "#2e9e5b", "#d81b60", "#7e57c2", "#00acc1", "#c
 
 
 def load_scenario(spec: str) -> ScenarioConfig:
+    if spec.startswith("random:"):
+        # random:<n>[:<conflict 0-1>] -> fresh random starts and goals each call; the seed is printed to reproduce it.
+        parts = spec.split(":")
+        n, conflict = int(parts[1]), float(parts[2]) if len(parts) > 2 else 0.8
+        seed = int.from_bytes(os.urandom(4), "little") % 1_000_000 + 20_000_000
+        print(f"random scenario: {n} drones, seed {seed} (reproduce with heldout:{seed}:{n} when conflict is 0.8)", flush=True)
+        return sample_scenario(seed, n, conflict, 800, scenario_id=f"random-n{n}-s{seed}")
     if spec.startswith("heldout:"):
         _, seed, n = spec.split(":")
         return sample_scenario(int(seed), int(n), 0.8, 800, scenario_id=f"heldout-n{n}")
@@ -182,7 +191,7 @@ def animate(records, ids, goals, buildings, path: Path, title: str, stride: int 
 
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="utm-replay", description=__doc__.splitlines()[0])
-    p.add_argument("scenario", help="ScenarioConfig JSON, heldout:<seed>:<n>, or dense16:<seed>")
+    p.add_argument("scenario", help="random:<n> | heldout:<seed>:<n> | dense16:<seed> | ScenarioConfig JSON path")
     p.add_argument("--artifact", type=Path, help="policy artifact directory (omit for the reference controller)")
     p.add_argument("--variant", choices=VARIANTS, default="unshielded_marl")
     p.add_argument("--profile", choices=PROFILES, default="ideal")

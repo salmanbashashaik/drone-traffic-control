@@ -2,7 +2,7 @@
 
 This gets a new person from a fresh clone to a 3D, rotatable replay of trained drones flying through a city, and shows how to evaluate and retrain the policy. Everything here is simulation only. The learned policy is a nominal action proposer, not a safety controller; read [`MARL_TRAINING.md`](./MARL_TRAINING.md) for what the results do and do not show.
 
-The commands below were run from a brand-new virtual environment on macOS (Apple silicon, Python 3.11). Linux and Windows steps that I could not run myself are marked **untested**.
+Sections 2, 3, 5 and 6 were run from a fresh clone of the pushed branch in a brand-new virtual environment on macOS (Apple silicon, Python 3.11). Section 4 (PyBullet) was run in my working environment only, because compiling PyBullet takes several minutes and I did not repeat it in a clean one. Linux and Windows steps that I could not run myself are marked **untested**.
 
 ## 1. Requirements
 
@@ -30,7 +30,16 @@ utm-replay --help
 python -m pytest tests/test_contracts.py tests/test_reference_policy.py tests/test_simulation_env.py -q
 ```
 
-## 3. See the drones (the quick way, about 10 seconds)
+## 3. See the drones (the quick way, about 15 seconds)
+
+Fastest: **random drones, random start and destination points, every run**:
+
+```bash
+utm-replay random:6 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
+    --variant shielded_marl --html --out runs/viz/random6
+```
+
+Change `6` to any number of drones. It prints the seed it picked so you can reproduce the run (`heldout:<seed>:<n>`). Then open `runs/viz/random6/replay3d.html`. A fixed, repeatable example:
 
 ```bash
 utm-replay heldout:18000044:6 \
@@ -73,6 +82,7 @@ In that scenario the unshielded run ends with 6 violation pair-steps (closest 3.
 
 The first argument of `utm-replay` is one of:
 
+- `random:<n>`: `n` drones with new random starts and destinations every run (add `:0.3` for fewer forced head-ons, default conflict is 0.8).
 - `heldout:<seed>:<n>`: a generated scenario with `n` drones (1 or more; the policy was trained on 2 to 4, so 6 or more is outside its training), for example `heldout:12000008:4` or `heldout:18000044:6`. The same seed always gives the same scenario.
 - `dense16:<seed>`: 16 drones with random starts and goals.
 - a path to a `ScenarioConfig` JSON file, for example `scenarios/head-on-40.json` (two drones flying at each other).
@@ -102,7 +112,7 @@ utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300
     --variant shielded_marl --pybullet --snapshots 6 --out runs/viz/pybullet
 ```
 
-`--snapshots N` renders the 3D world every N steps to `scene_start.png`, `scene_mid.png`, `scene_end.png` and `scene.gif`. `--gui` opens a live PyBullet window instead (add `--speed 0.6`; close the window to exit). The window is slow, and on some machines it was not usable, so the browser viewer above is the supported way to look around. Linux: `python -m pip install -e ".[physics]"` then the `gym-pybullet-drones` line (**untested**). Windows has no PyBullet wheels.
+This section is optional; nothing else depends on it, and the simulation in sections 3, 5 and 6 does not need PyBullet. `--snapshots N` renders the 3D world every N steps to `scene_start.png`, `scene_mid.png`, `scene_end.png` and `scene.gif`. `--gui` opens a live PyBullet window instead (add `--speed 0.6`; close the window to exit). The window is slow, and on some machines it was not usable, so the browser viewer above is the supported way to look around. Linux: `python -m pip install -e ".[physics]"` then the `gym-pybullet-drones` line (**untested**). Windows has no PyBullet wheels.
 
 ## 5. Measure it (evaluation)
 
