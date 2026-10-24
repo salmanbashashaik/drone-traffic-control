@@ -16,6 +16,8 @@ Built and merged on `main`:
 
 Evidence for the filter (simulation, `docs/results/pr12-final-report.md`): random 2-6 drone fuzz, 5000 runs: 0 runs inside `d_eff`, 0 fallbacks. Hard fuzz, 5000 runs: 13 inside `d_eff` (bar 14). These are measurements of the model under its assumptions. They are not a proof and not a flight claim.
 
+Most important open finding (research/adaptive-margin, P3-SA-03, in-model): with realistic GNSS error, telemetry delay and actuator lag, main's filter as configured today lost separation in 81 of 141 calm-air runs (SBAS 37/47, GPS 37/47, RTK 7/47), while the tracker + adaptive-margin prototype lost none in 282 recoverable runs. Main is therefore not real-world safe until tracking, delay compensation and a disturbance margin are in the filter (BL-05, BL-06).
+
 Known weak points (all in the backlog below): no disturbance margin (under T2 the shielded variant can lose separation), pairwise backups can be inconsistent for a drone with several neighbours, and the filter misses the 100 ms step budget near 64 drones (p95 2136 ms for a dense cluster at `apply_filter` alone, `docs/DECISIONS.md`, 2026-10-24).
 
 ## Active lanes
@@ -24,8 +26,8 @@ Known weak points (all in the backlog below): no disturbance margin (under T2 th
 |---|---|---|---|
 | Adaptive-margin research (P3-SA-03) | `research/adaptive-margin`, `../dtc-margin` | A run is active. Do not touch the worktree. | Margin computed each step from GNSS error, delay, wind and lag, plus an envelope monitor. In-model result: no separation loss in 282 recoverable in-limit runs. The monitor missed a doubled actuator lag. Open founder decisions in P3-SA-03 section 8. Nothing in `src/` changes yet. |
 | Consistent backup (CBK) research (P3-SA-02) | `research/consistent-backup`, `../dtc-research` | Finished, recommendation "adapt, do not adopt". | Fails 3 of 4 acceptance bar items (worse than main in 15 cases, 2 of 20 noisy vertical runs enter `d_eff`, full CBK takes 273 ms at N = 16). Next: fix the hysteresis rule, then rerun. Feeds BL-03. |
-| Scale | `../dtc-research` (`scale.py`) and main | Measured, not fixed. | At 64 drones `osqp.solve` (45 %) and `_update_latches` (40 %) dominate. Ideas: OSQP warm start, per-cluster QPs, broad-phase pair skipping. Each changes results numerically and needs a tolerance check on the full tier. |
-| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Branch created at `main`, no commits yet. | First step toward a real autopilot. Needs an ADR first (link, command or advice, link-loss behaviour). Do not touch the worktree. |
+| Scale | `perf/scale` (cloud session) | Active. | At 64 drones `osqp.solve` (45 %) and `_update_latches` (40 %) dominate (research scale run). The lane builds a standard benchmark, explains the 2136 ms p95, then tries per-cluster QPs, a braking-derived range gate, vectorised latch and matrix build, and OSQP reuse; each change must pass compare_results on the full tier. Target p95 < 100 ms at N = 64. |
+| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Active (laptop: WSL2, PX4 SITL, Gazebo Harmonic). | Demo bridge only: 2-3 PX4 SITL drones guided by the filter (head-on, crossing). The production link design (command or advice, ACK, link-loss behaviour, onboard layer) still needs an ADR; the lane writes protocol notes, not the protocol. Do not touch the worktree. |
 
 ## Open backlog
 

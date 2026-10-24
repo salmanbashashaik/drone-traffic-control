@@ -1,7 +1,7 @@
 # Project instructions
 
 ## Mission
-- We build a UTM (unmanned traffic management) service: a central server that plans and guides a fleet of our own cooperative drones and keeps them apart.
+- We build a neutral UTM (unmanned traffic management) service for India's low-altitude airspace: drones from many operators connect to it, and it approves their flights, monitors them live and guides them so they stay separated and organised. The v1 simulation assumes cooperative drones that all follow our guidance.
 - Safety comes from a model-based filter that corrects any proposed motion (reference controller or learned MARL policy), backed by an onboard layer on each drone later.
 - Today this is a simulation and mock-API prototype. No real aircraft, no live data, no flight use.
 
@@ -28,7 +28,7 @@ Stop and ask the founder only for:
 - merging, force-pushing, deleting
 - architecture decisions (ADRs)
 
-Every safety PR gets an automatic adversarial review by a fresh subagent before it is reported as ready.
+Every safety PR gets an automatic adversarial review by a fresh subagent before it is reported as ready. The reviewer should use a different model from the author, preferably the strongest available (Fable for safety maths and safety PRs), because a reviewer that shares the author's model shares its blind spots.
 
 ## Literature first
 Before designing any new safety mechanism, search the literature, then write down what exists and what is new, then design. Start with `docs/formulation/P3-SA-01-literature.md` (on branch `research/consistent-backup`; read it with `git show research/consistent-backup:docs/formulation/P3-SA-01-literature.md`). Cite sources in the design note, with what each proves and under which assumptions. A mechanism that a paper already solves is adapted, not reinvented.
