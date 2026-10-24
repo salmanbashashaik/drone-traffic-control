@@ -183,3 +183,38 @@ def test_independent_problems_have_the_joint_optimum() -> None:
             if k not in kept:
                 assert np.all((samples[:, index[a]] - samples[:, index[b]]) @ backup[0][k] >= backup[1][k])
     assert split > 0
+
+
+def test_seed_alongs_make_the_per_pair_decisions() -> None:
+    # The seed loop of _update_latches keeps sign(along) where |along| > 0.5. Cases
+    # sit on its edges: |along| = 0.5, _frame_lateral's norm at its 0.5 switch,
+    # vertical lines of sight (plumb rule) and ties in L's sign normalisation.
+    rng = np.random.default_rng(3)
+    for _ in range(200):
+        p, v = _traffic(rng, 10)
+        p[1] = p[0] + (0.0, 0.0, 7.0)                      # exactly vertical
+        p[2] = p[0] + (1e-7, 0.0, 9.0)                     # nearly vertical
+        p[3] = p[0] + (6.0, 6.0, 0.0)                      # tie |L_x| = |L_y|
+        states, _, pairs = _maps(p, v)
+        latch = {}
+        for pair in pairs:
+            n = F._relative(states[pair[0]], states[pair[1]])[2]
+            lateral = F._escape_axes(n)[0]
+            kind = rng.integers(0, 4)
+            if kind == 0:   # along = +-0.5 (w x n at 60 degrees from L, in the plane normal to n)
+                other = np.cross(n, lateral)
+                frame = 0.5 * lateral + rng.choice([1, -1]) * np.sqrt(0.75) * other
+                axis = np.cross(n, frame)
+            elif kind == 1:  # |w x n| = 0.5: w at 30 degrees from n
+                k = np.cross(n, lateral)
+                axis = np.sqrt(0.75) * n + 0.5 * k * (1.0 + rng.choice([0.0, 2e-16, -2e-16]))
+            else:
+                axis = rng.normal(size=3)
+                axis /= np.linalg.norm(axis)
+            latch[pair] = F._PairLatch(axis=axis, signs=(1.0, 1.0), up=1.0)
+        got = F._seed_alongs(states, pairs, latch)
+        for k, pair in enumerate(pairs):
+            want = F._seed_along(F._relative(states[pair[0]], states[pair[1]])[2], latch[pair].axis)
+            assert (abs(got[k]) > 0.5) == (abs(want) > 0.5)
+            if abs(want) > 0.5:
+                assert np.sign(got[k]) == np.sign(want)

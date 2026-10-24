@@ -498,7 +498,9 @@ def _update_latches(
         # Colour the whole conflict set, so a drone squeezed between two
         # neighbours gets opposite latches towards them.
         conflict = sorted(set(latch) | set(entering))
-        miss_only = _escape_signs(state_map, conflict, colouring=False)
+        # Without colouring each pair's signs depend on that pair alone, and only
+        # the entering pairs read them.
+        miss_only = _escape_signs(state_map, entering, colouring=False)
         cluster = {aid: {aid} for pair in conflict for aid in pair}
         for id_i, id_j in conflict:
             if cluster[id_i] is not cluster[id_j]:
@@ -507,13 +509,10 @@ def _update_latches(
                     cluster[aid] = merged
         coloured = [pair for pair in conflict if len(cluster[pair[0]]) >= 3]
         seed = {}
-        for pair in coloured:
-            frame = latch.get(pair)
-            if frame is not None and frame.origin != "none":
-                n = _relative(state_map[pair[0]], state_map[pair[1]])[2]
-                along = float(_escape_axes(n)[0] @ _frame_lateral(n, frame.axis))
-                if abs(along) > 0.5:
-                    seed[pair] = (math.copysign(1.0, along), 1 if frame.origin == "turn_right" else 2)
+        seeded = [pair for pair in coloured if pair in latch and latch[pair].origin != "none"]
+        for pair, along in zip(seeded, _seed_alongs(state_map, seeded, latch), strict=True):
+            if abs(along) > 0.5:
+                seed[pair] = (math.copysign(1.0, along), 1 if latch[pair].origin == "turn_right" else 2)
         graph = [pair for pair in pairs if len(cluster.get(pair[0], ())) >= 3 and pair[1] in cluster[pair[0]]]
         escape = _escape_signs(
             state_map, [p for p in coloured if p not in latch or latch[p].origin == "turn_right"],
@@ -535,6 +534,45 @@ def _update_latches(
             if sign[0] == 0.0:
                 frame.origin = "none" if len(cluster[pair[0]]) >= 3 else "turn_right"
     return dict(latch)
+
+
+def _seed_along(n: np.ndarray, axis: np.ndarray) -> float:
+    """L . (w x n): the latched sideways direction along the unlatched escape axis L of n."""
+    return float(_escape_axes(n)[0] @ _frame_lateral(n, axis))
+
+
+def _seed_alongs(
+    state_map: dict[str, DroneState], pairs: list[tuple[str, str]], latch: dict[tuple[str, str], _PairLatch]
+) -> np.ndarray:
+    """``_seed_along`` of each latched pair (M,), vectorised for the seed loop of ``_update_latches``.
+
+    The loop only compares |along| with 0.5 and takes its sign there. The
+    stacked computation differs from the per-pair one by a few ulps (1-D norms
+    and dots sum in another order), so a pair near a decision edge is
+    recomputed by ``_seed_along``: |along| near 0.5, ``_frame_lateral``'s norm
+    near its 0.5 switch, a near tie in the sign normalisation of L, or a line
+    of sight within 1e-6 of vertical (the plumb rule of ``_lateral``). Away
+    from those edges the decisions are the per-pair loop's.
+    """
+    if not pairs:
+        return np.zeros(0)
+    p_i, p_j, _, _ = _pair_states(state_map, pairs)
+    r = p_i - p_j
+    n = r / np.maximum(np.sqrt(np.einsum("ij,ij->i", r, r)), 1e-9)[:, None]
+    lateral = _lateral(n)
+    top = np.sort(np.abs(lateral), axis=1)
+    sign = np.where(lateral[np.arange(len(pairs)), np.argmax(np.abs(lateral), axis=1)] > 0.0, 1.0, -1.0)
+    axes = np.array([latch[pair].axis for pair in pairs], dtype=np.float64).reshape(-1, 3)
+    turn = np.cross(axes, n)
+    size = np.linalg.norm(turn, axis=-1, keepdims=True)
+    frame = np.where(size > 0.5, turn / np.maximum(size, 1e-12), lateral)
+    along = sign * np.einsum("ij,ij->i", lateral, frame)
+    edge = _SCREEN_RTOL * 10.0
+    near = ((np.abs(np.abs(along) - 0.5) <= edge) | (np.abs(size[:, 0] - 0.5) <= edge)
+            | (top[:, 2] - top[:, 1] <= edge) | (np.hypot(n[:, 0], n[:, 1]) <= 1e-6))
+    for k in np.flatnonzero(near):
+        along[k] = _seed_along(_relative(state_map[pairs[k][0]], state_map[pairs[k][1]])[2], latch[pairs[k]].axis)
+    return along
 
 
 def _latch_axis(frames: dict[tuple[str, str], _PairLatch] | None, pair: tuple[str, str]) -> np.ndarray:
