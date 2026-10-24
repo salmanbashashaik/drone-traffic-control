@@ -4,14 +4,14 @@
   pair as the per-pair loop it replaced, including pairs on the thresholds.
 - ``build_hocbf_qp_matrices`` returns the matrices of the dense-row build it
   replaced, bit for bit (``_dense_row_build`` is that build, kept as the oracle).
-- ``_solve_hocbf_qp`` solved as independent problems has the optimum of the one
-  joint QP, and every row it drops holds for every acceleration in the box.
+- A closed loop of ``apply_filter`` above 256 pairs gives the same actions with
+  the threaded rollout as with the serial one (the fuzz tier never reaches it).
 """
 
 import numpy as np
 import pytest
 import scipy.sparse as sp
-from shared.contracts import DroneState, MARLAction
+from shared.contracts import MAX_SPEED_MPS, DroneState, MARLAction
 
 from utm_services.safety import filter as F
 
@@ -43,6 +43,18 @@ def test_conflict_screen_matches_the_per_pair_loop() -> None:
             p[k] = p[0] + d / np.linalg.norm(d) * limit * (1.0 + rng.choice([0.0, 2e-16, -2e-16]))
             if k % 2:
                 v[k] = v[0]
+        # A pair whose predicted miss at t* lies on the threshold: r = m - v t*
+        # with m perpendicular to v, so t* is the chosen one and |r + v t*| = |m|.
+        w = rng.normal(size=3) * (1.0, 1.0, 0.2)  # mostly level, so the pair stays in the box
+        w *= rng.uniform(1.0, 10.0) / np.linalg.norm(w)
+        m = np.cross(w, rng.normal(size=3))
+        m *= limit * (1.0 + rng.choice([0.0, 2e-16, -2e-16, 4e-16])) / np.linalg.norm(m)
+        t = rng.choice([0.1, 3.0, rng.uniform(0.1, 3.0)])
+        v[6], v[7] = w / 2.0, -w / 2.0
+        p[7] = p[6] - (m - w * t)
+        # A pair with r perpendicular to v beyond the limit (the release test r . v >= 0).
+        r = np.cross(v[8] - v[9], rng.normal(size=3))
+        p[9] = p[8] - r * (limit * 1.5 / np.linalg.norm(r))
         states, _, pairs = _maps(p, v)
         inside, apart = F._conflict_screen(states, pairs, limit)
         for k, (a, b) in enumerate(pairs):
@@ -97,9 +109,40 @@ def test_sparse_build_matches_the_dense_row_build(barrier) -> None:
         _, q, A, l, u, _ = F.build_hocbf_qp_matrices(states, actions, pairs, config, escape, None, frames)
         rows, lower, target = _dense_row_build(states, actions, pairs, config, escape, None, frames)
         m, dim = len(pairs), 3 * n
-        top = A[:m, :dim].tocsc()
-        assert top.data.tobytes() == rows.data.tobytes()
-        assert np.array_equal(top.indices, rows.indices) and np.array_equal(top.indptr, rows.indptr)
-        assert l[:m].tobytes() == lower.tobytes()
+        # The whole stacked A that OSQP consumes: pair rows | slack, box, slack >= 0.
+        want = sp.vstack([sp.hstack([rows, sp.eye(m)]), sp.hstack([sp.eye(dim), sp.csc_matrix((dim, m))]),
+                          sp.hstack([sp.csc_matrix((m, dim)), sp.eye(m)])], format="csc")
+        assert A.shape == want.shape and A.data.tobytes() == want.data.tobytes()
+        assert np.array_equal(A.indices, want.indices) and np.array_equal(A.indptr, want.indptr)
+        low, high = (x.ravel() for x in F._world_accel_limits(np.array([states[a].position_m for a in sorted(states)]),
+                                                                np.array([states[a].velocity_mps for a in sorted(states)]),
+                                                                config))
+        assert l.tobytes() == np.concatenate([lower, low, np.zeros(m)]).tobytes()
+        assert u.tobytes() == np.concatenate([np.full(m, np.inf), high, np.full(m, np.inf)]).tobytes()
         assert q[:dim].tobytes() == (-2.0 * target).tobytes()
-        assert np.all(np.isinf(u[:m]))
+
+
+@pytest.mark.parametrize("barrier", ["backup", "braking"])
+def test_threaded_rollout_gives_the_same_closed_loop(monkeypatch, barrier) -> None:
+    # 24 drones (276 pairs, above _PARALLEL_MIN_PAIRS) converging with random
+    # nominals, 10 steps of the fuzz.py loop: actions bit for bit equal.
+    def fly(min_pairs):
+        monkeypatch.setattr(F, "_PARALLEL_MIN_PAIRS", min_pairs)
+        rng = np.random.default_rng(7)
+        p, v = _traffic(rng, 24, spread=80.0)
+        v = -(p - p.mean(axis=0)) / np.linalg.norm(p - p.mean(axis=0), axis=1, keepdims=True) * rng.uniform(3, 12, (24, 1))
+        config, latch, out = F.FilterConfig(barrier=barrier), {}, []
+        for k in range(10):
+            states, actions, _ = _maps(p, v, rng)
+            states = {a: s.model_copy(update={"timestamp_ms": 100 * k}) for a, s in states.items()}
+            actions = {a: s.model_copy(update={"timestamp_ms": 100 * k}) for a, s in actions.items()}
+            safe, _ = F.apply_filter(list(states.values()), list(actions.values()), config, latch=latch)
+            a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
+            out.append(a)
+            w = v + a * 0.1
+            speed = np.linalg.norm(w, axis=1, keepdims=True)
+            w = np.where(speed > MAX_SPEED_MPS, w * (MAX_SPEED_MPS / speed * (1 - 1e-12)), w)
+            p, v = p + 0.5 * (v + w) * 0.1, w
+        return np.array(out)
+
+    assert fly(10**9).tobytes() == fly(0).tobytes()
