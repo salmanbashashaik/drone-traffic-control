@@ -100,7 +100,7 @@ def test_rollout_cap_hit_uses_min_distance_so_far_and_is_flagged(monkeypatch) ->
     assert capped[0] and steps[0] == 10 and closing[0] > 0.0
 
     # The row is built from the closest point reached so far: the last step, k* = 9.
-    m, rhs, steps_c, capped_c = F._backup_constraints(smap, [("a", "b")], CFG)
+    m, rhs, steps_c, capped_c, _ = F._backup_constraints(smap, [("a", "b")], CFG)
     d_last = float(np.linalg.norm(traj[-1, 0]))
     m_last = traj[-1, 0] / d_last
     dt = 0.1

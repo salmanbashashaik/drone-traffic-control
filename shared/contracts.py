@@ -169,8 +169,10 @@ class SafeAction(ContractModel):
     the hard cap. ``world_limit_conflict`` is true when this agent's
     world-box acceleration limits crossed and the nearer wall's limit was
     kept. ``escape_failed_slack`` is true when the escape re-solve failed and
-    the kept first solve has slack on one of this agent's pairs. See
-    INTERFACES.md.
+    the kept first solve has slack on one of this agent's pairs. Contract
+    v1.5: ``deadline_fallback`` is true when this agent's conflict cluster
+    missed its solve deadline and the agent flies its backup manoeuvre (then
+    also ``fallback_used``). See INTERFACES.md.
     """
 
     agent_id: str = Field(min_length=1)
@@ -183,6 +185,7 @@ class SafeAction(ContractModel):
     backup_rollout_capped: bool = False
     world_limit_conflict: bool = False
     escape_failed_slack: bool = False
+    deadline_fallback: bool = False
 
     @field_validator("agent_id")
     @classmethod
@@ -200,6 +203,8 @@ class SafeAction(ContractModel):
             raise ValueError("an infeasible QP requires fallback_used=true")
         if self.qp_feasible and self.fallback_used:
             raise ValueError("fallback_used=true requires qp_feasible=false")
+        if self.deadline_fallback and not self.fallback_used:
+            raise ValueError("deadline_fallback=true requires fallback_used=true")
         return self
 
 

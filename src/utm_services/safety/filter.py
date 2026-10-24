@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import logging
 import math
+import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -226,6 +227,10 @@ class FilterDiagnostics:
         Pairs with slack in the first solve when the escape re-solve failed
         and that first solve was kept: their barrier is violated and the
         escape constraint did not act this step.
+    deadline_fallback_agents:
+        Agents of conflict clusters whose certified solve did not finish by
+        the cluster's deadline (``_solve_deadline``); they fly their backup
+        manoeuvre this step (contract v1.5).
     """
 
     h_min_m2: float | None = None
@@ -240,6 +245,7 @@ class FilterDiagnostics:
     backup_rollout_cap_pairs: list[tuple[str, str]] = field(default_factory=list)
     world_limit_conflict_agents: list[str] = field(default_factory=list)
     escape_failed_slack_pairs: list[tuple[str, str]] = field(default_factory=list)
+    deadline_fallback_agents: list[str] = field(default_factory=list)
 
 
 def _separation_sq(state_i: DroneState, state_j: DroneState) -> float:
@@ -1123,7 +1129,8 @@ def _backup_constraints(
     that is recoverable stays feasible. The per-step condition is only
     approximate (in the PR #12 review fuzz it failed on 0.74 % of steps, by
     at most 0.12 m), while forward invariance held: 0 of 1086 runs entered
-    d_eff. Returns (m (M, 3), rhs (M,), steps flown (M,), capped (M,)).
+    d_eff. Returns (m (M, 3), rhs (M,), steps flown (M,), capped (M,),
+    backup margin d* - d_eff (M,)).
 
     known limit: pairwise backup (a drone in several conflicts gets one
     evasive per pair, not one manoeuvre: TASKS.md BL-03); only k* is
@@ -1148,7 +1155,7 @@ def _backup_constraints(
     m = traj[k_star, cols] / np.maximum(d_star, 1e-9)[:, None]
     sensitivity = (k_star + 0.5) * dt * dt
     rhs = np.einsum("ij,ij->i", m, a_first) - config.gamma * dt * (d_star - d_eff) / sensitivity
-    return m, rhs, used, capped
+    return m, rhs, used, capped, d_star - d_eff
 
 
 def build_hocbf_qp_matrices(
@@ -1292,6 +1299,11 @@ def _solve_hocbf_qp(
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
     backup: tuple[np.ndarray, ...] | None = None,
     frames: dict[tuple[str, str], _PairLatch] | None = None,
+    *,
+    deadline: float | None = None,
+    missed: list[tuple[list[str], list[tuple[str, str]]]] | None = None,
+    reuse: dict | None = None,
+    skip: set[str] | None = None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float], bool]:
     """Solve the joint HOCBF QP over all active agents, as its independent problems.
 
@@ -1299,6 +1311,17 @@ def _solve_hocbf_qp(
     violate and gives each connected group of agents its own QP, with the
     joint QP's optimum; each is solved to KKT accuracy (``_solve_exact``).
     Any problem's solver error is a solver error of the step.
+
+    With a ``deadline`` (``time.perf_counter()`` seconds, ``_solve_deadline``)
+    the problems are solved most urgent first (smallest backup margin, or
+    braking barrier value, of their rows), and each gets its own deadline
+    (``_cluster_deadlines``): its fair share of the window is guaranteed, so a
+    slow problem cannot take time from another. A problem not solved by its
+    deadline is appended to ``missed`` as (agents, pairs) and its agents are
+    left out of the returned accelerations. ``reuse`` caches the solution of
+    each problem without escape rows by (agents, pairs), so the escape stage
+    does not solve an unchanged QP twice (deterministic solvers: the same
+    result). Problems with an agent in ``skip`` are left out.
 
     Returns
     -------
@@ -1323,25 +1346,80 @@ def _solve_hocbf_qp(
         if config.barrier == "backup" and backup is None:
             backup = _backup_constraints(states, pairs_in_qp, config, frames)
         safe_accels, pair_slack = {}, {}
+        problems = []
         for agents, rows in _independent_problems(states, actions, pairs_in_qp, config, escape_signs, backup, frames):
             if not len(rows):
                 # No row can bind: the minimiser of |a - a_nom|^2 over the box.
                 safe_accels.update(_clipped_nominal(states, actions, agents, config))
-                continue
+            elif not (skip and skip.intersection(agents)):
+                problems.append((agents, rows))
+        if backup is not None:
+            margin = backup[4]
+        else:
+            margin = np.array([_pair_constraint(states[a], states[b], config)[2] for a, b in pairs_in_qp])
+        problems.sort(key=lambda prob: (float(np.min(margin[prob[1]])), prob[0]))
+        deadlines = _cluster_deadlines(deadline, [3 * len(agents) + len(rows) for agents, rows in problems])
+        for (agents, rows), until in zip(problems, deadlines, strict=True):
             pairs = [pairs_in_qp[k] for k in rows]
-            solved = _solve_one_qp(
-                {aid: states[aid] for aid in agents}, {aid: actions[aid] for aid in agents}, pairs, config,
-                {pair: escape_signs[pair] for pair in pairs if pair in escape_signs} if escape_signs else None,
-                None if backup is None else tuple(x[rows] for x in backup), frames,
-            )
+            signs = {pair: escape_signs[pair] for pair in pairs if pair in escape_signs} if escape_signs else None
+            key = (tuple(agents), tuple(pairs))
+            if not signs and reuse is not None and key in reuse:
+                solved = reuse[key]
+            else:
+                solved = _solve_one_qp(
+                    {aid: states[aid] for aid in agents}, {aid: actions[aid] for aid in agents}, pairs, config,
+                    signs, None if backup is None else tuple(x[rows] for x in backup), frames, until,
+                )
+            if solved is _DEADLINE:
+                if missed is not None:
+                    missed.append((agents, pairs))
+                continue
             if solved is None:
                 return {}, {}, False
+            if not signs and reuse is not None:
+                reuse[key] = solved
             safe_accels.update(solved[0])
             pair_slack.update(solved[1])
         return safe_accels, {pair: pair_slack[pair] for pair in pairs_in_qp if pair in pair_slack}, True
     except Exception as exc:  # noqa: BLE001
         logger.error("filter: QP solve exception: %s", exc)
         return {}, {}, False
+
+
+# Step-time budget (founder decision 2026-10-24, docs/results/deadline-2026-10-24.md).
+# The filter decides once per 100 ms step. After the solves it still selects the
+# escape pairs, flies the backup of missed clusters, fills the diagnostics and
+# builds the SafeActions: measured at most 3.4 ms at N = 64 and 9.6 ms at N = 128,
+# so 10 ms are kept for that. The solves of both stages get what is left of the
+# step; when the work before them already used it (N >= 128 on a 4-core machine),
+# they still get 25 ms, above the measured 99.9th percentile of a whole solve
+# stage at N = 64 (16.5 ms), so the worst step is bounded by the work before the
+# solves plus 25 ms plus the reserve.
+_STEP_BUDGET_S = SIMULATION_STEP_MS / 1000.0
+_POST_SOLVE_RESERVE_S = 0.010
+_MIN_SOLVE_WINDOW_S = 0.025
+
+
+def _solve_deadline(step_start: float) -> float:
+    """Absolute end (``time.perf_counter()`` s) of the solve window of a step that started at ``step_start``."""
+    return max(step_start + _STEP_BUDGET_S - _POST_SOLVE_RESERVE_S, time.perf_counter() + _MIN_SOLVE_WINDOW_S)
+
+
+def _cluster_deadlines(deadline: float | None, sizes: list[int]) -> list[float | None]:
+    """Deadline of each problem, in solving order, for a window ending at ``deadline``.
+
+    Each problem's guaranteed share of the window is proportional to its size
+    (QP variables). Problem k may run until the window end less the shares of
+    the problems after it, so it can use time the earlier ones left, but never
+    a later problem's share: however long problem k takes, problem k + 1 still
+    starts with at least its own share.
+    """
+    if deadline is None or not sizes:
+        return [None] * len(sizes)
+    window = max(deadline - time.perf_counter(), 0.0)
+    total = float(sum(sizes)) or 1.0
+    after = np.concatenate([np.cumsum(np.asarray(sizes[::-1], dtype=np.float64))[::-1][1:], [0.0]])
+    return [deadline - window * float(rest) / total for rest in after]
 
 
 def _clipped_nominal(
@@ -1444,13 +1522,20 @@ def _solve_one_qp(
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None,
     backup: tuple[np.ndarray, ...] | None,
     frames: dict[tuple[str, str], _PairLatch] | None,
-) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float]] | None:
-    """One QP of ``build_hocbf_qp_matrices``, KKT-certified: (safe_accels, pair_slack), None on solver error."""
+    deadline: float | None = None,
+) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float]] | None | object:
+    """One QP of ``build_hocbf_qp_matrices``, KKT-certified: (safe_accels, pair_slack).
+
+    None on solver error, _DEADLINE when ``deadline`` passed first."""
+    if deadline is not None and time.perf_counter() >= deadline:
+        return _DEADLINE
     dense = 3 * len(states) + len(pairs_in_qp) <= _EXACT_MAX_VARS
     P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
         states, actions, pairs_in_qp, config, escape_signs, backup, frames, dense
     )
-    x = _solve_exact(P, q, A, l, u, config, bool(escape_signs))
+    x = _solve_exact(P, q, A, l, u, config, bool(escape_signs), deadline)
+    if x is _DEADLINE:
+        return _DEADLINE
     if x is None:
         logger.warning("filter: no solver returned a KKT-certified solution")
         return None
@@ -1481,6 +1566,9 @@ def _solve_one_qp(
 # 168), OSQP above (49 against 117 ms at 592). OSQP at the old eps 1e-5 with
 # polish was off by up to 0.05 m/s² on 0.7 % of the fuzz QPs.
 _EXACT_MAX_VARS = 256
+# A solve stopped by its deadline (``_solve_deadline``), not a solver error.
+_DEADLINE = object()
+_DAQP_TIME_LIMIT = -7  # DAQP exit flag: time limit reached
 # Certificate tolerances, in the form of OSQP's own test: primal feasibility
 # per row relative to its bound (backup rows reach |rhs| ~ 1e3), stationarity
 # per component against |Px| + |q| + |A|'|y| (multipliers reach the slack
@@ -1525,8 +1613,8 @@ def _kkt_certified(
 
 
 def _solve_daqp(
-    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray
-) -> tuple[np.ndarray, np.ndarray] | None:
+    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, time_limit: float | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None | object:
     """DAQP on the QP of ``build_hocbf_qp_matrices``: (x, y in OSQP's convention), None on failure.
 
     Rows with a single unit entry (the acceleration box and slack >= 0) become
@@ -1556,7 +1644,10 @@ def _solve_daqp(
     x, _, flag, info = daqp.solve(
         H, np.ascontiguousarray(q, dtype=np.float64), general_rows, upper, lower,
         np.zeros(len(upper), dtype=np.int32), primal_tol=1e-10,
+        **({} if time_limit is None else {"time_limit": max(time_limit, 1e-6)}),
     )
+    if flag == _DAQP_TIME_LIMIT:
+        return _DEADLINE
     if flag != 1:
         return None
     lam = np.asarray(info["lam"], dtype=np.float64)
@@ -1569,15 +1660,18 @@ def _solve_daqp(
 
 def _solve_osqp(
     P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, config: FilterConfig,
-    escape: bool,
-) -> tuple[np.ndarray, np.ndarray] | None:
-    """OSQP at config.solver_eps: (x, y), None when it does not converge."""
+    escape: bool, deadline: float | None = None,
+) -> tuple[np.ndarray, np.ndarray] | None | object:
+    """OSQP at config.solver_eps: (x, y), None when it does not converge, _DEADLINE past ``deadline``."""
     if not sp.issparse(A):
         P, A = sp.csc_matrix(P), sp.csc_matrix(A)
     # On non-convergence retry once without over-relaxation (alpha 1.0
     # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
     # rho alone (up to 10) and 20000 iterations did not (PR #12 review).
     for alpha in (1.6, 1.0):
+        limit = {} if deadline is None else {"time_limit": deadline - time.perf_counter()}
+        if limit and limit["time_limit"] <= 0.0:
+            return _DEADLINE
         prob = osqp.OSQP()
         prob.setup(
             P, q, A, l, u,
@@ -1593,31 +1687,45 @@ def _solve_osqp(
             # at the default rho (0.1) ADMM needs many more iterations there.
             rho=10.0 if escape else 0.1,
             alpha=alpha,
+            **limit,
         )
         res = prob.solve()
         if res.info.status == "solved":
             return res.x, res.y
+        if res.info.status == "run time limit reached":
+            return _DEADLINE
         logger.warning("filter: OSQP status %s at alpha=%.1f", res.info.status, alpha)
     return None
 
 
 def _solve_exact(
     P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, config: FilterConfig,
-    escape: bool,
-) -> np.ndarray | None:
-    """KKT-certified solution x of the QP, None when no solver returns one.
+    escape: bool, deadline: float | None = None,
+) -> np.ndarray | None | object:
+    """KKT-certified solution x of the QP; None when no solver returns one; _DEADLINE when time ran out.
 
     DAQP first up to _EXACT_MAX_VARS variables, OSQP first above; the other
-    one when the first fails or its solution fails ``_kkt_certified``.
+    one when the first fails or its solution fails ``_kkt_certified``. With a
+    ``deadline`` (``time.perf_counter()`` seconds) each solver gets the time
+    left as its own time limit, and a solver stopped by it, or no time left
+    for the next one, makes the result _DEADLINE.
     """
     small = P.shape[0] <= _EXACT_MAX_VARS
     order = (_solve_daqp, _solve_osqp) if small else (_solve_osqp, _solve_daqp)
     for solver in order:
+        left = None if deadline is None else deadline - time.perf_counter()
+        if left is not None and left <= 0.0:
+            return _DEADLINE
         try:
-            solution = solver(P, q, A, l, u) if solver is _solve_daqp else solver(P, q, A, l, u, config, escape)
+            if solver is _solve_daqp:
+                solution = solver(P, q, A, l, u, left)
+            else:
+                solution = solver(P, q, A, l, u, config, escape, deadline)
         except Exception as exc:  # noqa: BLE001
             logger.warning("filter: %s raised %s", solver.__name__, exc)
             continue
+        if solution is _DEADLINE:
+            return _DEADLINE
         if solution is not None and _kkt_certified(P, q, A, l, u, *solution):
             return solution[0]
         logger.warning("filter: %s returned no KKT-certified solution", solver.__name__)
@@ -1755,6 +1863,7 @@ def apply_filter(
     TypeError
         When ``latch`` is not a dict.
     """
+    step_start = time.perf_counter()
     if not isinstance(latch, dict):
         raise TypeError(f"latch must be the caller's per-episode dict (UTM-077), got {type(latch).__name__}")
     if config is None:
@@ -1820,9 +1929,8 @@ def apply_filter(
 
             # Range gate: skip pairs too far apart.
             sep_sq = _separation_sq(state_map[id_i], state_map[id_j])
-            if config.range_gate_m is not None:
-                if math.sqrt(sep_sq) > config.range_gate_m:
-                    continue
+            if config.range_gate_m is not None and math.sqrt(sep_sq) > config.range_gate_m:
+                continue
             pairs_in_range.append((id_i, id_j))
             if sep_sq > gate_sq:
                 continue
@@ -1848,6 +1956,10 @@ def apply_filter(
 
     # --- QP solve ---
     backup = None
+    deadline = None
+    # Conflict clusters whose certified solve missed its deadline: (agents, pairs).
+    missed: list[tuple[list[str], list[tuple[str, str]]]] = []
+    reuse: dict = {}
     try:
         if config.barrier == "backup" and pairs_in_qp:
             backup = _backup_constraints(state_map, pairs_in_qp, config, frames)
@@ -1858,8 +1970,10 @@ def apply_filter(
                     "filter: backup rollout still closing at the cap at t=%d ms on %d pairs",
                     step_ts, len(diag.backup_rollout_cap_pairs),
                 )
+        deadline = _solve_deadline(step_start)
         safe_accels, pair_slack, qp_feasible = _solve_hocbf_qp(
-            state_map, action_map, pairs_in_qp, config, backup=backup, frames=frames
+            state_map, action_map, pairs_in_qp, config, backup=backup, frames=frames,
+            deadline=deadline, missed=missed, reuse=reuse,
         )
     except Exception as exc:  # noqa: BLE001
         logger.error(
@@ -1882,18 +1996,28 @@ def apply_filter(
         _, v, n, _ = _relative(state_map[pair[0]], state_map[pair[1]])
         if float(v @ n) < 0.0:
             escape_pairs.append(pair)
-    # A failed escape solve keeps the first solve, which is valid.
+    # A failed escape solve keeps the first solve, which is valid; so does an
+    # escape problem that missed its deadline (its agents keep the first solve).
+    missed_agents = {aid for agents, _ in missed for aid in agents}
     if qp_feasible and escape_pairs:
+        escape_missed: list[tuple[list[str], list[tuple[str, str]]]] = []
         try:
             escaped, _, escape_ok = _solve_hocbf_qp(
                 state_map, action_map, pairs_in_qp, config, _escape_signs(state_map, escape_pairs, frames), backup,
-                frames,
+                frames, deadline=deadline, missed=escape_missed, reuse=reuse, skip=missed_agents,
             )
         except Exception as exc:  # noqa: BLE001
             logger.error("filter: escape solve error at t=%d ms: %s", step_ts, exc)
             escape_ok = False
         if escape_ok:
-            safe_accels = escaped
+            safe_accels.update({aid: a for aid, a in escaped.items() if aid not in missed_agents})
+            late = {aid for agents, _ in escape_missed for aid in agents}
+            diag.escape_failed_slack_pairs = sorted(pair for pair in pair_slack if late.intersection(pair))
+            if late:
+                logger.warning(
+                    "filter: escape solve missed its deadline at t=%d ms for %d agents, keeping their first solve",
+                    step_ts, len(late),
+                )
         else:
             diag.escape_failed_slack_pairs = sorted(pair_slack)
             logger.warning(
@@ -1925,12 +2049,26 @@ def apply_filter(
             )
             nominal = np.clip(action_map[aid].proposed_accel_mps2, *limits)
             safe_accels[aid] = evasive.get(aid, tuple(float(c) for c in nominal))
+    # Deadline missed: the cluster's drones fly their backup manoeuvre (the
+    # evasive manoeuvre of the backup rows, away from the most critical
+    # neighbour in the cluster), as a backup-CBF filter does when its QP is not
+    # available; other clusters keep their solutions.
+    for agents, pairs in missed:
+        for aid in agents:
+            evasive[aid] = safe_accels[aid] = _evasive_accel(aid, state_map, pairs, config, frames)
+    diag.deadline_fallback_agents = sorted(missed_agents)
+    if missed_agents:
+        logger.warning(
+            "filter: certified solve missed its deadline at t=%d ms for %d clusters (%d agents), backup applied",
+            step_ts, len(missed), len(missed_agents),
+        )
     diag.fallback_used = bool(evasive)
 
     # --- Build SafeAction list ---
     safe_actions: list[SafeAction] = []
     capped_ids = {aid for pair in diag.backup_rollout_cap_pairs for aid in pair}
     escape_failed_ids = {aid for pair in diag.escape_failed_slack_pairs for aid in pair}
+    deadline_ids = set(diag.deadline_fallback_agents)
 
     for aid in agent_ids:
         nom = action_map[aid].proposed_accel_mps2
@@ -1954,6 +2092,7 @@ def apply_filter(
                 backup_rollout_capped=aid in capped_ids,
                 world_limit_conflict=aid in diag.world_limit_conflict_agents,
                 escape_failed_slack=aid in escape_failed_ids,
+                deadline_fallback=aid in deadline_ids,
             )
         )
 

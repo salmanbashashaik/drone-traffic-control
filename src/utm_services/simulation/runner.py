@@ -98,6 +98,7 @@ def run_episode(
     rollout_cap_hits = 0
     world_limit_conflicts = 0
     escape_failures_with_slack = 0
+    deadline_fallbacks = 0
     filter_latch: dict = {}  # per-pair sideways frames, kept across the episode's steps
 
     def record_violations(states, held_s: float) -> bool:
@@ -137,6 +138,7 @@ def run_episode(
             rollout_cap_hits += len(diag.backup_rollout_cap_pairs)
             world_limit_conflicts += len(diag.world_limit_conflict_agents)
             escape_failures_with_slack += len(diag.escape_failed_slack_pairs)
+            deadline_fallbacks += len(diag.deadline_fallback_agents)
         else:
             h_min = env.h_min_m2()
             returned = [
@@ -186,6 +188,7 @@ def run_episode(
         "rollout_cap_hits": rollout_cap_hits,
         "world_limit_conflicts": world_limit_conflicts,
         "escape_failures_with_slack": escape_failures_with_slack,
+        "deadline_fallbacks": deadline_fallbacks,
         "max_backup_rollout_steps": max(rollout_steps, default=None),
         "p99_backup_rollout_steps": float(np.percentile(rollout_steps, 99)) if rollout_steps else None,
         "mean_step_time_ms": mean_step,
