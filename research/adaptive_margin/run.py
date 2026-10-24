@@ -19,6 +19,7 @@ import time
 from collections import defaultdict
 from pathlib import Path
 
+from research.adaptive_margin import margin as M
 from research.adaptive_margin import sim
 from research.adaptive_margin.margin import TARGETS, risk
 
@@ -55,7 +56,8 @@ def _priority(j: dict) -> int:
 def _git() -> dict:
     def git(*args: str) -> str:
         return subprocess.run(["git", *args], capture_output=True, text=True, check=True).stdout.strip()
-    return {"git": git("rev-parse", "--short=12", "HEAD"),
+    # The filter file the run actually imported, by content (solver variants, founder 2026-10-24).
+    return {"git": git("rev-parse", "--short=12", "HEAD"), "filter_sha": git("hash-object", sim.F.__file__)[:12],
             # The run's own output files are not code changes.
             "dirty": bool(git("status", "--porcelain", "--", "research/adaptive_margin",
                               ":(exclude)research/adaptive_margin/results"))}
@@ -65,13 +67,22 @@ def _key(j: dict) -> tuple:
     return j["family"], j["cond"], j["seed"], j["mode"], j["target"]
 
 
-def run(shard: int, of: int, path: Path) -> None:
+def _selected(j: dict, select: list[str]) -> bool:
+    """``select`` holds ``key=a|b`` terms; a job is selected when every term matches."""
+    for term in select:
+        k, vals = term.split("=", 1)
+        if str(j[k]) not in vals.split("|"):
+            return False
+    return True
+
+
+def run(shard: int, of: int, path: Path, select: list[str] | None = None) -> None:
     conds = {c.name: c for c in sim.NOMINAL + sim.BEYOND + sim.TAKEOFF}
     done = {_key(json.loads(x)) for x in path.read_text().splitlines()} if path.exists() else set()
     rev = _git()
     rec: dict[tuple, float] = {}
     with path.open("a") as fh:
-        for j in jobs()[shard::of]:
+        for j in [j for j in jobs() if _selected(j, select or [])][shard::of]:
             if _key(j) in done:
                 continue
             cond = conds[j["cond"]]
@@ -251,10 +262,14 @@ if __name__ == "__main__":
     ap.add_argument("--out", type=Path)
     ap.add_argument("--table", nargs="*", type=Path)
     ap.add_argument("--rerecord", nargs="*", type=Path)
+    ap.add_argument("--lost", choices=M.LOST_TERMS, default=M.LOST_TERM)
+    ap.add_argument("--freeze-margin", action="store_true", help="diagnostic: hold the margin from clearance on")
+    ap.add_argument("--select", nargs="*", default=[], help="key=a|b terms, e.g. cond=sbas_gagan/calm family=ring6")
     a = ap.parse_args()
+    M.LOST_TERM, sim.FREEZE_MARGIN = a.lost, a.freeze_margin
     if a.rerecord:
         rerecord(a.rerecord)
     elif a.table:
         print(table(a.table))
     else:
-        run(a.shard, a.of, a.out)
+        run(a.shard, a.of, a.out, a.select)

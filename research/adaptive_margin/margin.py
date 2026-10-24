@@ -67,6 +67,10 @@ EPS_LIN_M = 0.137   # measured, PR #12 ablation (docs/results/pr12-final-report.
 # Kalman updates that can fall between the predictions of two consecutive
 # cycles: a third needs a message later than the 99.9 % latency quantile.
 N_UPD = 2
+# Lost-command term (run-level switch, recorded in every row): "drag_box" is
+# re-review 3a + 3b (the default); "held" is a5b5264's 0.1 dc_max (AGE_S + T).
+LOST_TERMS = ("drag_box", "held")
+LOST_TERM = "drag_box"
 
 
 @dataclass(frozen=True)
@@ -133,6 +137,8 @@ def lost_m(af: E.Airframe, horizon_s: float, dc: float | None = None) -> float:
     ``dc`` (``dc_bound``; the airframe's dc_max if None), carried through the
     lag and the drag to the end of the horizon (``pulse_gain``, re-review 3a).
     """
+    if LOST_TERM == "held":
+        return 0.1 * dc_max(af) * (AGE_S + horizon_s)
     return (dc_max(af) if dc is None else dc) * pulse_gain(af.drag_per_s, round(AGE_S + horizon_s, 6))
 
 

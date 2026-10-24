@@ -49,6 +49,7 @@ from shared.contracts import (
 from utm_services.safety import filter as F
 
 from research.adaptive_margin import envelope as E
+from research.adaptive_margin import margin as M
 from research.adaptive_margin import rollout
 from research.adaptive_margin.margin import (
     CYCLE,
@@ -96,6 +97,10 @@ OUTAGE_S = T_C_S - 3.0
 # direction, so the monitor is read from WARMUP_S on (20 telemetry
 # messages, two NIS windows); alarms of the first cycle are reported apart.
 WARMUP_S = 2.0
+# Diagnostic only (founder, 2026-10-24): hold the applied margin at its
+# clearance value for the rest of the run, to separate a moving margin from
+# the solver as the cause of certificate violations. Recorded in every row.
+FREEZE_MARGIN = False
 # Takeoff runs: hover, then accelerate along the route to the cruise velocity.
 PREROLL_S, HOVER_S, ROUTE_ACCEL_MPS2 = 15.0, 3.0, 2.0
 
@@ -249,6 +254,13 @@ class _Out:
     absorb_max: float = 0.0
     saturated_cycles: int = 0
     dc_ratio: float = 0.0
+    min_sep_clear: float = math.inf     # from clearance (WARMUP_S) on
+    viol_cycles: int = 0                # cycles with main's pair_violation_depth_m non-empty, from clearance on
+    viol_first: float | None = None
+    viol_last: float | None = None
+    viol_max: float = 0.0
+    viol_pairs: int = 0
+    escape_failed: int = 0
     fallbacks: int = 0
     solver_errors: int = 0
     cap_pairs: int = 0
@@ -322,6 +334,7 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
     # Command-difference bound per drone, fixed at clearance (re-review 3b), and the last command sent.
     dc_hold: list[float | None] = [None] * n
     c_sent = c_now.copy()
+    m_frozen: float | None = None
     out = _Out()
 
     def alarm(name: str, t: int) -> None:
@@ -357,7 +370,8 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
                 for i, aid in enumerate(ids):
                     x, P, a0 = trackers[i].predict(t + P_TICKS, logs[i], floor=True)
                     preds[aid] = pr = Pred(x, P, trackers[i], logs[i], fleet[i], a0)
-                    pr.dc = dc_hold[i] if dc_hold[i] is not None else dc_bound(pr, rk)
+                    pr.dc = (M.dc_max(fleet[i]) if M.LOST_TERM == "held" else
+                             dc_hold[i] if dc_hold[i] is not None else dc_bound(pr, rk))
                     if t * H >= WARMUP_S and dc_hold[i] is None:
                         dc_hold[i] = pr.dc
                     rollout.CTX[aid] = (a0, D[i], x[6:], fleet[i].a_phys_mps2)
@@ -369,6 +383,9 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
                 # Raise the margin no faster than the barrier absorbs (P3-SA-03 §3.9).
                 m_star = absorbable(traj)
                 m_app = min(res.margin_m, max(m_star, m_prev))
+                if FREEZE_MARGIN and t * H >= WARMUP_S:
+                    m_frozen = m_app if m_frozen is None else m_frozen
+                    m_app = m_frozen
                 deficit = res.margin_m - m_app
                 if deficit > 1e-9:
                     res.alarms.add("absorb")
@@ -396,6 +413,15 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
             out.fallbacks += int(diag.fallback_used)
             out.solver_errors += int(not diag.qp_feasible)
             out.cap_pairs += len(diag.backup_rollout_cap_pairs)
+            if t * H >= WARMUP_S:
+                depth = diag.pair_violation_depth_m
+                if depth:
+                    out.viol_cycles += 1
+                    out.viol_first = out.viol_first if out.viol_first is not None else round(t * H, 2)
+                    out.viol_last = round(t * H, 2)
+                    out.viol_max = max(out.viol_max, max(depth.values()))
+                    out.viol_pairs = max(out.viol_pairs, len(depth))
+                out.escape_failed += bool(diag.escape_failed_slack_pairs)
             by_id = {s.agent_id: np.array(s.safe_accel_mps2) for s in safe}
             saturated = False
             for i, aid in enumerate(ids):
@@ -437,6 +463,8 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
         gust = gust * e_g + sig_g * np.sqrt(1.0 - e_g**2) * rng.standard_normal((n, 3))
         sep = min(float(np.linalg.norm(p[i] - p[j])) for i in range(n) for j in range(i + 1, n))
         out.min_sep = min(out.min_sep, sep)
+        if t * H >= WARMUP_S:
+            out.min_sep_clear = min(out.min_sep_clear, sep)
         if sep < SAFE_SEPARATION_M and out.los_s is None:
             out.los_s = round((t + 1) * H, 2)
     m = np.array(out.margins) if out.margins else np.zeros(1)
@@ -445,7 +473,8 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
         return round(float(np.median(xs)), 2) if xs else None
 
     return {
-        "min_sep": round(out.min_sep, 3), "los_s": out.los_s, "alarms": out.alarms,
+        "min_sep": round(out.min_sep, 3), "min_sep_clear": round(out.min_sep_clear, 3),
+        "los_s": out.los_s, "alarms": out.alarms,
         "first_alarm_s": min(out.alarms.values(), default=None), "alarm_cycles": out.alarm_cycles,
         "alarms_t0": out.alarms_t0 if mode == "adaptive" else None,
         "margin_p50": round(float(np.median(m)), 2), "margin_max": round(float(m.max()), 2),
@@ -458,6 +487,11 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, ta
         "dc_bound": [round(float(x), 3) for x in dc_hold if x is not None] if mode == "adaptive" else None,
         "dc_ratio_max": round(out.dc_ratio, 3) if mode == "adaptive" else None,
         "fallbacks": out.fallbacks, "solver_errors": out.solver_errors, "cap_pairs": out.cap_pairs,
+        "viol_cycles": out.viol_cycles, "viol_first_s": out.viol_first, "viol_last_s": out.viol_last,
+        "viol_max_m": round(float(out.viol_max), 3), "viol_pairs_max": out.viol_pairs,
+        "escape_failed_cycles": out.escape_failed,
+        "lost_term": M.LOST_TERM if mode == "adaptive" else None,
+        "margin_frozen": FREEZE_MARGIN if mode == "adaptive" else None,
         "uplink_lost": int(sum(lg.lost for lg in logs)) if mode == "adaptive" else None,
         "fleet": [af.name for af in fleet], "t_encounter_s": cond.preroll_s + T_C_S,
     }
