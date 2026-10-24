@@ -107,3 +107,10 @@ def eval_scenarios(base: int, count: int, max_agents: int = 4, conflict: float =
                         scenario_id=f"eval-n{sizes[i % len(sizes)]}-c{conflict:.2f}")
         for i in range(count)
     ]
+
+
+def fixed_size_scenarios(base: int, count: int, n_agents: int, conflict: float = 0.8,
+                         episode_limit_steps: int = 1000) -> list[ScenarioConfig]:
+    """Evaluation set with the same team size in every episode (e.g. 6 drones, larger than the 2-4 trained on)."""
+    return [sample_scenario(base + i, n_agents, conflict, episode_limit_steps,
+                            scenario_id=f"eval-n{n_agents}-c{conflict:.2f}") for i in range(count)]

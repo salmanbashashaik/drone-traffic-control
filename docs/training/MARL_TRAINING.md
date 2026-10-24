@@ -2,6 +2,8 @@
 
 What this is: a MAPPO training loop for the **nominal** policy, a numpy runtime that loads the resulting artifact, a matched evaluator, and a replay renderer. It is simulation-only. The learned policy proposes accelerations; it is not a safety controller. Every number below is a measured separation or completion count from seeded simulation; none of it is a guarantee, and none of it says the policy or the filter is safe.
 
+**New here? Start with [`QUICKSTART.md`](./QUICKSTART.md)**: install, run, view the simulation in 3D, evaluate, train.
+
 Method choices and their deviations from the draft: `docs/formulation/P1-SA-01-method.md` §9. Reward: `P1-SA-01-reward.md` (`P1-SA-01-reward-v1`, implemented in `simulation/env.py`). Training reward is not a safety metric; every number below is a measured separation or completion quantity.
 
 ## Run it
@@ -15,7 +17,7 @@ utm-train --out runs/train/my-t2  --iterations 300 --workers 4 --profile nominal
 
 # evaluate: reference / unshielded / shielded / shielded-reference on identical scenarios
 utm-eval-policy artifacts/policies/marl-mappo-s42-it220-f93dca3638 \
-    --suite heldout --suite dense16 --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
+    --suite heldout --suite dense16 --suite six --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
 
 # watch it: replay.png (tracks, separation, building clearance), replay.gif (top-down), and with --html
 # replay3d.html: a self-contained interactive 3D viewer for any browser (offline; opens by double-click)
@@ -105,6 +107,21 @@ Same 50 fresh seeds, **T1-trained** policy (`…it300-08e745b853`) under the T2 
 In the same runs the reference controller completes 100% (it has an integral term). Rows: `…fresh-seeds.T2-*.episodes.jsonl`, `…fresh-ideal`/`…fresh-realistic` for the T2-trained policy.
 
 Full tables including the reference variants: `docs/results/training/*.summary.md`.
+
+### Six drones per episode (larger than the 2-4 trained on), seeds 18,000,000+
+
+A fixed-size suite (`--suite six`, conflict 0.8, 50 episodes, 1000-step limit), first used for this table. The reference rows are the same for both policies. The shielded and unshielded rows are the learned policies.
+
+| Policy | Variant | Completion | Min sep (m) | Viol. pair-steps | Episodes with viol. | Interventions |
+|---|---|---|---|---|---|---|
+| (none) | reference | 100% | 0.94 | 61 | 24 | 0 |
+| T1-trained `…it300-08e745b853` | unshielded | 100% | 2.80 | 13 | 4 | 0 |
+| T1-trained | shielded | 100% | 7.81 | 0 | 0 | 486 |
+| T2-nominal-trained `…it220-f93dca3638` | unshielded | 100% | 0.80 | 6 | 3 | 0 |
+| T2-nominal-trained | shielded | 100% | 8.00 | 0 | 0 | 558 |
+| (none) | shielded reference | 100% | 8.04 | 0 | 0 | 2036 |
+
+Same pattern as with 2-4 drones: the policies finish every mission and have fewer violations than the reference, but not none; the filter removes them in these runs. The T2-nominal policy's closest approach unshielded (0.80 m) is lower than the T1 policy's (2.80 m) even though it has fewer violation pair-steps, so the two are not ranked here. Files: `docs/results/training/*.six-drones.*`. The 3D viewer screenshot of the worst unshielded episode is `figures/viewer-3d-six-drones-unshielded.jpg` (`heldout:18000044:6`, chosen as the worst of the 50, not a typical one).
 
 ### Development seeds (not clean held-out)
 
