@@ -163,8 +163,18 @@ def check_job_order() -> None:
                      "rtk_f9p/calm", "sbas_gagan/calm", "gps_sps/calm"}, first
 
 
+def check_silent_los() -> None:
+    """A headroom alarm raised at warm-up does not count as a warning; a later one does."""
+    from research.adaptive_margin import run
+    row = {"los_s": 11.76, "alarms": {"headroom": sim.WARMUP_S}}
+    assert run._silent_los(row) and run._first_alarm(row) is None
+    assert not run._silent_los({"los_s": 12.89, "alarms": {"headroom": sim.WARMUP_S, "absorb": 8.4}})
+    assert not run._silent_los({"los_s": 11.0, "alarms": {"headroom": 9.0}})
+    assert run._silent_los({"los_s": 11.0, "alarms": {"lag": 11.5}})
+
+
 if __name__ == "__main__":
     for f in (check_constants, check_transition, check_lag_bound, check_drag, check_command_log, check_nis,
-              check_lag_id, check_margin_monotone, check_absorbable, check_job_order):
+              check_lag_id, check_margin_monotone, check_absorbable, check_job_order, check_silent_los):
         f()
         print("ok", f.__name__)

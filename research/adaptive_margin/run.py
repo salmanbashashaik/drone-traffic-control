@@ -86,9 +86,21 @@ def run(shard: int, of: int, path: Path) -> None:
             fh.flush()
 
 
+def _first_alarm(r: dict):
+    """First alarm time, not counting a headroom alarm already raised at warm-up (founder, 2026-10-24).
+
+    known limit: rows keep only each alarm's first time, so a headroom alarm
+    raised at warm-up and raised again later is not counted either; revisit
+    if headroom becomes an alarm the design relies on.
+    """
+    ts = [t for k, t in r["alarms"].items() if not (k == "headroom" and t <= sim.WARMUP_S)]
+    return min(ts) if ts else None
+
+
 def _silent_los(r: dict) -> bool:
     """LoS with no monitor alarm at or before it."""
-    return r["los_s"] is not None and (r["first_alarm_s"] is None or r["first_alarm_s"] > r["los_s"])
+    first = _first_alarm(r)
+    return r["los_s"] is not None and (first is None or first > r["los_s"])
 
 
 def _kinds(rs: list[dict]) -> str:
@@ -145,11 +157,11 @@ def table(paths: list[Path]) -> str:
         if r["cond"] in beyond:
             groups[r["cond"]].append(r)
     for c, rs in sorted(groups.items()):
-        before = sum(r["first_alarm_s"] is not None and (r["los_s"] is None or r["first_alarm_s"] <= r["los_s"])
-                     for r in rs)
+        firsts = [_first_alarm(r) for r in rs]
+        before = sum(f is not None and (r["los_s"] is None or f <= r["los_s"]) for f, r in zip(firsts, rs))
         lines.append(
             f"| {c} | {len(rs)} | {before} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
-            f"{_median([r['first_alarm_s'] for r in rs if r['first_alarm_s'] is not None])} | "
+            f"{_median([f for f in firsts if f is not None])} | "
             f"{_median([r['alarms']['lag'] for r in rs if 'lag' in r['alarms']])} |")
     lines += ["", f"### Takeoff tracks (adaptive, track starts {sim.PREROLL_S:g} s before the run's t = 0, at hover)", "",
               "| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
