@@ -122,7 +122,7 @@ def dc_bound(pred: "Pred", rk: Risk) -> float:
     Mvw = np.hstack([np.zeros((3, 3)), np.eye(3), -np.eye(3)])
     corr = rk.k3 * math.sqrt(max(_lmax(Mvw @ pred.tracker.corr @ Mvw.T), 0.0))
     prop = 0.1 * (math.sqrt(2.0) * af.a_phys_mps2 + D * (MAX_SPEED_MPS + af.wind_max_mps))
-    return min(dc_max(af), 2.0 * math.sqrt(3.0) * U_MAX + D * (prop + N_UPD * corr))
+    return float(min(dc_max(af), 2.0 * math.sqrt(3.0) * U_MAX + D * (prop + N_UPD * corr)))
 
 
 def lost_m(af: E.Airframe, horizon_s: float, dc: float | None = None) -> float:
