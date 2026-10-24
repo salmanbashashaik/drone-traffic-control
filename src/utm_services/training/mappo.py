@@ -367,7 +367,10 @@ def _metadata(cfg: TrainConfig, weights: dict, it: int, val: dict, total_steps: 
         "validation": {k: v for k, v in val.items()},
         "validation_note": "Validation seeds only (never trained on). val_score is a model-selection heuristic, not a safety metric.",
         "limitations": [
-            "Trained and validated on T1 (ideal) dynamics only; no claim about disturbances (T2+).",
+            ("Trained and validated on T1 (ideal) dynamics only; no claim about disturbances (T2+)."
+             if cfg.profile == "ideal" else
+             f"Trained and validated on the simulated T2 '{cfg.profile}' profile (placeholder parameters); "
+             "no claim about other disturbance types or real flight data."),
             "Observation is the 18-value ObservationV1 (nearest neighbour only).",
             "Nominal action proposer. Not a safety controller; training reward is not a safety metric.",
             "Finite-seed validation is not evidence of zero risk.",
@@ -396,9 +399,12 @@ def train(cfg: TrainConfig, out_dir: Path, resume: bool = False, quiet: bool = F
     runner = _Runner(cfg.workers)
     try:
         if resume and ckpt_path.exists():
-            ck = torch.load(ckpt_path, weights_only=False)
+            ck = torch.load(ckpt_path, weights_only=False)  # our own checkpoint (holds numpy arrays); never load untrusted ones
             actor.load_state_dict(ck["actor"]); critic.load_state_dict(ck["critic"]); opt.load_state_dict(ck["opt"])
             start_it, total_steps, best = ck["it"], ck["total_steps"], ck["best"]
+            # The log is appended every iteration, the checkpoint only every eval_every: drop rows past it.
+            kept = [r for r in log_file.read_text().splitlines() if json.loads(r)["iteration"] < start_it]
+            log_file.write_text("".join(r + "\n" for r in kept))
             log(f"resumed at iteration {start_it}")
         else:
             (out_dir / "config.json").write_text(json.dumps(asdict(cfg), indent=2))

@@ -17,7 +17,9 @@ Artifact directory (written by ``save_policy_artifact``)::
 ``LearnedPolicy.load`` refuses to load when metadata is missing, when the weight
 hash differs from the one recorded, when the observation/action contract names
 differ, or when the world bounds the policy was trained for differ from the
-current ``shared/contracts.py``. Observation normalisation is applied inside the
+current ``shared/contracts.py``. The weight hash and the normalisation fingerprint sit in the same
+metadata file as the values they protect, so they detect corruption and mixed-up directories,
+not a deliberate substitution of both files. Observation normalisation is applied inside the
 policy with parameters fixed by ``OBS_NORM_VERSION``; it is the only place the
 raw observation indices are rescaled.
 
@@ -64,13 +66,18 @@ ACTION_UNIT_MPS2 = MAX_ACCEL_COMPONENT_MPS2
 # Keep the executed value strictly inside the contract bound (float rounding).
 ACTION_SCALE_MPS2 = ACTION_UNIT_MPS2 * (1.0 - 1e-9)
 
+_GOAL_SCALE_M = 20.0
+_GOAL_NORM = float(np.arcsinh(1000.0 / _GOAL_SCALE_M))  # 1000 m -> 1.0
+
 OBS_NORMALIZATION: dict[str, str] = {
     "version": OBS_NORM_VERSION,
-    "neighbour_gate": "if index 15 (distance) > 250 m: indices 9-14 := 0 and index 15 := -1 (no-neighbour values) before scaling",
+    "neighbour_gate": (f"if index 15 (distance) > {NEIGHBOUR_GATE_M:g} m: indices 9-14 := 0 and index 15 := -1 "
+                       "(no-neighbour values) before scaling"),
     "indices_0_1": "x, y: v/500 - 1",
     "index_2": "z: (v - 115)/85",
     "indices_3_5": "v/15",
-    "indices_6_8": "arcsinh(v/20)/arcsinh(50)  (compressive: keeps signal within a few metres of the goal)",
+    "indices_6_8": (f"arcsinh(v/{_GOAL_SCALE_M:g})/arcsinh({1000.0 / _GOAL_SCALE_M:g})  "
+                    "(compressive: keeps signal within a few metres of the goal)"),
     "indices_9_11": "v/500",
     "indices_12_14": "v/15",
     "index_15": "v/500 (sentinel -1 -> -0.002)",
@@ -84,11 +91,18 @@ _SCALE = np.ones(OBS_DIM)
 _SHIFT[0:2], _SCALE[0:2] = 500.0, 1.0 / 500.0
 _SHIFT[2], _SCALE[2] = 115.0, 1.0 / 85.0
 _SCALE[3:6] = 1.0 / 15.0
-_GOAL_SCALE_M = 20.0
-_GOAL_NORM = float(np.arcsinh(1000.0 / _GOAL_SCALE_M))  # 1000 m -> 1.0
 _SCALE[9:12] = 1.0 / 500.0
 _SCALE[12:15] = 1.0 / 15.0
 _SCALE[15] = 1.0 / 500.0
+
+
+def normalization_fingerprint() -> str:
+    """Hash of the numeric constants behind ``normalize_obs`` (not of the prose in OBS_NORMALIZATION)."""
+    digest = hashlib.sha256()
+    for arr in (_SHIFT, _SCALE):
+        digest.update(np.ascontiguousarray(arr, dtype="<f8").tobytes())
+    digest.update(repr((NEIGHBOUR_GATE_M, _GOAL_SCALE_M, _GOAL_NORM, OBS_NORM_VERSION)).encode())
+    return digest.hexdigest()
 
 
 def normalize_obs(raw: np.ndarray) -> np.ndarray:
@@ -162,6 +176,7 @@ def save_policy_artifact(directory: Path, weights: dict[str, np.ndarray], metada
         "obs_contract": "ObservationV1",
         "action_contract": "MARLAction",
         "obs_normalization": OBS_NORMALIZATION,
+        "obs_normalization_fingerprint": normalization_fingerprint(),
         "action_unit_mps2": ACTION_UNIT_MPS2,
         "world_bounds_assumed": world_bounds(),
         "actor_architecture": {"layers": [OBS_DIM, hidden, hidden, ACT_DIM], "activation": "tanh"},
@@ -202,6 +217,8 @@ class LearnedPolicy:
             problems.append("observation/action contract names differ from ObservationV1/MARLAction")
         if metadata.get("obs_normalization") != OBS_NORMALIZATION:
             problems.append(f"observation normalisation differs from {OBS_NORM_VERSION}")
+        if metadata.get("obs_normalization_fingerprint") != normalization_fingerprint():
+            problems.append("numeric observation-normalisation fingerprint missing or different from this code")
         if metadata.get("world_bounds_assumed") != world_bounds():
             problems.append(
                 f"world bounds the policy was trained for {metadata.get('world_bounds_assumed')} "
@@ -211,7 +228,9 @@ class LearnedPolicy:
             problems.append("action unit differs from MAX_ACCEL_COMPONENT_MPS2")
         if problems:
             raise ArtifactError(f"{directory}: " + "; ".join(problems))
-        weights_path = directory / str(metadata.get("weights_file", "actor.npz"))
+        if metadata.get("weights_file", "actor.npz") != "actor.npz":
+            raise ArtifactError(f"{directory}: weights_file must be 'actor.npz', got {metadata.get('weights_file')!r}")
+        weights_path = directory / "actor.npz"
         if not weights_path.is_file():
             raise ArtifactError(f"{weights_path}: weights file missing")
         with np.load(weights_path) as npz:
