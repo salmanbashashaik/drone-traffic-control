@@ -12,7 +12,7 @@ Built and merged on `main`:
 - Simulator `DroneEnv` with ideal (T1) and mild disturbance (T2) profiles; optional PyBullet quadrotor backend (Linux/WSL).
 - The safety filter (`src/utm_services/safety/filter.py`): joint QP, backup-set barrier, latch, escape stage, world-box limits, evasive fallback on solver error, Numba rollout kernel (bit-exact with the old one).
 - `utm-run` with three scenarios, MAPPO training and evaluation, two trained policy artifacts, 2D and 3D replay.
-- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 201 tests plus 91 slow tests, CI on every push and PR.
+- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 202 tests plus 91 slow tests, CI on every push and PR.
 
 Evidence for the filter (simulation, `docs/results/pr12-final-report.md`): random 2-6 drone fuzz, 5000 runs: 0 runs inside `d_eff`, 0 fallbacks. Hard fuzz, 5000 runs: 13 inside `d_eff` (bar 14). These are measurements of the model under its assumptions. They are not a proof and not a flight claim.
 

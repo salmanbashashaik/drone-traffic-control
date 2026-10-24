@@ -49,7 +49,7 @@ python -m pip install -e ".[dev,plot,train]"            # extras: physics (Linux
 - `utm-eval-policy artifacts/policies/<name> --out runs/eval1`: evaluate a policy artifact on the held-out suites.
 - `utm-replay heldout:18000044:6 --artifact artifacts/policies/<name> --variant shielded_marl --html --out runs/viz`: 2D plot and 3D viewer (`replay3d.html`). Full walkthrough: `docs/training/QUICKSTART.md`.
 - `utm-mock-api`: mock airspace API on 127.0.0.1:8000.
-- Tests: `pytest` = fast suite (parallel, `-m 'not slow'`, 201 tests, 20-40 s). `pytest -m slow` = slow suite (fuzz, sweeps, long closed loops; CI runs it on PRs to main). `pytest -m ""` = everything. `-n0` = one process for debugging.
+- Tests: `pytest` = fast suite (parallel, `-m 'not slow'`, 202 tests, 20-40 s). `pytest -m slow` = slow suite (fuzz, sweeps, long closed loops; CI runs it on PRs to main). `pytest -m ""` = everything. `-n0` = one process for debugging.
 - Quick tier / full tier / on-demand: see Verification above. Quick is about 30 s, full about 20 min.
 - Timing runs need an idle machine. Other Claude sessions share it.
 

@@ -1,4 +1,4 @@
-"""Bridge between PX4 SITL quadrotors and the HOCBF safety filter (integration/px4-bridge).
+"""Bridge between PX4 SITL quadrotors and the backup-set barrier safety filter (integration/px4-bridge).
 
 Each 100 ms step reads the latest PX4 telemetry of every vehicle, converts it to
 ``DroneState`` in our frame, runs the reference policy and ``apply_filter`` (one
@@ -12,7 +12,8 @@ Frames (docs/integration/PX4_SETUP.md, "Frames"):
   GPS origin where the vehicle boots). The spawn points are given in the Gazebo
   world frame (ENU), so one shared origin is
   ``ours = (WORLD_ORIGIN_XY + spawn_en + (east, north), -down + ALT_OFFSET_M)``.
-  ``check_shared_origin`` verifies the spawn offsets against the GPS origins.
+  ``check_shared_origin`` verifies the spawn offsets against the GPS origins, and
+  that every vehicle reads the same height while all stand on the ground.
 - Altitude: SITL height above ground h maps to z = h + ALT_OFFSET_M, so the
   world floor z = 30 m is 10 m above the SITL ground.
 
@@ -56,8 +57,9 @@ from utm_services.simulation.env import GOAL_RADIUS_M
 WORLD_ORIGIN_XY = (500.0, 500.0)    # our (x, y) of the Gazebo world origin
 ALT_OFFSET_M = 20.0                 # our z = SITL height above ground + ALT_OFFSET_M
 DT_S = SIMULATION_STEP_MS / 1000.0
-TELEMETRY_STALE_MS = 500.0          # older telemetry, or a step this late, stops the run and lands every vehicle
-ORIGIN_TOLERANCE_M = 1.0
+TELEMETRY_STALE_MS = 500.0          # state this old when read or when its setpoint would be sent, or a step
+                                    # starting this late, stops the run and lands every vehicle
+ORIGIN_TOLERANCE_M = 0.25           # per vehicle vs vehicle 0, so a pair can be off by 0.5 m, the filter margin
 PORT_BASE = 14540                   # PX4 instance i sends its offboard link to PORT_BASE + i
 
 
@@ -90,16 +92,18 @@ def gps_offset_en(origin: tuple[float, float], ref: tuple[float, float]) -> tupl
 
 
 def check_shared_origin(spawns_en: Sequence[Sequence[float]], gps_origins: Sequence[tuple[float, float]],
-                        tol_m: float = ORIGIN_TOLERANCE_M) -> list[float]:
-    """Error (m) between each vehicle's spawn offset and its GPS-origin offset from vehicle 0.
+                        ground_down_m: Sequence[float], tol_m: float = ORIGIN_TOLERANCE_M) -> list[float]:
+    """3D error (m) of each vehicle's local frame against vehicle 0's.
 
-    Raises ValueError if any error exceeds ``tol_m``: then the local frames do not share the
-    origin that ``ned_to_ours`` assumes.
+    Horizontal: spawn offset vs GPS-origin offset from vehicle 0. Vertical: local ``down`` read
+    while every vehicle stands on the (flat) ground, vs vehicle 0's. Raises ValueError if any
+    error exceeds ``tol_m``: then the local frames do not share the origin that ``ned_to_ours`` assumes.
     """
     errors = []
-    for spawn, origin in zip(spawns_en, gps_origins, strict=True):
+    for spawn, origin, down in zip(spawns_en, gps_origins, ground_down_m, strict=True):
         e, n = gps_offset_en(origin, gps_origins[0])
-        errors.append(math.hypot(e - (spawn[0] - spawns_en[0][0]), n - (spawn[1] - spawns_en[0][1])))
+        errors.append(math.hypot(e - (spawn[0] - spawns_en[0][0]), n - (spawn[1] - spawns_en[0][1]),
+                                 down - ground_down_m[0]))
     if max(errors) > tol_m:
         raise ValueError(f"GPS origins do not match the spawn offsets: errors {errors} m > {tol_m} m")
     return errors
@@ -228,15 +232,17 @@ def summarize(records: Sequence[dict[str, Any]], d_eff: float) -> dict[str, Any]
     }
 
 
-def warm_up_filter(filter_config: FilterConfig) -> float:
-    """Run apply_filter on a closing pair so numba compiles its kernels before flight; seconds taken.
+def warm_up_filter(filter_config: FilterConfig, n: int = 2) -> float:
+    """Run apply_filter on n drones closing on a point so numba compiles its kernels before flight; seconds taken.
 
     Without this the first in-flight step takes about 14 s in WSL (PX4 meanwhile flies the
     previous setpoint, which MAVSDK keeps re-sending).
     """
     t0 = time.perf_counter()
-    states = [DroneState(agent_id=aid, position_m=(500.0 + x, 500.0, 100.0), velocity_mps=(-x / 2, 0.0, 0.0),
-                         goal_m=(500.0 - 4 * x, 500.0, 100.0), timestamp_ms=0) for aid, x in (("a", -10.0), ("b", 10.0))]
+    dirs = [(math.cos(2 * math.pi * k / n), math.sin(2 * math.pi * k / n)) for k in range(n)]
+    states = [DroneState(agent_id=f"w{k}", position_m=(500.0 + 10 * c, 500.0 + 10 * s, 100.0),
+                         velocity_mps=(-5 * c, -5 * s, 0.0), goal_m=(500.0 - 40 * c, 500.0 - 40 * s, 100.0),
+                         timestamp_ms=0) for k, (c, s) in enumerate(dirs)]
     actions = [MARLAction(agent_id=s.agent_id, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=0) for s in states]
     apply_filter(states, actions, filter_config, latch={})
     return time.perf_counter() - t0
@@ -305,11 +311,12 @@ class Px4Fleet:
     def ned(self, i: int) -> tuple[tuple[float, float, float], tuple[float, float, float], float]:
         """Latest (position NED, velocity NED, age in ms) of vehicle i."""
         v = self.vehicles[i]
-        if v.latest is None:
+        latest, received_s = v.latest, v.received_s  # one sample: the MAVSDK callback may replace it meanwhile
+        if latest is None:
             return (math.nan,) * 3, (math.nan,) * 3, math.inf
-        p, w = v.latest.position, v.latest.velocity
+        p, w = latest.position, latest.velocity
         return ((p.north_m, p.east_m, p.down_m), (w.north_m_s, w.east_m_s, w.down_m_s),
-                (time.monotonic() - v.received_s) * 1000.0)
+                (time.monotonic() - received_s) * 1000.0)
 
     def gps_origins(self) -> list[tuple[float, float]]:
         out = []
@@ -405,7 +412,8 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
     """Fly the encounter at 10 Hz until every agent is within GOAL_RADIUS_M of its goal.
 
     Returns the records and the end reason ("completed", "max_steps", "stale_telemetry: ...",
-    "invalid_state: ..." or "stopped"). On "stopped" (``stop_after_s`` reached, for the
+    "stale_at_send: ...", "invalid_state: ...", "overrun: ..." or "stopped"), which is also
+    stored as ``end_reason`` in the last record. On "stopped" (``stop_after_s`` reached, for the
     link-loss test) the caller must not land the vehicles: PX4's offboard-loss failsafe acts.
     Completed agents stay in the filter input and hold at their goal under the policy.
     """
@@ -420,6 +428,11 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
     pending: dict[str, Any] | None = None
     t_start = time.monotonic()
     next_tick = t_start
+
+    def finish(reason: str) -> tuple[list[dict[str, Any]], str]:
+        if records:
+            records[-1]["end_reason"] = reason
+        return records, reason
 
     for k in range(enc.max_steps + 1):
         now = time.monotonic()
@@ -444,15 +457,15 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
             for s in states:
                 if np.linalg.norm(np.subtract(s.position_m, s.goal_m)) <= GOAL_RADIUS_M:
                     status[s.agent_id] = "completed"
-            pending["infos"] = step_infos(states, pending.pop("_returned"), status, h_min_m2(states),
+            pending["infos"] = step_infos(states, pending.pop("_returned"), status, pending.pop("_h_min_prev"),
                                           pending.pop("_extra"))
             del pending["_states"]
             records.append(pending)
             pending = None
         if pending is not None:  # stopped on bad telemetry: close the last step on its own states
             status = {aid: "aborted" for aid in status}
-            pending["infos"] = step_infos(pending.pop("_states"), pending.pop("_returned"), status, None,
-                                          pending.pop("_extra"), abort_reason=reason)
+            pending["infos"] = step_infos(pending.pop("_states"), pending.pop("_returned"), status,
+                                          pending.pop("_h_min_prev"), pending.pop("_extra"), abort_reason=reason)
             records.append(pending)
         if reason is None and all(st == "completed" for st in status.values()):
             reason = "completed"
@@ -463,7 +476,7 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
         if reason is None and stop_after_s is not None and now - t_start >= stop_after_s:
             reason = "stopped"
         if reason is not None:
-            return records, reason
+            return finish(reason)
 
         h_min = h_min_m2(states)
         proposed: list[MARLAction] = [
@@ -476,6 +489,13 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
             returned = [SafeAction(agent_id=a.agent_id, safe_accel_mps2=a.proposed_accel_mps2, timestamp_ms=ts,
                                    shield_active=False, h_min_m2=h_min, qp_feasible=True, fallback_used=False)
                         for a in proposed]
+        # A stall inside the step (solve, GC, scheduling) must not send a setpoint computed on old state.
+        state_age_ms = max(ages.values()) + (time.perf_counter() - t0) * 1000.0
+        if state_age_ms > TELEMETRY_STALE_MS:
+            reason = f"stale_at_send: step {k} state {state_age_ms:.0f} ms old"
+            for info in records[-1]["infos"].values() if records else ():
+                info.update(status="aborted", abort_reason=reason)
+            return finish(reason)
         extra = {}
         for i, (s, act) in enumerate(zip(states, returned, strict=True)):
             vel_ned, acc_ned, capped = setpoint(s.velocity_mps, act.safe_accel_mps2)
@@ -500,6 +520,7 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
             "wall_time_s": round(now - t_start, 4),
             "step_overrun_ms": round(overrun_ms, 3),
             "_states": states,
+            "_h_min_prev": h_min,
             "_returned": returned,
             "_extra": extra,
         }

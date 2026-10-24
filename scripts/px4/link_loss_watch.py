@@ -45,7 +45,8 @@ while time.monotonic() < end:
             hspeed = math.hypot(pv.velocity.north_m_s, pv.velocity.east_m_s)
             tag = "change" if state != last.get(sid) else "snap"
             print(f"{time.time():.3f} sys{sid} {tag} mode={state[0]} armed={state[1]} "
-                  f"height={-pv.position.down_m:.2f} m hspeed={hspeed:.2f} m/s", flush=True)
+                  f"height={-pv.position.down_m:.2f} m hspeed={hspeed:.2f} m/s "
+                  f"north={pv.position.north_m:.1f} east={pv.position.east_m:.1f} m (from launch)", flush=True)
             last[sid] = state
     if snap:
         next_snap += 1.0

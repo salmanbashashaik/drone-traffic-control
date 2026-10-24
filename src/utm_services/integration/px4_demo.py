@@ -109,12 +109,14 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_launch:
         subprocess.run(["bash", str(SITL_SH), "start", *(f"{e},{n}" for e, n in enc.spawns_en)], check=True)
 
-    warm_up_s = warm_up_filter(filter_config) if filter_on else 0.0
-    fleet = Px4Fleet(len(enc.agent_ids))
+    fleet = None
     try:
+        warm_up_s = warm_up_filter(filter_config, len(enc.agent_ids)) if filter_on else 0.0
+        fleet = Px4Fleet(len(enc.agent_ids))
         fleet.wait(lambda: all(fleet.ned(i)[2] < TELEMETRY_STALE_MS and math.isfinite(fleet.ned(i)[0][0])
                                for i in range(len(enc.agent_ids))), 60, "position telemetry from every vehicle")
-        origin_errors = check_shared_origin(enc.spawns_en, fleet.gps_origins())
+        origin_errors = check_shared_origin(enc.spawns_en, fleet.gps_origins(),
+                                            [fleet.ned(i)[0][2] for i in range(len(enc.agent_ids))])
         manifest = {
             "episode_id": f"{enc.scenario_id}-px4sitl-{'shielded_marl' if filter_on else 'unshielded_marl'}",
             "scenario_id": enc.scenario_id,
@@ -144,22 +146,26 @@ def main(argv: list[str] | None = None) -> int:
         records, reason = run_encounter(fleet, enc, filter_on, filter_config, args.stop_after)
         last_send_unix = time.time() - (time.monotonic() - t0 - records[-1]["wall_time_s"]) if records else math.nan
         manifest["end_reason"], manifest["encounter_s"] = reason, round(time.monotonic() - t0, 2)
+        manifest["last_step_unix"] = round(last_send_unix, 3)  # wall clock of the last step's start
         print(f"end: {reason} after {manifest['encounter_s']} s, {len(records)} steps")
         if reason == "stopped":
             summary = _write(out, manifest, records, SAFE_SEPARATION_M + filter_config.margin_m)
             print(json.dumps(summary, indent=2))
-            print(f"link-loss test: last setpoint at unix {last_send_unix:.3f}; bridge exits now without "
-                  "landing; PX4 failsafe in charge")
+            manifest["exit_unix"] = round(time.time(), 3)
+            (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
+            print(f"link-loss test: last fresh setpoint at unix {last_send_unix:.3f}; bridge exits at "
+                  f"{manifest['exit_unix']:.3f} without landing; PX4 failsafe in charge")
             sys.stdout.flush()
             os._exit(3)  # no cleanup, no offboard stop: the link just disappears
         fleet.land()
-    except BaseException:
-        if any(v.telemetry.armed() for v in fleet.vehicles):
-            print("error during the flight: landing every vehicle", file=sys.stderr)
+    except BaseException as exc:
+        if fleet is not None and any(v.telemetry.armed() for v in fleet.vehicles):
+            print(f"error during the flight ({exc!r}): landing every vehicle", file=sys.stderr)
             fleet.land()
         raise
     finally:
-        fleet.close()
+        if fleet is not None:
+            fleet.close()
         if not args.no_launch:
             subprocess.run(["bash", str(SITL_SH), "stop"], check=False)
 

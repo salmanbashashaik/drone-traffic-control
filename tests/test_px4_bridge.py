@@ -13,6 +13,7 @@ from utm_services.integration.px4_bridge import (
     WORLD_ORIGIN_XY,
     Encounter,
     check_shared_origin,
+    h_min_m2,
     ned_to_ours,
     observation,
     ours_to_ned_vector,
@@ -20,7 +21,9 @@ from utm_services.integration.px4_bridge import (
     setpoint,
     sitl_height,
     summarize,
+    warm_up_filter,
 )
+from utm_services.safety.filter import FilterConfig
 from utm_services.simulation.env import DroneEnv
 
 R_EARTH = 6378137.0
@@ -53,10 +56,13 @@ def test_check_shared_origin_passes_and_fails() -> None:
     ref = (47.397971, 8.546164)
     spawns = ((-40.0, 0.0), (40.0, 0.0), (0.0, 30.0))
     origins = [_gps(ref, e - spawns[0][0], n - spawns[0][1]) for e, n in spawns]
-    assert max(check_shared_origin(spawns, origins)) < 0.01
-    origins[2] = _gps(ref, 40.0 + 2.0, 30.0)  # vehicle 2 booted 2 m east of its spawn offset
+    ground = [0.02, -0.03, 0.05]
+    assert max(check_shared_origin(spawns, origins, ground)) < 0.1
     with pytest.raises(ValueError, match="GPS origins"):
-        check_shared_origin(spawns, origins)
+        check_shared_origin(spawns, origins, [0.0, 0.0, -0.4])  # vehicle 2's frame 0.4 m higher
+    origins[2] = _gps(ref, 40.0 + 0.3, 30.0)  # vehicle 2 booted 0.3 m east of its spawn offset
+    with pytest.raises(ValueError, match="GPS origins"):
+        check_shared_origin(spawns, origins, ground)
 
 
 # ---------------------------------------------------------------- setpoint mapping
@@ -125,8 +131,9 @@ def no_sleep(monkeypatch):
 
 
 def test_run_encounter_records_match_runner_format(no_sleep) -> None:
+    warm_up_filter(FilterConfig())  # a cold numba compile would trip the stale-at-send abort
     records, reason = run_encounter(_FakeFleet(HEADON), HEADON, filter_on=True)
-    assert reason == "completed"
+    assert reason == "completed" and records[-1]["end_reason"] == "completed"
     env = DroneEnv()
     env.reset(ScenarioConfig(scenario_id="t", seed=0, episode_limit_steps=5, drones=[
         _drone("a", (100.0, 100.0, 100.0), (300.0, 100.0, 100.0), (0.0, 0.0, 0.0))]))
@@ -144,6 +151,8 @@ def test_run_encounter_records_match_runner_format(no_sleep) -> None:
             SafeAction.model_validate(a)
         for info in rec["infos"].values():
             assert env_info_keys <= set(info)
+            # as DroneEnv: the barrier before the step, i.e. on this record's own states
+            assert info["h_min_prev_m2"] == pytest.approx(h_min_m2([DroneState.model_validate(s) for s in rec["states"]]))
             assert {"telemetry_age_ms", "loop_latency_ms", "flight_mode", "v_cmd_ned_mps"} <= set(info)
     assert all(i["status"] == "completed" for i in records[-1]["infos"].values())
     summary = summarize(records, 5.5)
@@ -158,3 +167,25 @@ def test_run_encounter_stale_telemetry_aborts_last_record(no_sleep) -> None:
     last = records[-1]["infos"]
     assert all(i["status"] == "aborted" and i["abort_reason"] == reason for i in last.values())
     assert all(i["status"] == "active" for i in records[-2]["infos"].values())
+
+
+def test_run_encounter_stall_inside_step_aborts_before_send(no_sleep, monkeypatch) -> None:
+    fleet = _FakeFleet(HEADON)
+    calls = {"n": 0}
+
+    def slow_reference(*args, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 7:  # step 3, agent a: the policy stalls 0.6 s between telemetry read and send
+            clock["t"] += 0.6
+        return real_run_policy(*args, **kwargs)
+
+    clock = {"t": 0.0}
+    real_perf = px4_bridge.time.perf_counter
+    real_run_policy = px4_bridge.run_policy
+    monkeypatch.setattr(px4_bridge.time, "perf_counter", lambda: real_perf() + clock["t"])
+    monkeypatch.setattr(px4_bridge, "run_policy", slow_reference)
+    records, reason = run_encounter(fleet, HEADON, filter_on=False)
+    assert reason.startswith("stale_at_send: step 3")
+    assert fleet.sends == 6  # steps 0-2 sent, step 3 sent nothing
+    assert len(records) == 3 and records[-1]["end_reason"] == reason
+    assert all(i["status"] == "aborted" and i["abort_reason"] == reason for i in records[-1]["infos"].values())
