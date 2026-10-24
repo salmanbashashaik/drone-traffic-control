@@ -17,7 +17,8 @@ utm-train --out runs/train/my-t2  --iterations 300 --workers 4 --profile nominal
 utm-eval-policy artifacts/policies/marl-mappo-s42-it220-f93dca3638 \
     --suite heldout --suite dense16 --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
 
-# watch it: replay.png (tracks + separation), replay.gif (animated top-down), replay3d.html (interactive 3D, rotate/zoom)
+# watch it: replay.png (tracks, separation, building clearance), replay.gif (top-down), and with --html
+# replay3d.html: a self-contained interactive 3D viewer for any browser (offline; opens by double-click)
 utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
     --variant shielded_marl --html --out runs/viz/x
 
@@ -25,6 +26,10 @@ utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300
 utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \
     --variant shielded_marl --pybullet --gui --speed 0.6 --out runs/viz/x
 ```
+
+**Interactive 3D viewer (`--html`).** Drag to orbit, right-drag or Shift-drag to pan, wheel to zoom; keys `1` iso, `2` top, `3` side, `4` front, `F` follow the next drone, `R` reset, Space play/pause. The bar has a time scrubber, 0.25x-4x speed, a follow-camera menu, toggles for trails, halos, labels, see-through buildings and the 1 km airspace box, and a drone-size slider. Halos turn amber while the filter acts on a drone and red when a pair is closer than d_safe. The page embeds three.js r128 (MIT, vendored in `training/viewer/`), so it needs no internet. Verified in headless Chrome (no JavaScript errors; a scripted mouse drag moved the camera and the wheel zoomed), and by screenshots in `docs/training/figures/viewer-3d-*.jpg`. Drones are drawn about 20x larger than real and level (the point-mass simulator has no attitude); rotor spin is decoration.
+
+**Buildings are scenery.** `training/city.py` places boxes at least 35 m from every drone's straight start-goal route. Neither the policy nor the filter nor `DroneEnv` knows about them (v1 has no obstacle contract). Measured over 50 scenarios (`docs/results/training/city-clearance.*`): minimum distance from any drone to any building was 21.8 m (5th percentile 30.7 m, median 39.2 m) for both variants, and no track entered a building. A single head-on run came within 10.6 m after the avoidance manoeuvre, so the clearance comes from the layout and is not a property of the controller. A scenario where a building sits in the way is not handled.
 
 PyBullet on macOS (Apple silicon, macOS 26 SDK) needed two workarounds that the `physics` extra does not cover: `CFLAGS="-Dfdopen=fdopen" pip install pybullet` (the bundled zlib clashes with the SDK headers), and `pip install --no-deps --ignore-requires-python gym-pybullet-drones@7ebad1e` (that commit declares Python >= 3.12; this repo's venv is 3.11 and it imported fine). With the window open PyBullet sometimes answers a contact query with `None`; `utm-replay` retries and raises if it keeps failing, it never skips the collision check. The GUI episode is slow (a few minutes of wall time).
 
@@ -119,6 +124,8 @@ The policy was trained on point-mass dynamics. Flown unchanged in the PyBullet C
 `docs/training/figures/` has one fresh-seed scenario (`heldout:12000008:4`) flown three ways. I picked it as the worst unshielded case of the 50 (1.63 m, the suite minimum; 4 of the 10 unshielded violation pair-steps), to show the filter working, so it is not typical. In that scenario the shielded reference reaches a larger minimum separation (8.68 m) than the shielded learned policy (8.08 m). The reference (1.64 m) and the unshielded learned policy (1.63 m) both lose separation; the unshielded plot shows two drones crossing at about 2.7 s. With the filter the minimum is 8.08 m. The learned policy alone does not solve this conflict; the filter does.
 
 ## What these results do not show
+
+- Buildings: see "Buildings are scenery". Nothing here demonstrates obstacle avoidance.
 
 - Everything is on the project's point-mass simulator with perfect dynamics (T1) or the T2 profiles, whose parameters are placeholders (`simulation/env.py`). No real telemetry, no hardware, no PyBullet or other dynamics were used.
 - Zero violations in a finite set of seeds does not establish zero risk. In these runs the filter is the component that changes the outcome; its limits are in `docs/formulation/P2-SA-02-lateral-escape.md` and `docs/DECISIONS.md` (open items BL-03 to BL-12 apply unchanged).
