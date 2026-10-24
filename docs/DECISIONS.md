@@ -212,3 +212,12 @@ Research only: nothing in `src/` or `tests/` changes. Implements the founder's y
 - **Results reported as run, nothing tuned.** In-limit: 0 losses in 259 (10⁻⁵) and 248 (10⁻⁷) admissible adaptive runs; baseline 110 and 107. Lost-command term 7.5–7.7 m per pair (22.1–26.8 before). RTK median margin 8.0 m calm, 18.1 / 19.2 m India wind; SBAS 39–44 m, within the filter's bound; SPS at the cap. `dc` fired in no run (largest ratio 0.78). Capacity in the reference corridor: RTK calm 14 lanes, 1064 drones per km; India wind 0 for every grade.
 - **Stop-and-ask item: QP fallbacks.** Main's QP fell back in 6 admissible in-limit runs (3 scenarios × 2 targets; OSQP iteration limit for one cycle near d_eff; no loss), against 0 at `a5b5264`. A safety metric got worse, so the tighter term is reported, not adopted, until the founder decides (P3-SA-03 §8 item 1).
 - **`summary.md` is the `runs4` table;** `summary-runs3.md` keeps `runs3`'s.
+
+
+### 2026-10-24 (founder decisions on runs4, logged by Claude, CTO session)
+
+On `runs4` (94d004f, 2336 rows at e06d9414dd95): tighter lost-command term, RTK margin 8 m calm and 18-19 m in the India wind, 0 in-limit losses in 259 / 248 admissible runs, but main's QP fell back for one cycle in 6 in-limit runs (0 before).
+
+- **Adoption of the tighter term is conditional.** It is adopted in the research only after the 6 in-limit runs with a QP fallback (and their 10⁻⁷ twins) are rerun with PR #26's KKT-exact solver (`perf/solver-exact`) and show 0 fallbacks. If any still falls back, the term is held. The fallback count is a safety metric that got worse, so it is not traded away for the smaller margin.
+- **Drag in the bound comes from a declared lower bound.** Until the onboarding type test exists (board UTM-091), each airframe has a declared lower bound D_min with its source, and the lost-command bound uses D_min, not the registered D. The margin with no drag credit (D = 0) is reported as the worst case.
+- **The Fable re-check of items 3(a), 3(b) and 4 must be clean before either decision is applied.**
