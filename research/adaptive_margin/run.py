@@ -169,6 +169,18 @@ def _monitored(rs: list[dict]) -> list[str]:
             f"{max(r['absorb_max_m'] for r in rs):.2f})"]
 
 
+def _viol(rs: list[dict]) -> str:
+    """Certificate violations from clearance on: runs (cycles, deepest m); '-' for rows written before the field."""
+    if any("viol_cycles" not in r for r in rs):
+        return "-"
+    return (f"{sum(r['viol_cycles'] > 0 for r in rs)} ({sum(r['viol_cycles'] for r in rs)}, "
+            f"{max(r['viol_max_m'] for r in rs):.2f})")
+
+
+def _sep_clear(rs: list[dict]) -> str:
+    return f"{min(r['min_sep_clear'] for r in rs):.2f}" if all("min_sep_clear" in r for r in rs) else "-"
+
+
 def _lanes(width: float, m: float, sp: float) -> int:
     """Lanes across ``width`` at spacing ``sp``, each at least the margin ``m`` from the corridor's walls."""
     return max(0, math.floor((width - 2.0 * m) / sp) + 1) if width >= 2.0 * m else 0
@@ -189,8 +201,9 @@ def table(paths: list[Path]) -> str:
         lines += [f"## Target {target:g} per pair-hour (K1 = {rk.k1:.2f}, K2 = {rk.k2:.2f})", "",
                   "### In-limit conditions (recoverable and admissible encounters only)", "",
                   "| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
-                  "| runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) |",
-                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+                  "| runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) "
+                  "| min sep from clearance (m) | certificate violations: runs (cycles, deepest m) | fallback runs |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         tr = [r for r in rows if r["target"] == target]
         groups = defaultdict(list)
         for r in tr:
@@ -204,7 +217,8 @@ def table(paths: list[Path]) -> str:
                 f"{sum(r['saturated_cycles'] > 0 for r in rs)} | "
                 f"{_median([r['margin_p50'] for r in rs]) if ad else 0.5} | "
                 f"{f'{_median([r['gnss_p50'] for r in rs])} / {_median([r['lost_p50'] for r in rs])}' if ad else '-'} | "
-                f"{min(r['min_sep'] for r in rs):.2f} |")
+                f"{min(r['min_sep'] for r in rs):.2f} | {_sep_clear(rs)} | {_viol(rs)} | "
+                f"{sum(r['fallbacks'] > 0 for r in rs)} |")
         nominal = [r for r in tr if r["cond"] not in beyond | takeoff and r["mode"] == "adaptive"]
         n_unrec = len({(r["family"], r["seed"], r["cond"]) for r in nominal if r["ideal_min_sep"] < sim.SAFE_SEPARATION_M})
         n_inadm = sum(not r["admissible"] for r in nominal if r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M)
@@ -228,8 +242,9 @@ def table(paths: list[Path]) -> str:
                 f"{_median([r['alarms']['lag'] for r in rs if 'lag' in r['alarms']])} |")
         lines += ["", f"### Takeoff tracks (adaptive, track starts {sim.PREROLL_S:g} s before the run's t = 0, at hover)", "",
                   "| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
-                  "| alarm in the last 5 s before the encounter | margin p50 (m) |",
-                  "|---|---|---|---|---|---|---|---|---|---|"]
+                  "| alarm in the last 5 s before the encounter | margin p50 (m) | min sep (m) | min sep from clearance (m) "
+                  "| certificate violations: runs (cycles, deepest m) |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
         groups = defaultdict(list)
         for r in tr:
             if r["cond"] in takeoff and _in_limit(r, adm):
@@ -238,7 +253,8 @@ def table(paths: list[Path]) -> str:
             late = sum(any(r["t_encounter_s"] - 5.0 <= s_ <= r["t_encounter_s"] for s_ in r["alarms"].values())
                        for r in rs)
             lines.append(f"| {c} | {len(rs)} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
-                         f"{late} | {_median([r['margin_p50'] for r in rs])} |")
+                         f"{late} | {_median([r['margin_p50'] for r in rs])} | {min(r['min_sep'] for r in rs):.2f} | "
+                         f"{_sep_clear(rs)} | {_viol(rs)} |")
         lines += ["", f"### Corridor capacity per GNSS grade (India wind, adaptive, in-limit runs; reference corridor "
                   f"{CORRIDOR_W_M:g} m x {CORRIDOR_H_M:g} m, square lane grid at s = 5 m + margin, lanes at least "
                   "the margin from the walls)", "",

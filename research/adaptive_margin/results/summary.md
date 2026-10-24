@@ -1,4 +1,4 @@
-Rows: 2336; commits: e06d9414dd95.
+Rows: 2336; commits: 9f3dcad8d0d8.
 
 Risk target per pair-hour in each heading. Absorb: runs with a margin deficit (cycles, largest deficit m). Wind at t0: runs whose first cycle raised the wind alarm (prior). `absorb` and `margin` are listed but do not count as a warning before LoS.
 
@@ -6,26 +6,26 @@ Risk target per pair-hour in each heading. Absorb: runs with a margin deficit (c
 
 ### In-limit conditions (recoverable and admissible encounters only)
 
-| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| gps_sps/calm | adaptive | 43 | 0 | 41 | 0 | absorb 3, headroom 24, lag 1, margin 38, wall 33 | 0 | 3 (15, 0.59) | 0 | 48.57 | 46.76 / 7.56 | 32.20 |
-| gps_sps/calm | baseline | 43 | 39 | - | - | - | - | - | 7 | 0.5 | - | 0.09 |
-| gps_sps/calm | baseline_lag | 43 | 39 | - | - | - | - | - | 7 | 0.5 | - | 0.09 |
-| gps_sps/india | adaptive | 37 | 0 | 34 | 0 | absorb 3, lag 1, margin 33, saturation 1, wall 23 | 37 | 3 (3, 0.05) | 1 | 48.57 | 45.21 / 7.67 | 37.28 |
-| gps_sps/india | baseline | 37 | 5 | - | - | - | - | - | 0 | 0.5 | - | 1.84 |
-| gps_sps/india | baseline_lag | 37 | 5 | - | - | - | - | - | 0 | 0.5 | - | 1.84 |
-| rtk_f9p/calm | adaptive | 47 | 0 | 29 | 0 | headroom 27, lag 1, wall 4 | 0 | 0 (0, 0.00) | 0 | 8.03 | 0.29 / 7.55 | 12.83 |
-| rtk_f9p/calm | baseline | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 |
-| rtk_f9p/calm | baseline_lag | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 |
-| rtk_f9p/india | adaptive | 45 | 0 | 11 | 0 | absorb 8, nis 5 | 45 | 8 (15, 0.11) | 0 | 18.07 | 10.26 / 7.63 | 22.81 |
-| rtk_f9p/india | baseline | 45 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.79 |
-| rtk_f9p/india | baseline_lag | 45 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.79 |
-| sbas_gagan/calm | adaptive | 44 | 0 | 37 | 0 | absorb 18, headroom 24, lag 1, saturation 1, wall 26 | 0 | 18 (227, 0.91) | 1 | 39.44 | 31.8 / 7.55 | 31.17 |
-| sbas_gagan/calm | baseline | 44 | 37 | - | - | - | - | - | 7 | 0.5 | - | 0.28 |
-| sbas_gagan/calm | baseline_lag | 44 | 37 | - | - | - | - | - | 7 | 0.5 | - | 0.28 |
-| sbas_gagan/india | adaptive | 43 | 0 | 25 | 0 | absorb 20, saturation 1, wall 15 | 43 | 20 (125, 0.39) | 1 | 40.75 | 32.74 / 7.67 | 33.98 |
-| sbas_gagan/india | baseline | 43 | 10 | - | - | - | - | - | 1 | 0.5 | - | 1.50 |
-| sbas_gagan/india | baseline_lag | 43 | 10 | - | - | - | - | - | 1 | 0.5 | - | 1.50 |
+| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) | min sep from clearance (m) | certificate violations: runs (cycles, deepest m) | fallback runs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| gps_sps/calm | adaptive | 43 | 0 | 41 | 0 | absorb 3, headroom 24, lag 1, margin 38, wall 33 | 0 | 3 (15, 0.59) | 0 | 48.57 | 46.76 / 7.56 | 32.20 | 32.20 | 11 (33, 0.24) | 0 |
+| gps_sps/calm | baseline | 43 | 39 | - | - | - | - | - | 7 | 0.5 | - | 0.09 | 0.09 | 9 (33, 1.23) | 0 |
+| gps_sps/calm | baseline_lag | 43 | 39 | - | - | - | - | - | 7 | 0.5 | - | 0.09 | 0.09 | 9 (33, 1.23) | 0 |
+| gps_sps/india | adaptive | 37 | 0 | 34 | 0 | absorb 3, lag 1, margin 33, saturation 1, wall 23 | 37 | 3 (3, 0.05) | 1 | 48.57 | 45.21 / 7.67 | 37.28 | 37.28 | 17 (35, 0.05) | 1 |
+| gps_sps/india | baseline | 37 | 5 | - | - | - | - | - | 0 | 0.5 | - | 1.84 | 1.84 | 3 (4, 0.08) | 0 |
+| gps_sps/india | baseline_lag | 37 | 5 | - | - | - | - | - | 0 | 0.5 | - | 1.84 | 1.84 | 3 (4, 0.08) | 0 |
+| rtk_f9p/calm | adaptive | 47 | 0 | 29 | 0 | headroom 27, lag 1, wall 4 | 0 | 0 (0, 0.00) | 0 | 8.03 | 0.29 / 7.55 | 12.83 | 12.83 | 0 (0, 0.00) | 0 |
+| rtk_f9p/calm | baseline | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 | 3.51 | 29 (237, 1.94) | 6 |
+| rtk_f9p/calm | baseline_lag | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 | 3.51 | 29 (236, 1.94) | 6 |
+| rtk_f9p/india | adaptive | 45 | 0 | 11 | 0 | absorb 8, nis 5 | 45 | 8 (15, 0.11) | 0 | 18.07 | 10.26 / 7.63 | 22.81 | 22.81 | 10 (25, 0.05) | 0 |
+| rtk_f9p/india | baseline | 45 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.79 | 4.79 | 7 (33, 0.70) | 0 |
+| rtk_f9p/india | baseline_lag | 45 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.79 | 4.79 | 7 (33, 0.70) | 0 |
+| sbas_gagan/calm | adaptive | 44 | 0 | 37 | 0 | absorb 18, headroom 24, lag 1, saturation 1, wall 26 | 0 | 18 (227, 0.91) | 1 | 39.44 | 31.8 / 7.55 | 31.17 | 31.17 | 20 (228, 1.94) | 2 |
+| sbas_gagan/calm | baseline | 44 | 37 | - | - | - | - | - | 7 | 0.5 | - | 0.28 | 0.28 | 14 (68, 1.59) | 1 |
+| sbas_gagan/calm | baseline_lag | 44 | 37 | - | - | - | - | - | 7 | 0.5 | - | 0.28 | 0.28 | 14 (68, 1.59) | 1 |
+| sbas_gagan/india | adaptive | 43 | 0 | 25 | 0 | absorb 20, saturation 1, wall 15 | 43 | 20 (125, 0.39) | 1 | 40.75 | 32.74 / 7.67 | 33.98 | 33.98 | 24 (159, 0.16) | 0 |
+| sbas_gagan/india | baseline | 43 | 10 | - | - | - | - | - | 1 | 0.5 | - | 1.50 | 1.50 | 5 (18, 0.32) | 1 |
+| sbas_gagan/india | baseline_lag | 43 | 10 | - | - | - | - | - | 1 | 0.5 | - | 1.50 | 1.50 | 5 (18, 0.32) | 1 |
 
 Excluded: 6 adaptive runs not recoverable (main, ground truth, no delay); 23 recoverable but not admissible at clearance (separation below 5 m + requested margin along the backup).
 
@@ -46,11 +46,11 @@ Excluded: 6 adaptive runs not recoverable (main, ground truth, no delay); 23 rec
 
 ### Takeoff tracks (adaptive, track starts 15 s before the run's t = 0, at hover)
 
-| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | alarm in the last 5 s before the encounter | margin p50 (m) |
-|---|---|---|---|---|---|---|---|---|---|
-| takeoff/gps_sps/india | 44 | 0 | 42 | 0 | absorb 4, lag 2, margin 42, saturation 3, wall 36 | 44 | 4 (27, 0.55) | 8 | 48.57 |
-| takeoff/rtk_f9p/india | 46 | 0 | 17 | 0 | absorb 14, lag 3, nis 3 | 46 | 14 (18, 0.15) | 7 | 17.8 |
-| takeoff/sbas_gagan/india | 45 | 0 | 39 | 0 | absorb 27, lag 3, saturation 3, wall 27 | 45 | 27 (186, 0.60) | 19 | 40.02 |
+| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | alarm in the last 5 s before the encounter | margin p50 (m) | min sep (m) | min sep from clearance (m) | certificate violations: runs (cycles, deepest m) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| takeoff/gps_sps/india | 44 | 0 | 42 | 0 | absorb 4, lag 2, margin 42, saturation 3, wall 36 | 44 | 4 (27, 0.55) | 8 | 48.57 | 31.37 | 31.37 | 14 (63, 0.11) |
+| takeoff/rtk_f9p/india | 46 | 0 | 17 | 0 | absorb 14, lag 3, nis 3 | 46 | 14 (18, 0.15) | 7 | 17.8 | 10.72 | 21.10 | 16 (40, 0.38) |
+| takeoff/sbas_gagan/india | 45 | 0 | 39 | 0 | absorb 27, lag 3, saturation 3, wall 27 | 45 | 27 (186, 0.60) | 19 | 40.02 | 35.00 | 35.00 | 29 (237, 0.27) |
 
 ### Corridor capacity per GNSS grade (India wind, adaptive, in-limit runs; reference corridor 100 m x 30 m, square lane grid at s = 5 m + margin, lanes at least the margin from the walls)
 
@@ -64,26 +64,26 @@ Excluded: 6 adaptive runs not recoverable (main, ground truth, no delay); 23 rec
 
 ### In-limit conditions (recoverable and admissible encounters only)
 
-| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) |
-|---|---|---|---|---|---|---|---|---|---|---|---|---|
-| gps_sps/calm | adaptive | 42 | 0 | 42 | 0 | headroom 23, lag 1, margin 42, wall 32 | 0 | 0 (0, 0.00) | 0 | 48.57 | 51.78 / 7.57 | 32.20 |
-| gps_sps/calm | baseline | 42 | 38 | - | - | - | - | - | 6 | 0.5 | - | 0.09 |
-| gps_sps/calm | baseline_lag | 42 | 38 | - | - | - | - | - | 6 | 0.5 | - | 0.09 |
-| gps_sps/india | adaptive | 29 | 0 | 29 | 0 | margin 29, saturation 1, wall 17 | 29 | 0 (0, 0.00) | 1 | 48.57 | 49.2 / 7.69 | 37.05 |
-| gps_sps/india | baseline | 29 | 3 | - | - | - | - | - | 0 | 0.5 | - | 2.49 |
-| gps_sps/india | baseline_lag | 29 | 3 | - | - | - | - | - | 0 | 0.5 | - | 2.49 |
-| rtk_f9p/calm | adaptive | 47 | 0 | 29 | 0 | headroom 27, lag 1, wall 4 | 0 | 0 (0, 0.00) | 0 | 8.06 | 0.32 / 7.56 | 12.91 |
-| rtk_f9p/calm | baseline | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 |
-| rtk_f9p/calm | baseline_lag | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 |
-| rtk_f9p/india | adaptive | 44 | 0 | 14 | 0 | absorb 9, nis 7, saturation 1 | 44 | 9 (17, 0.13) | 1 | 19.22 | 11.47 / 7.65 | 23.91 |
-| rtk_f9p/india | baseline | 44 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.86 |
-| rtk_f9p/india | baseline_lag | 44 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.86 |
-| sbas_gagan/calm | adaptive | 43 | 0 | 35 | 0 | absorb 16, headroom 24, saturation 2, wall 26 | 0 | 16 (241, 1.08) | 2 | 42.23 | 34.51 / 7.56 | 34.17 |
-| sbas_gagan/calm | baseline | 43 | 36 | - | - | - | - | - | 7 | 0.5 | - | 0.28 |
-| sbas_gagan/calm | baseline_lag | 43 | 36 | - | - | - | - | - | 7 | 0.5 | - | 0.28 |
-| sbas_gagan/india | adaptive | 43 | 0 | 28 | 0 | absorb 21, saturation 1, wall 20 | 43 | 21 (94, 0.23) | 1 | 43.94 | 36.17 / 7.69 | 36.99 |
-| sbas_gagan/india | baseline | 43 | 11 | - | - | - | - | - | 0 | 0.5 | - | 1.39 |
-| sbas_gagan/india | baseline_lag | 43 | 11 | - | - | - | - | - | 0 | 0.5 | - | 1.39 |
+| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) | min sep from clearance (m) | certificate violations: runs (cycles, deepest m) | fallback runs |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| gps_sps/calm | adaptive | 42 | 0 | 42 | 0 | headroom 23, lag 1, margin 42, wall 32 | 0 | 0 (0, 0.00) | 0 | 48.57 | 51.78 / 7.57 | 32.20 | 32.20 | 6 (13, 0.03) | 0 |
+| gps_sps/calm | baseline | 42 | 38 | - | - | - | - | - | 6 | 0.5 | - | 0.09 | 0.09 | 8 (28, 1.23) | 0 |
+| gps_sps/calm | baseline_lag | 42 | 38 | - | - | - | - | - | 6 | 0.5 | - | 0.09 | 0.09 | 8 (28, 1.23) | 0 |
+| gps_sps/india | adaptive | 29 | 0 | 29 | 0 | margin 29, saturation 1, wall 17 | 29 | 0 (0, 0.00) | 1 | 48.57 | 49.2 / 7.69 | 37.05 | 37.05 | 8 (16, 0.04) | 1 |
+| gps_sps/india | baseline | 29 | 3 | - | - | - | - | - | 0 | 0.5 | - | 2.49 | 2.49 | 1 (3, 0.08) | 0 |
+| gps_sps/india | baseline_lag | 29 | 3 | - | - | - | - | - | 0 | 0.5 | - | 2.49 | 2.49 | 1 (3, 0.08) | 0 |
+| rtk_f9p/calm | adaptive | 47 | 0 | 29 | 0 | headroom 27, lag 1, wall 4 | 0 | 0 (0, 0.00) | 0 | 8.06 | 0.32 / 7.56 | 12.91 | 12.91 | 0 (0, 0.00) | 0 |
+| rtk_f9p/calm | baseline | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 | 3.51 | 29 (237, 1.94) | 6 |
+| rtk_f9p/calm | baseline_lag | 47 | 18 | - | - | - | - | - | 22 | 0.5 | - | 3.51 | 3.51 | 29 (236, 1.94) | 6 |
+| rtk_f9p/india | adaptive | 44 | 0 | 14 | 0 | absorb 9, nis 7, saturation 1 | 44 | 9 (17, 0.13) | 1 | 19.22 | 11.47 / 7.65 | 23.91 | 23.91 | 9 (26, 0.08) | 0 |
+| rtk_f9p/india | baseline | 44 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.86 | 4.86 | 5 (32, 0.63) | 0 |
+| rtk_f9p/india | baseline_lag | 44 | 1 | - | - | - | - | - | 1 | 0.5 | - | 4.86 | 4.86 | 5 (32, 0.63) | 0 |
+| sbas_gagan/calm | adaptive | 43 | 0 | 35 | 0 | absorb 16, headroom 24, saturation 2, wall 26 | 0 | 16 (241, 1.08) | 2 | 42.23 | 34.51 / 7.56 | 34.17 | 34.17 | 20 (219, 1.74) | 2 |
+| sbas_gagan/calm | baseline | 43 | 36 | - | - | - | - | - | 7 | 0.5 | - | 0.28 | 0.28 | 14 (68, 1.59) | 1 |
+| sbas_gagan/calm | baseline_lag | 43 | 36 | - | - | - | - | - | 7 | 0.5 | - | 0.28 | 0.28 | 14 (68, 1.59) | 1 |
+| sbas_gagan/india | adaptive | 43 | 0 | 28 | 0 | absorb 21, saturation 1, wall 20 | 43 | 21 (94, 0.23) | 1 | 43.94 | 36.17 / 7.69 | 36.99 | 36.99 | 23 (136, 0.16) | 0 |
+| sbas_gagan/india | baseline | 43 | 11 | - | - | - | - | - | 0 | 0.5 | - | 1.39 | 1.39 | 6 (18, 0.39) | 0 |
+| sbas_gagan/india | baseline_lag | 43 | 11 | - | - | - | - | - | 0 | 0.5 | - | 1.39 | 1.39 | 6 (18, 0.39) | 0 |
 
 Excluded: 6 adaptive runs not recoverable (main, ground truth, no delay); 34 recoverable but not admissible at clearance (separation below 5 m + requested margin along the backup).
 
@@ -104,11 +104,11 @@ Excluded: 6 adaptive runs not recoverable (main, ground truth, no delay); 34 rec
 
 ### Takeoff tracks (adaptive, track starts 15 s before the run's t = 0, at hover)
 
-| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | alarm in the last 5 s before the encounter | margin p50 (m) |
-|---|---|---|---|---|---|---|---|---|---|
-| takeoff/gps_sps/india | 43 | 0 | 43 | 0 | lag 2, margin 43, wall 35 | 43 | 0 (0, 0.00) | 9 | 48.57 |
-| takeoff/rtk_f9p/india | 45 | 0 | 17 | 0 | absorb 14, lag 2, nis 2, saturation 1 | 45 | 14 (20, 0.12) | 10 | 18.95 |
-| takeoff/sbas_gagan/india | 44 | 0 | 35 | 0 | absorb 22, lag 2, saturation 4, wall 27 | 44 | 22 (157, 0.59) | 14 | 43.36 |
+| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb | alarm in the last 5 s before the encounter | margin p50 (m) | min sep (m) | min sep from clearance (m) | certificate violations: runs (cycles, deepest m) |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| takeoff/gps_sps/india | 43 | 0 | 43 | 0 | lag 2, margin 43, wall 35 | 43 | 0 (0, 0.00) | 9 | 48.57 | 32.29 | 32.29 | 13 (41, 0.10) |
+| takeoff/rtk_f9p/india | 45 | 0 | 17 | 0 | absorb 14, lag 2, nis 2, saturation 1 | 45 | 14 (20, 0.12) | 10 | 18.95 | 23.94 | 23.94 | 15 (41, 0.04) |
+| takeoff/sbas_gagan/india | 44 | 0 | 35 | 0 | absorb 22, lag 2, saturation 4, wall 27 | 44 | 22 (157, 0.59) | 14 | 43.36 | 40.42 | 40.42 | 23 (225, 0.19) |
 
 ### Corridor capacity per GNSS grade (India wind, adaptive, in-limit runs; reference corridor 100 m x 30 m, square lane grid at s = 5 m + margin, lanes at least the margin from the walls)
 
