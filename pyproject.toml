@@ -45,6 +45,7 @@ utm-mock-api = "utm_services.api.app:run"
 utm-run = "utm_services.evaluation.cli:main"
 utm-train = "utm_services.training.mappo:main"
 utm-eval-policy = "utm_services.training.evaluate:main"
+utm-replay = "utm_services.training.replay:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "shared" = "shared"}

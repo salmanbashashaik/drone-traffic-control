@@ -4,7 +4,7 @@
 |---|---|
 | Task | P1-SA-01 |
 | Owner | Salman (`salman/marl-safety`) |
-| Status | DRAFT — method choice and preprocessing plan for review |
+| Status | Implemented in P2-SA-01 (`src/utm_services/training/`). Deviations from this draft are in section 9; how to run it, and results, are in `docs/training/MARL_TRAINING.md`. |
 | Date | 2026-10-20 |
 | Authority | `INTERFACES.md` and `shared/contracts.py` on `main`. |
 
@@ -238,3 +238,24 @@ Confirm the `step()` return signature matches `INTERFACES.md`.
 **For Aman:** the model artifact metadata (Section 5) is what you need
 for the run manifest and demo. The `artifact_id` ties a specific
 checkpoint to a specific run record.
+
+---
+
+## 9. Implementation record (P2-SA-01) — deviations from sections 2–7
+
+This section supersedes the draft where they differ.
+
+| Draft | Implemented | Why |
+|---|---|---|
+| CleanRL MAPPO (M1) | Custom single-process PyTorch MAPPO (`training/mappo.py`), rollouts in `training/rollout.py` without torch | `DroneEnv` is a plain Python class with its own `step` contract; no PettingZoo wrapper was needed (M3). Env step is ~0.1 ms, so no distributed framework is needed. |
+| Actor outputs mean and log-sigma (6 floats) | Actor outputs the mean (3 floats); log-sigma is a learned state-independent parameter vector | Standard in PPO/MAPPO implementations; fewer unstable degrees of freedom. Sigma is not part of the shipped artifact (runtime is the deterministic mean). |
+| Normalisation `v/1000` for goal displacement (indices 6–8) | `arcsinh(v/20)/arcsinh(50)` (obs-norm-v3) | With `v/1000` a drone 2.8 m from its goal got an input of 0.003 and stopped outside the 2 m goal radius (observed on a held-out seed). |
+| No neighbour range limit | Neighbour terms (9–15) set to the no-neighbour values when index 15 > 250 m (obs-norm-v3) | Separations beyond the trained range saturated the inputs; `head-on-40` (neighbours up to 750 m apart) never completed. The filter is not gated by this: it sees every drone. |
+| PPO rollout length 256 steps | Whole episodes: 16 per update (about 8–10k agent-steps) | The environment is episodic and agents terminate at different times. |
+| N = 4 agents (M5) | 2–4 agents per episode, padded to 4 slots for the critic | Gives the shared actor head-on pairs as well as groups. The actor does not depend on N. |
+| Fixed scenarios or procedural (M4) | Procedural family `scenario-family-v2` with a conflict knob and a curriculum over it | See `training/scenarios.py`. |
+| Training from scratch | Behaviour-cloning warm start from the deterministic reference, then PPO | Reaches goals within the first iterations; recorded in artifact metadata (`bc_warmstart_from_reference`). The reference is the initialisation, not a teacher during PPO. |
+| Reward R1–R5 open | R1: env reward uses ground-truth nearest separation (training only; not an input to the actor). R2: smoothness uses the applied command, as `env.py` implements. R3: no abort penalty beyond lost progress. R4: no held agents exist in v1. R5: normalisation is versioned inside the artifact (`obs_normalization`). | Matches `simulation/env.py` `P1-SA-01-reward-v1`. R3 is a known gap: aborts are not explicitly penalised. |
+| Metadata required | `metadata.json` plus `actor.npz`, loader refuses on hash, contract, normalisation or world-bound mismatch (`policy/learned.py`) | Section 5. |
+
+The critic is centralised (own observation, every slot's observation, alive mask) and is not shipped.
