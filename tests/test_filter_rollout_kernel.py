@@ -88,6 +88,7 @@ def _cases(seed, count=400):
 def _assert_same(got, want):
     for g, w in zip(got, want, strict=True):
         assert g.shape == w.shape
+        assert g.dtype == w.dtype
         assert np.array_equal(g, w, equal_nan=True)
 
 
@@ -120,6 +121,34 @@ def test_kernel_matches_numpy_rollout_without_latches() -> None:
 
     _assert_same(F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig()),
                  _numpy_rollout(p_i, p_j, v_i, v_j, F.FilterConfig()))
+
+
+def test_kernel_matches_numpy_rollout_with_crossed_world_limits() -> None:
+    # Far outside the box and fast, the raw limits cross and the nearer-wall
+    # guard of _world_accel_limits acts; the in-box cases never reach it.
+    rng = np.random.default_rng(30)
+    p_i, p_j = rng.uniform(-1000.0, 1000.0, (2, 400, 3))
+    v_i, v_j = rng.uniform(-300.0, 300.0, (2, 400, 3))
+    for p, v in ((p_i, v_i), (p_j, v_j)):
+        low, high = F._raw_world_limits(p, v, F.FilterConfig())
+        assert (low > high).any()
+
+    _assert_same(F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig()),
+                 _numpy_rollout(p_i, p_j, v_i, v_j, F.FilterConfig()))
+
+
+def test_rollout_rejects_inputs_the_kernel_cannot_check() -> None:
+    p_i, p_j, v_i, v_j, axis, up = _cases(12, count=6)
+
+    with pytest.raises(ValueError, match="needs"):
+        F._backup_rollout(p_i, p_j[:5], v_i, v_j, F.FilterConfig())
+    with pytest.raises(ValueError, match="needs"):
+        F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis[:1], up)
+    with pytest.raises(ValueError, match="needs"):
+        F._backup_rollout(p_i[0], p_j[0], v_i[0], v_j[0], F.FilterConfig())
+    up[2] = np.nan
+    with pytest.raises(ValueError, match="finite"):
+        F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis, up)
 
 
 @pytest.mark.parametrize("count", [0, 1])

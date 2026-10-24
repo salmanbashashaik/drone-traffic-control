@@ -777,10 +777,17 @@ def _backup_rollout(
     count = len(p_i)
     min_steps = _backup_steps(config)
     steps = max(min_steps, _backup_max_steps(config))
+    axis = np.zeros((count, 3)) if axis is None else axis
+    up_latched = np.zeros(count) if up_latched is None else up_latched
+    arrays = [np.ascontiguousarray(x, dtype=np.float64) for x in (p_i, p_j, v_i, v_j, axis, up_latched)]
+    # The kernel neither checks bounds nor propagates NaN as numpy does: reject
+    # what the numpy rollout would have raised on or turned into NaN.
+    if any(x.shape != (count, 3) for x in arrays[:5]) or arrays[5].shape != (count,):
+        raise ValueError("backup rollout needs (M, 3) states and axes and (M,) up_latched")
+    if not all(np.isfinite(x).all() for x in arrays):
+        raise ValueError("backup rollout inputs must be finite")
     traj, a_first, closing, used, still = _rollout_kernel(
-        *(np.ascontiguousarray(x, dtype=np.float64) for x in (p_i, p_j, v_i, v_j)),
-        np.zeros((count, 3)) if axis is None else np.ascontiguousarray(axis, dtype=np.float64),
-        np.zeros(count) if up_latched is None else np.ascontiguousarray(up_latched, dtype=np.float64),
+        *arrays,
         _WORLD_MIN_M, _WORLD_MAX_M, float(config.margin_m), float(config.gamma),
         float(config.barrier_offset_mps), *_NEAR_VERTICAL_SIN, MAX_ACCEL_COMPONENT_MPS2,
         MAX_SPEED_MPS, SIMULATION_STEP_MS / 1000.0, min_steps, steps,
@@ -793,9 +800,11 @@ def _backup_rollout(
 # operations of the numpy helpers it inlines (_lateral with the default
 # plumb_sin, _frame_lateral, _world_accel_limits, _evasive_direction) in the
 # same order: norms and sums add x, y, z left to right, the einsum of the
-# closing rate adds x, z, then y, as numpy does; no fastmath. Its results match
-# the numpy rollout bit for bit (tests/test_filter_rollout_kernel.py), and
-# those helpers stay the reference for every other caller.
+# closing rate adds x, z, then y, as numpy does; no fastmath. On finite float64
+# inputs its results match the numpy rollout bit for bit
+# (tests/test_filter_rollout_kernel.py), and those helpers stay the reference
+# for every other caller. _max and _min do not propagate NaN, so the wrapper
+# rejects non-finite inputs.
 
 
 @njit(cache=True)
