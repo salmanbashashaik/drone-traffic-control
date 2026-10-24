@@ -12,7 +12,7 @@ Built and merged on `main`:
 - Simulator `DroneEnv` with ideal (T1) and mild disturbance (T2) profiles; optional PyBullet quadrotor backend (Linux/WSL).
 - The safety filter (`src/utm_services/safety/filter.py`): joint QP, backup-set barrier, latch, escape stage, world-box limits, evasive fallback on solver error, Numba rollout kernel (bit-exact with the old one).
 - `utm-run` with three scenarios, MAPPO training and evaluation, two trained policy artifacts, 2D and 3D replay.
-- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 191 tests plus 91 slow tests, CI on every push and PR.
+- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 201 tests plus 91 slow tests, CI on every push and PR.
 
 Evidence for the filter (simulation, `docs/results/pr12-final-report.md`): random 2-6 drone fuzz, 5000 runs: 0 runs inside `d_eff`, 0 fallbacks. Hard fuzz, 5000 runs: 13 inside `d_eff` (bar 14). These are measurements of the model under its assumptions. They are not a proof and not a flight claim.
 
@@ -27,7 +27,7 @@ Known weak points (all in the backlog below): no disturbance margin (under T2 th
 | Adaptive-margin research (P3-SA-03) | `research/adaptive-margin`, `../dtc-margin` | A run is active. Do not touch the worktree. | Margin computed each step from GNSS error, delay, wind and lag, plus an envelope monitor. In-model result: no separation loss in 282 recoverable in-limit runs. The monitor missed a doubled actuator lag. Open founder decisions in P3-SA-03 section 8. Nothing in `src/` changes yet. |
 | Consistent backup (CBK) research (P3-SA-02) | `research/consistent-backup`, `../dtc-research` | Finished, recommendation "adapt, do not adopt". | Fails 3 of 4 acceptance bar items (worse than main in 15 cases, 2 of 20 noisy vertical runs enter `d_eff`, full CBK takes 273 ms at N = 16). Next: fix the hysteresis rule, then rerun. Feeds BL-03. |
 | Scale | `perf/scale` (cloud session) | Active. | At 64 drones `osqp.solve` (45 %) and `_update_latches` (40 %) dominate (research scale run). The lane builds a standard benchmark, explains the 2136 ms p95, then tries per-cluster QPs, a braking-derived range gate, vectorised latch and matrix build, and OSQP reuse; each change must pass compare_results on the full tier. Target p95 < 100 ms at N = 64. |
-| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Active (laptop: WSL2, PX4 SITL, Gazebo Harmonic). | Demo bridge only: 2-3 PX4 SITL drones guided by the filter (head-on, crossing). The production link design (command or advice, ACK, link-loss behaviour, onboard layer) still needs an ADR; the lane writes protocol notes, not the protocol. Do not touch the worktree. |
+| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Demo done, PR open to main (not merged). | PX4 v1.17.0 SITL in Gazebo Harmonic: headon2 and cross3 flown live through the filter with 0 violation pair-steps (min separation 8.46 m and 7.22 m; loop p95 7 and 21 ms). Link loss: PX4 flies RTL 1 s after the bridge exits, 1.35 s after the last fresh setpoint, because MAVSDK re-sends it. `docs/integration/PX4_SETUP.md`, design notes in `PROTOCOL_NOTES.md`. The production link still needs an ADR. |
 
 ## Open backlog
 

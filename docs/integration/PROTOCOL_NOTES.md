@@ -4,8 +4,9 @@ Status: design notes, nothing here is implemented. The PX4 SITL bridge (`PX4_SET
 setpoints through MAVSDK. These notes list what a filter-to-vehicle link needs beyond that, based on what the SITL runs showed.
 A change to any message here that crosses `shared/contracts.py` is a contract version change and goes to the founder.
 
-"CBK" is read here as **committed backup**: the backup manoeuvre the backup-set barrier certified for a drone at a step.
-If the founder meant something else by CBK, section 4 needs a rewrite.
+"CBK" is the consistent backup of P3-SA-02 (`research/consistent-backup`, `docs/formulation/P3-SA-02-consistent-backup.md`):
+one backup manoeuvre per drone, chosen jointly with its neighbours (CSA 2021, TBC 2022). It is research, not on main, and its
+recommendation is "adapt, do not adopt". Section 4 designs its broadcast message so the link ADR can include it.
 
 ## 1. What the SITL runs showed
 
@@ -27,7 +28,7 @@ sequence number and no expiry, and MAVSDK keeps streaming the last one. A bridge
 - The vehicle side acknowledges each command with `(drone_id, seq, status, t_rx_vehicle)`. `status` is one of
   `applied`, `expired`, `out_of_order`, `rejected_limits`, `not_in_mode`.
 - The filter side tracks the last acknowledged `seq` per drone. Missing ACKs for more than `k_ack` steps (proposal: 3 steps, 300 ms)
-  mark the drone **unconfirmed**. The filter then treats that drone as flying its committed backup (section 4), not its last command, in every pair it is in.
+  mark the drone **unconfirmed**. The filter then treats that drone as flying its backup (section 4), not its last command, in every pair it is in.
 - ACKs go on the telemetry stream that already runs at 10 Hz or faster, so they add no extra message rate. A setpoint stream without ACK
   can still be used, but then the filter can only assume the worst case of section 4 for every drone.
 - MAVLink has `COMMAND_ACK` for commands, not for `SET_POSITION_TARGET_LOCAL_NED` streams. This needs a custom message
@@ -46,41 +47,57 @@ Each command carries:
 Vehicle rules:
 
 1. Apply a command only if `seq` is greater than the last applied `seq` of the same session. Drop it otherwise (`out_of_order`).
-2. Apply it only inside its window. After `t_valid_until` with no newer command, switch to the committed backup (section 4), not to the last command and not to RTL.
+2. Apply it only inside its window. After `t_valid_until` with no newer command, switch to its backup (section 4), not to the last command and not to RTL.
 3. A re-sent command keeps its `seq` and window, so re-sending can never extend its life. This closes the 1.35 s vs 1.0 s gap seen in SITL.
 
 Proposal for the window: `t_valid_until = t_sent + 2 × step = 200 ms`. One lost command is then tolerated, and a second loss
 hands the drone to its backup. Clock offset between ground and vehicle must be estimated (for example MAVLink `TIMESYNC`) and
 counted in the window. The 200 ms is a design proposal, not a threshold; choosing it is a founder decision.
 
-## 4. CBK: the committed backup broadcast
+## 4. CBK: the backup broadcast
 
-The backup-set barrier already computes, for each pair, a backup trajectory: both drones fly the evasive manoeuvre
-(`_evasive_direction`, latched frame) for 66 to 109 steps, and the QP keeps that trajectory outside `d_eff`. So at every step the filter
-holds a certified "what to do if commands stop" for each drone. Today that exists only inside the filter. CBK makes it a message.
+In CBK each drone owns one backup `π_i` that depends only on its own state: candidate 0 brakes to hover; candidates 1 to 52
+accelerate at 3.5 m/s² along one of the 26 world-frame sign vectors for 1 s or 2 s, then brake (P3-SA-02 §2.2). The latch holds, per drone,
+the current candidate and its manoeuvre clock (the TBC clock τ0). "Every drone flies its backup" is one joint action that satisfies every
+pair row and the world box at once (CSA Theorem 1). In the centralised filter one process makes all choices and needs no message. A
+decentralised filter, or an onboard layer that must fly the backup after link loss, needs each drone's choice on the link. TBC Theorem 2 needs every
+agent to know the others' current manoeuvre (P3-SA-02 §5).
 
-Each step, per drone, the filter sends with the setpoint:
+Message `BackupBroadcast`, one per drone per step:
 
-| Field | Meaning |
-|---|---|
-| `seq`, `session_id` | as in section 3; the CBK belongs to this command |
-| `backup_accel_profile` | the backup acceleration for the drone, as the latched frame plus the per-step clipped acceleration, or a compact form (escape direction + world-box limits) the vehicle can re-run |
-| `horizon_steps` | rollout length used (66 to 109) |
-| `t_commit` | time from which the backup applies if no newer valid command arrives |
-| `rollout_capped` | true when the rollout hit the cap, so the backup is weaker than certified |
+| Field | Type | Meaning |
+|---|---|---|
+| `drone_id` | str | sender |
+| `session_id`, `seq` | as section 3 | ties the broadcast to the command of the same step |
+| `candidate` | int 0..52 | chosen backup candidate (P3-SA-02 §2.2 library) |
+| `clock_steps` | int | manoeuvre steps already flown (τ0) |
+| `t_state` | vehicle time | time of the state the rollout starts from |
+| `library_version` | str | candidate library and horizon rules; a receiver with another version rejects the message |
 
-Vehicle rule: when the current command expires (section 3, rule 2), fly the last received CBK from `t_commit`, then hold.
+It carries no trajectory: each candidate is a function of the drone's own state, so any receiver with that state and the library can
+re-run it (world-box clipping and speed cap included). The message is a few bytes per drone per step.
 
-Open issues that block CBK from being a safety claim:
+Who sends it:
 
-- **BL-03.** The backup is per pair today. A drone with several neighbours has a different escape against each, so there is no single
-  backup to broadcast. CBK needs the per-drone backup of BL-03 first. Until then a CBK is only valid for drones in at most one conflict pair.
-- **All drones must switch together.** The barrier certifies the pair when *both* drones fly the backup. A drone that loses link while its neighbour keeps
-  receiving nominal commands breaks the assumption. The filter side must therefore also switch the neighbours of an unconfirmed drone to their
-  CBK (section 2), and the vehicles need a way to learn that, for example a short drone-to-drone broadcast of `(drone_id, seq, mode)`.
-- **Tracking.** The backup assumes the plant flies the acceleration exactly (`lag_s = 0`). PX4 realises a median 84 to 87 % in SITL. The backup needs the same
-  lag and tracking margin as the nominal path.
-- **Vertical limits.** The evasive vertical component is up to 3.5 m/s², but PX4's default vertical speed limits are 3 m/s up and 1.5 m/s down.
+- **Centralised (today's architecture):** the server sends each drone its own `(candidate, clock_steps)` next to the setpoint, and the
+  drone ACKs both (section 2). After link loss (command window expired, section 3) the drone flies that candidate from that clock, then
+  hovers, instead of RTL. Its neighbours, if still linked, are switched to their own backups by the server (section 2) because the
+  certificate holds only when *every* drone of a pair flies its backup.
+- **Decentralised:** each drone broadcasts its choice to its neighbours, in the fixed order of CSA Algorithm 1. Each drone selects after the
+  drones before it in the order. The step then takes the ordering depth times (selection time + one message delay), which is not measured (P3-SA-02 §6.3).
+
+Missing or late broadcast: default the sender to candidate 0 (brake), which every receiver can compute from the observed state. P3-SA-02 §5 proposes this rule, but it is untested.
+
+Open issues before CBK can be a safety claim:
+
+- CBK itself fails 3 of the 4 acceptance-bar items today (P3-SA-02 §6.1). In particular, 2 of 20 noisy vertical runs enter `d_eff`, and the
+  full library takes 273 ms per step at N = 16. Building the message is useful only after the adapted CBK is accepted.
+- Delay and loss of the broadcast are not covered by CSA or TBC as used here. A stale `clock_steps` shifts the receiver's rollout by the delay.
+  The receiver must advance it by `(now − t_state) / dt`, and the barrier needs a margin for the clock uncertainty.
+- Tracking. Backups assume the plant flies 3.5 m/s² exactly (`lag_s = 0`); PX4 realises a median 84 to 87 % in SITL, and its default vertical
+  speed limits (3 m/s up, 1.5 m/s down) cap vertical candidates. An onboard backup must be flown by the autopilot's own controller,
+  which needs a PX4-side mode or companion process that can execute a candidate.
+- Contract: adding `BackupBroadcast` to `shared/contracts.py` is a contract version change (founder), and P3-SA-02 §9 question 7 asks whether to add it now.
 
 ## 5. Latency budget (one 100 ms step)
 
@@ -99,4 +116,4 @@ Rules:
 - The telemetry age plus loop latency is the age of the state the filter acts on. It should be logged per step (the bridge already logs both)
   and added to the filter's state uncertainty when it exceeds the budget.
 - A step over budget sends no command, so the vehicle's validity window decides what happens, instead of a late command arriving with stale state.
-- The bridge already aborts and lands at 500 ms of stale telemetry or step delay. With validity windows and CBK, that abort becomes a fall-back to CBK.
+- The bridge already aborts and lands at 500 ms of stale telemetry or step delay. With validity windows and CBK, that abort would become a switch to each drone's backup.
