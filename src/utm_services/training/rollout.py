@@ -47,7 +47,7 @@ def collect_episode(job: dict[str, Any]) -> dict[str, Any]:
       weights       actor weights dict (numpy), for policy/greedy
       log_std       (3,) array, for policy
       bc_noise      noise std in network units, for reference
-      shield        bool: run the HOCBF filter on the proposals
+      shield        bool: run the backup-set barrier filter on the proposals
       profile       disturbance profile name from simulation.env.PROFILES (default "ideal" = T1)
       filter_config dict | None
       keep_arrays   bool: False skips storing arrays (validation)
