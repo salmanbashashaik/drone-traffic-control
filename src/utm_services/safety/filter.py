@@ -1029,15 +1029,13 @@ def _backup_constraints(
     dt = SIMULATION_STEP_MS / 1000.0
     d_eff = SAFE_SEPARATION_M + config.margin_m
 
-    def column(attr: str, k: int) -> np.ndarray:
-        return np.array([getattr(states[pair[k]], attr) for pair in pairs], dtype=np.float64)
-
-    traj, a_first, _, used, capped = _backup_rollout(
-        column("position_m", 0), column("position_m", 1),
-        column("velocity_mps", 0), column("velocity_mps", 1), config,
-        np.array([_latch_axis(frames, pair) for pair in pairs]).reshape(-1, 3),
-        np.array([(frames or {})[pair].up if pair in (frames or {}) else 0.0 for pair in pairs]),
-    )
+    axis, up = np.zeros((len(pairs), 3)), np.zeros(len(pairs))
+    if frames:
+        for k, pair in enumerate(pairs):
+            frame = frames.get(pair)
+            if frame is not None:
+                axis[k], up[k] = frame.axis, frame.up
+    traj, a_first, _, used, capped = _backup_rollout(*_pair_states(states, pairs), config, axis, up)
     dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
     k_star = np.argmin(dist, axis=0)
     cols = np.arange(len(pairs))
@@ -1114,57 +1112,52 @@ def build_hocbf_qp_matrices(
     )
 
     # Pairwise braking-barrier constraints (P0-SA-01 Section 6-8):
-    # n_ij^T (a_i - a_j) >= rhs
-    cbf_rows = []
-    l_cbf = []
-    u_cbf = []
-
+    # n_ij^T (a_i - a_j) >= rhs, one row per pair with coef at agent i and
+    # -coef at agent j, built straight into sparse form (exact zeros dropped,
+    # as a dense row converted to CSC drops them).
     if config.barrier != "backup":
         backup = None
     elif backup is None:
         backup = _backup_constraints(states, pairs_in_qp, config, frames)
+    coef = np.zeros((n_pairs, 3), dtype=np.float64)
+    l_cbf = np.zeros(n_pairs, dtype=np.float64)
+    if backup is not None and n_pairs:
+        coef[:], l_cbf[:] = backup[0], backup[1]
     for k, (id_i, id_j) in enumerate(pairs_in_qp):
-        idx_i = agent_idx[id_i]
-        idx_j = agent_idx[id_j]
-        row = np.zeros(dim, dtype=np.float64)
-        if backup is not None or (id_i, id_j) in escape_signs:
-            if (id_i, id_j) in escape_signs:
-                coef, rhs = _escape_constraint(
-                    states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
-                )
-            else:
-                coef, rhs = backup[0][k], float(backup[1][k])
-            row[3 * idx_i : 3 * idx_i + 3] = coef
-            row[3 * idx_j : 3 * idx_j + 3] = -coef
-            cbf_rows.append(row)
-            l_cbf.append(rhs)
-            u_cbf.append(np.inf)
-            continue
+        if (id_i, id_j) in escape_signs:
+            coef[k], l_cbf[k] = _escape_constraint(
+                states[id_i], states[id_j], escape_signs[(id_i, id_j)], config, (frames or {}).get((id_i, id_j))
+            )
+        elif backup is None:
+            idx_i, idx_j = agent_idx[id_i], agent_idx[id_j]
+            coef[k], l_cbf[k], _ = _pair_constraint(states[id_i], states[id_j], config)
+            row = np.zeros(dim, dtype=np.float64)
+            row[3 * idx_i : 3 * idx_i + 3] = coef[k]
+            row[3 * idx_j : 3 * idx_j + 3] = -coef[k]
 
-        n_ij, rhs, _ = _pair_constraint(states[id_i], states[id_j], config)
-        row[3 * idx_i : 3 * idx_i + 3] = n_ij
-        row[3 * idx_j : 3 * idx_j + 3] = -n_ij
-
-        # Symmetric pairs stall at d_eff with no lateral escape. When the
-        # nominal would violate the constraint, bias both agents apart
-        # sideways (``_lateral``: right turn about +z away from vertical).
-        if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < rhs:
-            lateral = config.tie_break_mps2 * _frame_lateral(n_ij, _latch_axis(frames, (id_i, id_j)))
-            target[3 * idx_i : 3 * idx_i + 3] += lateral
-            target[3 * idx_j : 3 * idx_j + 3] -= lateral
-
-        cbf_rows.append(row)
-        l_cbf.append(rhs)
-        u_cbf.append(np.inf)
+            # Symmetric pairs stall at d_eff with no lateral escape. When the
+            # nominal would violate the constraint, bias both agents apart
+            # sideways (``_lateral``: right turn about +z away from vertical).
+            if config.tie_break_mps2 > 0.0 and float(row @ nom_stacked) < l_cbf[k]:
+                lateral = config.tie_break_mps2 * _frame_lateral(coef[k], _latch_axis(frames, (id_i, id_j)))
+                target[3 * idx_i : 3 * idx_i + 3] += lateral
+                target[3 * idx_j : 3 * idx_j + 3] -= lateral
 
     q = np.concatenate([-2.0 * target, np.where(is_escape, 0.0, config.slack_weight)])
 
-    if cbf_rows:
-        A_cbf = sp.hstack([sp.csc_matrix(np.vstack(cbf_rows)), sp.eye(n_pairs)])
+    if n_pairs:
+        idx_i = np.array([agent_idx[p[0]] for p in pairs_in_qp], dtype=np.intp)
+        idx_j = np.array([agent_idx[p[1]] for p in pairs_in_qp], dtype=np.intp)
+        cols = np.concatenate([3 * idx_i[:, None] + np.arange(3), 3 * idx_j[:, None] + np.arange(3)], axis=1)
+        data = np.concatenate([coef, -coef], axis=1)
+        rows = np.repeat(np.arange(n_pairs), 6).reshape(n_pairs, 6)
+        keep = data != 0.0
+        A_rows = sp.csc_matrix((data[keep], (rows[keep], cols[keep])), shape=(n_pairs, dim))
+        A_cbf = sp.hstack([A_rows, sp.eye(n_pairs)])
         A_slack = sp.hstack([sp.csc_matrix((n_pairs, dim)), sp.eye(n_pairs)])
         A = sp.vstack([A_cbf, A_box, A_slack], format="csc")
-        l = np.concatenate([np.array(l_cbf, dtype=np.float64), l_box, np.zeros(n_pairs)])
-        u = np.concatenate([np.array(u_cbf, dtype=np.float64), u_box, np.full(n_pairs, np.inf)])
+        l = np.concatenate([l_cbf, l_box, np.zeros(n_pairs)])
+        u = np.concatenate([np.full(n_pairs, np.inf), u_box, np.full(n_pairs, np.inf)])
     else:
         A = sp.csc_matrix(A_box)
         l = l_box
