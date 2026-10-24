@@ -1,6 +1,6 @@
 # Proposal: a solver-independent QP so the filter can scale (needs the founder)
 
-Status: **proposed, not built.** Written by the scale lane on perf/scale (2026-10-24) because the N = 64 step-time target needs a change that the exactness rule does not allow. Measurements: `docs/results/scale-2026-10-24.md`.
+Status: **option 1 approved by the founder (2026-10-24)**; being built on perf/solver-exact, stopping for review after the new reference. Originally proposed, not built: Written by the scale lane on perf/scale (2026-10-24) because the N = 64 step-time target needs a change that the exactness rule does not allow. Measurements: `docs/results/scale-2026-10-24.md`.
 
 ## The problem
 
@@ -22,7 +22,7 @@ The optimum itself is unique in the accelerations (the objective is 2 I in a, st
 2. **Accept C's results as the new reference without changing the solver.** Fastest to ship (C is written and reverted in fae327c). But the reference would again hold batching-dependent solver errors, so the next scale change would hit the same wall.
 3. **Decentralised per-drone QPs** (each drone keeps its share of each pair constraint, as in Wang, Ames and Egerstedt, "Safety barrier certificates for collisions-free multirobot systems", *IEEE T-RO* 33(3), 2017). Scales to any N with a fixed per-drone cost, but changes the safety argument: the joint-solve assumption A9 of the formulation note and the pairwise backup of BL-03. It needs an ADR and a contract change. Not recommended before BL-03 is settled.
 
-None of the three makes a single converging cluster of 64 drones fit in 100 ms (main 2021 ms, C 1571 ms p95). That state is not recoverable (min sep 0.9 m on main, 24 of 50 steps solver errors and fallback), and its cost is the solver hitting `max_iter` twice per step. A step-time bound there needs an iteration cap with a defined fallback, which is a safety-behaviour decision of its own.
+Out of scope (founder decision 2026-10-24): a single converging cluster of 64 drones; preventing it is the strategic layer's job. None of the three makes it fit in 100 ms (main 2021 ms, C 1571 ms p95). That state is not recoverable (min sep 0.9 m on main, 24 of 50 steps solver errors and fallback), and its cost is the solver hitting `max_iter` twice per step. A step-time bound there needs an iteration cap with a defined fallback, which is a safety-behaviour decision of its own.
 
 ## Range gate derivation (for option 1)
 
