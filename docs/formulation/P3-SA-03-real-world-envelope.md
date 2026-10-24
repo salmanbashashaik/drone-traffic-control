@@ -150,30 +150,45 @@ The accuracy figures of §2.1 say how large the error usually is. They do not bo
 
 ## 3. Adaptive margin
 
+This section was rewritten after the Fable review of `af58833` (`review/adaptive-margin`) and the founder's decisions B1–B6 and N1 of 2026-10-24. Each change names the review item it answers.
+
 ### 3.1 What the margin must cover
 
-The filter runs at 10 Hz on the ground. At cycle t it computes commands that the drones apply at t + P. For each pair it requires separation ≥ d_eff = 5 m + m at the filter's own predicted states, and it has a backup manoeuvre (brake away along the line of sight) that it can always fall back to. The margin m must cover the gap between that certificate and the true motion. The gap has five sources:
+The filter runs at 10 Hz on the ground. At cycle t it computes commands that the drones apply at t + P. For each pair it requires that the pair's backup manoeuvre (brake away along the line of sight) keeps separation ≥ d_eff = 5 m + m over the whole rollout. The margin m must cover the gap between that certificate and the true motion. The gap now has four sources:
 
-1. the error of the state estimate, propagated open loop over the backup;
-2. lost commands;
-3. the actuator lag;
-4. motion between 100 ms samples;
-5. the filter's own linearisation (measured in PR #12).
+1. the error of the state estimate, propagated open loop over the backup, along the directions in which the backup separates the pair (§3.2);
+2. lost commands (§3.6);
+3. motion between 100 ms samples (§3.7);
+4. the filter's own linearisation, measured in PR #12 (§3.7).
 
-Each is bounded from live quantities, and the bounds are added (§3.8). A sixth requirement concerns time rather than size: the margin may not rise faster than the barrier can absorb (§3.9).
+The actuator lag, the drag and the airframe's thrust limit are no longer margin terms. They are flown inside the backup rollout (§3.5, review B4). Two rules concern the conditions rather than the size: each drone flies no faster than its cleared cruise speed (§3.3, review B3), and a scenario is admitted only if its states already satisfy the margin it needs (§3.9, review B2). A third rule concerns time: the margin may not rise faster than the barrier can absorb (§3.9).
 
-### 3.2 The tube (van Wijk et al. 2024)
+### 3.2 The tube (van Wijk et al. 2024) and the risk per pair-hour
 
 van Wijk, Coogan, Molnar, Majji and Hobbs ([arXiv 2409.07700](https://arxiv.org/abs/2409.07700), "Disturbance-Robust Backup Control Barrier Functions") bound the distance between the disturbed and nominal backup flows by a tube, ‖φ_b^d(τ, x) − φ_b^n(τ, x)‖ ≤ δ_max(τ) = (ξ / L_cl)(e^{L_cl τ} − 1) for a disturbance bounded by ξ (Lemma 2). They then tighten the safety function by ε_τ ≥ L_h δ_max(τ) along the backup (Lemma 1). For pair separation, h = ‖r‖ − d_eff has L_h = 1, so the margin is the tube's width.
 
-Two changes make the tube adaptive and probabilistic:
+Three changes make the tube adaptive and probabilistic:
 
-- **Covariance in place of a fixed bound.** The deviation is the estimate error carried open loop through the drone's model (§4.1). The error covariance at a time τ after the action time t_a is S(τ) = Φ(τ) P(t_a) Φ(τ)ᵀ + Q(τ), with (Φ, Q) the exact discretisation of the linear model. This is the linear-Gaussian counterpart of δ_max: P(t_a) replaces the initial error, and the wind uncertainty P_ww together with its process noise q replaces ξ.
-- **A per-check bound in place of a worst case.** The relative position error of two independent trackers is Gaussian with covariance S_i + S_j. It lies inside a ball of radius K √λ_max(S_i + S_j), with K = √χ²₃(1 − P_RISK) = 4.033, with probability at least 1 − P_RISK. The value at the end of the backup, τ = T, is taken as the bound for every earlier τ (§7 notes when this can fail).
+- **Covariance in place of a fixed bound.** The deviation is the estimate error carried open loop through the drone's model (§4.1). The error covariance at a time τ after the action time t_a is S(τ) = Φ(τ) P(t_a) Φ(τ)ᵀ + Q(τ), with (Φ, Q) the exact discretisation of the linear model. P(t_a) replaces the initial error, and the wind uncertainty P_ww with its process noise q replaces ξ.
+- **Along the lines of sight, not a ball (review B1).** The barrier is a function of the distance ‖r‖ only, so to first order an error δr changes it by n·δr, with n = r / ‖r‖ the unit line of sight. The relevant spread is therefore the standard deviation of the relative error along n, √(nᵀ S n) with S = S_i(T) + S_j(T), not the largest eigenvalue of S. The barrier is the minimum over the rollout, so the line of sight that matters may turn during the backup (a pair that escapes vertically ends up separated vertically). The term takes the largest spread over the current line of sight and every line of sight along the pair's backup rollout:
 
-This trades van Wijk's deterministic guarantee for a probability per check. P_RISK = 10⁻³ is a provisional placeholder (§8).
+  gnss_ij = K1 · max_k √(n_kᵀ S n_k).
 
-### 3.3 Drag, authority and the backup stopping time T
+  This replaces K √λ_max(S), which charged the vertical GNSS error (larger than the horizontal one for every grade) to horizontal encounters. Known limit: the lines of sight come from the estimated rollout, not the true one; the difference is second order in the error.
+- **Risk per pair-hour (review B6).** The founder set the target as a risk per pair-hour and asked for both 10⁻⁵ and 10⁻⁷. The margin is checked once per pair per 100 ms cycle, 36 000 times per pair-hour. By the union bound, a per-check risk q = target / 36 000 keeps the pair-hour risk at most the target, whatever the correlation between checks. The quantiles follow from q:
+  - K1 = √χ²₁(1 − q) for a one-dimensional term (the GNSS term along n, the closing speed in T, the sampling term);
+  - K2 = √χ²₂(1 − q) for a horizontal two-dimensional check (`wind`, `headroom` and the cleared speed of §3.3).
+
+| target per pair-hour | q per check | K1 | K2 |
+|---|---|---|---|
+| 10⁻⁵ | 2.8 × 10⁻¹⁰ | 6.31 | 6.63 |
+| 10⁻⁷ | 2.8 × 10⁻¹² | 6.99 | 7.30 |
+
+The union bound is conservative: consecutive checks of one pair are strongly correlated, so the true pair-hour risk of the margin terms is lower than the target. Whether the bound is tight enough to be useful was not studied. The earlier rows at K = 4.033 (`runs2-*`, P_RISK = 10⁻³ per check, 3-D chi-square) are a per-check result only and are kept as a record.
+
+The fault detectors (`nis`, `lag`, `link`) keep their level P_RISK = 10⁻³ per test. Their level sets a false-alarm rate, not a separation risk, so they are not tied to the pair-hour target.
+
+### 3.3 Drag, authority, the cleared speed and the stopping time T
 
 **Plant (founder decision 2a).** Each drone flies v' = a_act + D (w − v), with w the wind velocity, v the ground velocity and D the mass-normalised drag (1/s). The drag acts on the airspeed w − v, so a wind that is not cancelled carries a drone towards the wind's own velocity, not to the speed cap (`check.check_drag`: a constant thrust c settles the speed at w + c / D).
 
@@ -192,16 +207,33 @@ This trades van Wijk's deterministic guarantee for a probability per check. P_RI
 Each drone in a run is one of these types, drawn at random (`envelope.FLEET`). Three properties of the derivation matter:
 
 - **D is an upper bound when v_max is a software limit.** If the airframe could fly faster than v_max at full tilt, the true drag at v_max is less than a_phys, and the true D is smaller.
-- **Linear drag overstates the drag below v_max.** If the real drag grows with the square of the airspeed, it equals a_phys at v_max and is smaller than D·|w − v| everywhere below. The `headroom` check (§5) is therefore conservative. The tracker's mean model is not, but the simulation uses the same linear D, so this gap is not exercised (§7).
+- **Linear drag overstates the drag below v_max.** If the real drag grows with the square of the airspeed, it equals a_phys at v_max and is smaller than D·|w − v| everywhere below. The cleared speed and `headroom` are therefore conservative. The tracker's mean model is not, but the simulation uses the same linear D, so this gap is not exercised (§7).
 - **Vertical authority is assumed.** The spec pages give no climb acceleration. The thrust command is clipped to a horizontal disc of radius a_phys and to |c_z| ≤ a_phys (`sim._authority`). *Shortcut, recorded in the code:* revisit with thrust-to-weight data.
 
-**Feedforward.** The filter plans in the contract's drag-free model (v' = u). The ground station sends the thrust c = u − D (ŵ − v̂), which cancels the estimated drag at the predicted state, clipped to the airframe (`saturation` alarm, §5). What the feedforward misses is the error in D (ŵ − v̂).
+**Feedforward.** The filter plans in the contract's drag-free model (v' = u). The ground station sends the thrust c = u − D (ŵ − v̂), which cancels the estimated drag at the predicted state, clipped to the airframe (`saturation` alarm, §5).
 
-**Backup stopping time.** Away from the walls, main's backup brakes each drone by at least u_max / √2 along the line of sight (`_backup_steps`). The pair therefore closes with deceleration at least A_REL = √2 u_max = 4.95 m/s². The drag acceleration that the feedforward misses is bounded at the same risk by ρ = K √λ_max(Cov[D(w − v)]_i + Cov[D(w − v)]_j) at the horizon T. The closing speed is bounded by V_c + K σ_vc, where σ_vc is the closing-speed standard deviation from the trackers. So
+**Available acceleration and the cleared cruise speed (review B3).** After cancelling the drag, an airframe has u_avail = a_phys − D |w − v| left for manoeuvring. Main's backup asks for up to u_max per component, and the stopping time below assumes that each drone can brake at u_max |v| / v_max on top of its drag. At airspeed at most W + v, with W the forecast mean wind plus K2 σ of its gusts, that holds when
 
-  T = (V_c + K σ_vc) / (A_REL − ρ).
+  a_phys − D (W + v) ≥ u_max v / v_max,  that is  v ≤ v_clr = (a_phys − D W) / (D + u_max / v_max),
 
-ρ grows with T, so each pair is solved by three fixed-point iterations, and T is capped at main's rollout cap T_MAX = 10.9 s. If ρ ≥ A_REL, the braking promise fails: the monitor raises `authority`.
+capped at the contract's 15 m/s. This is an operating rule: the station clears each drone to cruise no faster than v_clr for its type and the forecast (`sim.cleared_speed`). Every scenario of §6 is flown at the cleared speeds, scaled so that the drones meet at the same point and time as in the uncleared scenario (`sim.cleared`).
+
+| Type | calm, either target | India wind, 10⁻⁵ | India wind, 10⁻⁷ |
+|---|---|---|---|
+| DJI Matrice 350 RTK | 11.8 | 6.2 | 5.8 |
+| DJI Matrice 30 | 12.9 | 6.7 | 6.4 |
+| DJI Mavic 3 Enterprise | 12.3 | 5.8 | 5.4 |
+| DJI FlyCart 30 | 11.0 | 4.9 | 4.6 |
+
+(m/s.) The India wind (4.17 m/s mean, light turbulence) roughly halves the cleared speed. The squall case B1 is cleared on the India forecast, so the squall exceeds what the clearance assumed; that is the case's point. The `headroom` alarm (§5) checks the same inequality live, from the estimated drag and its uncertainty, and it is now a safety alarm. Known limit: the filter itself may command a drone above v_clr during an evasive manoeuvre; `headroom` then reports it.
+
+The backup rollout (§3.5) also flies each drone with its real thrust limit, so a manoeuvre the airframe cannot fly at its airspeed brakes slower in the certificate, as it does on the plant.
+
+**Stopping time T (review B2).** T is the horizon over which the estimate error is propagated (§3.2) and the lost-command error is held (§3.6). It is now the worst case per pair, not a value that follows the current closing speed: the pair closes at up to 2 v_max plus K1 σ_vc (σ_vc from the two receivers' velocity σ) and brakes at the relative deceleration √2 u_max, which the cleared speed keeps available:
+
+  T = (2 v_max + K1 σ_vc) / (√2 u_max) + τ_a.
+
+With RTK velocity accuracy T ≈ 6.3 s at either target. The earlier T, solved from the current closing speed with a fixed-point iteration on the drag uncertainty, could shrink as a pair approached; the reviewer showed that a constant T removes a path by which the margin fell just before an encounter. The `authority` alarm, which flagged the iteration's failure, is removed with it.
 
 ### 3.4 Prediction through the delay (Singletary, Chen and Ames 2020)
 
@@ -209,46 +241,58 @@ Singletary, Chen and Ames ([arXiv 2005.06418](https://arxiv.org/abs/2005.06418),
 
 Here:
 
-- The buffer is the command log of each drone (§4.2), and the prediction runs from the latest measurement to the playout tick t + P.
-- The robustness of Corollary 1 is the K √λ_max term of §3.2, computed with the position covariance floored at the receiver's value (§4.3).
+- The buffer is the command log of each drone (§4.2). The prediction runs from the latest measurement to the playout tick t + P, and returns the actuator output a0 at that tick as well as the position and velocity.
+- The robustness of Corollary 1 is the GNSS term of §3.2, computed with the position covariance floored at the receiver's value (§4.3).
 - Algorithm 1 assumes that every buffered input reaches the plant. A lost command breaks that assumption, and §3.6 bounds its effect.
 
-### 3.5 Actuator lag as an equivalent delay
+### 3.5 Actuator lag inside the backup rollout (review B4)
 
-The plant follows the thrust command through a first-order lag, a' = (c − a) / τ_a, with τ_a the declared lag (0.25 s, §2.4). The filter's model has no lag state. After the playout tick, the prediction therefore holds the actuator output a0 for τ_a more seconds (`Tracker.predict_delay`). The filter then acts on the state at t_a = t + P + τ_a as if its command took effect at once.
+The plant follows the thrust command through a first-order lag, a' = (c − a) / τ_a, with τ_a the declared lag (0.25 s, §2.4). The first version held the actuator output for τ_a after playout (an equivalent delay) and added a bound EPS_LAG = 0.758 m for the lag-minus-delay error. The reviewer found that bound valid for one command switch only, while the backup switches many times.
 
-For a step of size Δc, the lagged position minus the delayed position is Δc τ_a² (½ − e^{−t/τ_a}) for t ≥ τ_a, and it lies in [0, ½ τ_a² |Δc|] for every t. It tends to the upper end (`check.check_lag_bound`). Both the filter's command and the actuator output lie in [−u_max, u_max] per component (the feedforward changes slowly), so |Δc| ≤ 2√3 u_max per drone, and for the pair
+The lag is now simulated where it matters: inside the backup rollout that the barrier evaluates (`rollout.py`). For each pair, each drone flies main's evasive manoeuvre (main's own `_limits_kernel` and `_evasive_kernel`, the same latch handling and the same stop rule) through the chain
 
-  EPS_LAG = ½ τ_a² · 2 · 2√3 u_max = 0.758 m.
+  c = clip(u − D (ŵ − v)),  a' = (c − a) / τ_a,  v' = a + D (ŵ − v),  p' = v,
 
-The bound holds only at the declared τ_a. It grows with τ_a², so a lag twice the declared one makes the true term four times larger. The `lag` monitor (§5) checks the declared value live.
+starting from the predicted actuator output a0, with the drone's own D, a_phys and estimated wind. Each 100 ms step is exact (matrix exponential, c and ŵ held over the step; `check.check_step_matrices`). The QP row's sensitivity is the position response at the critical step to a unit change of the first step's acceleration through the lag, in place of main's (k* + 0.5) dt².
+
+`rollout.backup_constraints` replaces main's `_backup_constraints` while the adaptive mode runs; the baseline modes run main's own rollout unchanged. `src/` is not edited: `apply_filter` looks the function up as a module global, and the prototype rebinds it. The lagged rollout flies a shorter escape than main's for the same states (`check.check_lagged_rollout`), so the same margin now demands more of the current state.
+
+EPS_LAG and DU_NOW (the cover for a command sent this cycle) are removed. No separate lag term remains, so the review's "one shared Δc bound for any remaining term" has no term to apply to. The only fixed term left is EPS_LIN (§3.7).
 
 ### 3.6 Lost commands
 
-The 3GPP reliability of 99.9 % puts two consecutive losses of one drone's commands at 10⁻⁶, below P_RISK. The margin therefore covers one lost command per drone, and the monitor raises `link` at a streak of two.
+The 3GPP reliability of 99.9 % puts two consecutive losses of one drone's commands at 10⁻⁶. The margin covers one lost command per drone, and the monitor raises `link` at a streak of two.
 
-A lost command c_k leaves c_{k−1} in force for its 100 ms. This creates a velocity error of |c_k − c_{k−1}| · 0.1 s from the middle of that segment, which is held open loop to t_a + T. `lost_bound` takes the worst such error over the commands that are not yet confirmed. A command sent in the current cycle is not yet in the log. Until the next cycle counts it, it moves the drone by at most ½ |Δc| (0.1 s)², with |Δc| ≤ 2√2 a_phys (a horizontal disc and a vertical interval of radius a_phys). With the fleet's largest a_phys this is DU_NOW = 0.097 m per drone.
+A lost command leaves its predecessor in force for one 100 ms segment. Both lie in the airframe's thrust set (a horizontal disc of radius a_phys and |c_z| ≤ a_phys), so they differ by at most dc_max = 2√2 a_phys. The resulting velocity error, at most 0.1 dc_max, is held open loop from the start of the segment to the end of the horizon. The lag only delays the error, so the bound holds through it.
+
+**Constant per drone (review B2).** The term no longer looks at which commands are still unconfirmed. It assumes the worst: the lost segment started as early as the station's knowledge allows. The station knows the applied commands up to the latest telemetry it has. With one message lost and the next still in flight (up to P), that knowledge is at most AGE_S = 2 P + 2 cycles = 0.46 s older than the action time. So
+
+  lost_i = 0.1 · dc_max,i · (AGE_S + T).
+
+At T = 6.3 s this is 10.8 m for the 30° airframes and 13.2 m for the 35° ones, so 21.7–26.3 m per pair. Telemetry older than AGE_S raises `link`. This term now dominates the RTK margin (§6, §8).
 
 ### 3.7 Sampling and linearisation
 
-- **Sampling.** The filter checks separation every 100 ms. Two drones passing in a straight line at relative speed V_rel that are d apart at both samples come closest midway, at √(d² − (0.05 V_rel)²). Keeping that above 5 m needs δ_sample(V_rel) = √(5² + (0.05 V_rel)²) − 5. This is 0.22 m at V_rel = 30 m/s.
+- **Sampling.** The filter checks separation every 100 ms. Two drones passing in a straight line at relative speed V that are d apart at both samples come closest midway, at √(d² − (0.05 V)²). Keeping that above 5 m needs δ_sample(V) = √(5² + (0.05 V)²) − 5. V is the predicted relative speed plus K1 times its standard deviation from the trackers.
 - **Linearisation.** The PR #12 ablation measured a gap of EPS_LIN = 0.137 m between the filter's linearised barrier and the true separation (`docs/results/pr12-final-report.md`). It is measured, not proven.
 
 ### 3.8 The pair margin and the filter margin
 
-  m_ij = K √λ_max(S_i(T) + S_j(T)) + lost_i + lost_j + EPS_LAG + δ_sample(V_rel) + EPS_LIN
+  m_ij = K1 · max_k √(n_kᵀ (S_i(T) + S_j(T)) n_k) + lost_i + lost_j + δ_sample(|v_rel| + K1 σ_vrel) + EPS_LIN
 
 Main's filter takes one `margin_m` for all pairs. It therefore gets the largest pair margin, m_req. This is conservative for every other pair. Main's `FilterConfig` bounds `margin_m` at 48.57 m (the world-box bound at the default barrier offset). A larger margin is clamped and the monitor raises `margin`.
 
-### 3.9 Raising the margin: what the barrier can absorb (founder decision 4)
+### 3.9 Admissibility and raising the margin (founder decision 4, review B2)
 
-A margin computed afresh each cycle can jump: a lost message, a widening covariance or a faster closing pair raises m_req from one cycle to the next. Main's backup barrier is h = min over the backup rollout of ‖r‖ − (5 + m). If the margin rises by more than the current h, the states the drones are already in violate the new barrier, and main's argument that a safe command exists at the next cycle (the backup itself) no longer applies.
+A margin computed afresh each cycle can jump: a widening covariance or a lost message raises m_req from one cycle to the next. Main's backup barrier is h = min over the backup rollout of ‖r‖ − (5 + m). If the margin rises by more than the current h, the states the drones are already in violate the new barrier, and main's argument that a safe command exists at the next cycle (the backup itself) no longer applies.
 
-**Rule (rate limit).** Each cycle computes the absorbable margin from the predicted states, with main's own rollout, the latched escape frames and the previous cycle's configuration (`margin.absorbable`):
+**Absorbable margin.** Each cycle computes, from the lagged rollout of §3.5 with the latched escape frames and the previous cycle's configuration (`margin.absorbable`),
 
   m* = min over pairs of (min over the rollout of ‖r‖) − 5.
 
-The filter then applies
+**Admissibility at clearance (review B2).** At the first cycle after the 2 s track convergence (§4.4), the scenario is *admissible* if m* ≥ m_req, using the unclamped m_req. An admissible scenario starts with every pair's backup already outside the margin it needs. A scenario that is not admissible would need the margin to rise against the states, which the rate limit below cannot do safely; it is excluded from the in-limit set in every mode, and the count is reported (§6). In operation this is a clearance check: a station does not clear two drones onto routes whose initial separation is below 5 m + m_req plus what the rollout needs.
+
+**Rate limit.** The filter applies
 
   m_app = min(m_req, max(m*, m_prev)).
 
@@ -260,35 +304,31 @@ A falling m_req is applied at once. A rising one is applied only up to m*, and n
 2. If m_req > m_prev and m* ≥ m_prev, then m_app ≤ m*. By the definition of m*, the backup from the current predicted states keeps every pair at least 5 + m_app apart over the rollout, so h ≥ 0 holds at the new margin. Main's backup-barrier construction then gives a feasible command this cycle (the backup), and the argument repeats at the next cycle.
 3. If m* < m_prev, the states already violate the previous margin (an estimation error or a disturbance larger than covered). The margin is held at m_prev, not raised, and main's QP or its fallback handles the cycle as it would today.
 
-**What is counted.** Whenever m_app < m_req the shortfall m_req − m_app is recorded and the monitor raises `absorb`: in that cycle the margin that the risk claim needs is not in force. The results count these cycles and the largest shortfall (§6).
+**What is counted.** Whenever m_app < m_req the monitor raises `absorb`, and the shortfall is recorded. With the constant T and lost terms, m_req changes far less from cycle to cycle than before, so `absorb` now mostly marks a scenario that was admissible but tight. `absorb` is not counted as an alarm before a loss of separation anywhere in §6 (review B2): it says the margin in force is short, not that a fault is present.
 
 **Caveats.**
 
 - m* uses the previous margin's wall standoff and rollout horizon. The configuration at m_app can differ slightly; the difference is not bounded here.
 - m* is computed on the predicted states, so feasibility holds for the estimate, which is the same footing as the rest of the filter's certificate.
 - The latch is read, not updated. If main re-latches a pair in the same cycle, its rollout differs from the one m* used.
-- Only the rate limit is implemented. Anticipation (raising the margin early when a rise is foreseeable, for example from the closing speed) was not.
+- Anticipation (raising the margin early when a rise is foreseeable) was not implemented.
 
-### 3.10 Design changes from the interim review (documented, not prototyped)
+### 3.10 Integrity, protection levels and the remaining design changes (review B5)
 
-The founder decided two design changes on 2026-10-24 after the interim report (`docs/results/p3-sa-03-interim-2026-10-24.md`). Neither is in the prototype or in the results of §6.
+**SBAS does not qualify for the margin's time to alert.** An integrity bound is useful to the margin only if the receiver alerts before the bound can be exceeded for the length of the horizon over which the margin relies on it, so the time to alert must be shorter than T. SBAS APV-I specifies a time to alert of 10 s (Kim et al. 2016, Table 2, ICAO SARPs). T is about 6.3 s (§3.3). A 10 s alert can arrive after the backup has run its course, so SBAS APV-I does not meet the rule. The previous version of this section said SBAS qualified; that was wrong.
 
-**GNSS term from a protection level.** Where the receiver outputs a PL whose integrity risk is at most P_RISK, the margin's GNSS term uses the PL instead of the reported σ.
+**No positioning grade qualifies for dense corridors today.** SBAS fails the time to alert. The ZED-F9P's protection level is a 5 % bound per epoch (§2.5). Integrity RTK exists only as vendor claims. A corridor whose lane spacing rests on a GNSS margin therefore has no positioning grade whose integrity was verified against this rule. This is the founder's open item 1 (§8).
 
-- *Rule.* The position floor of §4.3 is raised, per axis, to σ_int = PL / K_PL, where K_PL is the multiplier the receiver used: 6.0 for SBAS HPL and 5.33 for VPL (Kim et al. 2016, Eq. 5). By that equation PL / K_PL is d_major or d_up, the integrity σ that the receiver derived from the broadcast bounds. The margin then carries it with K = 4.033 as now. A PL with a different or unstated construction is used as a radius instead: the pair term becomes PL_i + PL_j, with the risk of the two bounds added.
-- *Qualifying receivers.* The PL's integrity risk must be at most P_RISK per check, and its time to alert must be shorter than the filter's horizon T. Under §2.5 this is SBAS today. The ZED-F9P's 5 % PL does not qualify. A receiver without a qualifying PL keeps the reported σ, and B8 below applies to it.
-- *Dense corridors.* A corridor whose lane spacing rests on the RTK margin (decision 1) requires integrity-capable positioning, meaning a qualifying PL at RTK accuracy. No such product was verified (§2.5). Until one is, the RTK capacity figures of §6.4 are not available to a corridor under this rule. This is an open founder item (§8).
-- *What it covers.* The faults the integrity system monitors: satellite and ionosphere faults for SBAS, satellite and constellation faults for ARAIM. It does not cover a local bias from multipath or a faulty receiver beyond what σ_air models.
+**How a protection level would enter the margin.** A PL is stated with an integrity risk per approach or per hour, not per check. Two ways keep the budget honest:
 
-**B8 is a stated limit.** A single receiver without integrity can report a σ five times smaller than its true error. A steady bias moves the fix and the track together, so the NIS cannot see it (§5). B8 under SBAS lost separation in 2 of 16 runs, one of them with no alarm before the loss (§6.2). The design does not detect this fault and adds no bespoke bias detector (founder decision). It is a limit of single-receiver GNSS without integrity. The protection-level rule above narrows it to the faults that integrity systems do not monitor.
+- *Per-check translation.* If the PL's integrity risk is p_PL per exposure time t_PL, and the faults it covers are independent between exposures, the risk per 100 ms check is at most p_PL · (0.1 s / t_PL) when one exposure is at least one check long. For SBAS APV-I (2 × 10⁻⁷ per 150 s approach) that is about 1.3 × 10⁻¹⁰ per check, comparable to q at 10⁻⁵ per pair-hour. The derivation needs the independence the PL's own analysis assumes, and it is stated, not prototyped.
+- *PL as a radius.* The pair's GNSS term becomes PL_i + PL_j along the line of sight, and the PL's own integrity risk per pair-hour (2 p_PL per pair, scaled to the hour) is added to the margin's risk budget, so that the margin terms keep target − 2 p_PL. This needs no independence assumption and is the rule this note proposes. It is not in the prototype.
 
-**Lag: declared upper bound until identified.** The lag monitor cannot tell lags apart while the command is steady (§5, B6 `headon2` seeds 2 and 3). The margin therefore assumes the worst lag the drone may have until the drone has shown otherwise.
+Either way the position floor stays as the receiver's reported accuracy when no qualifying PL exists, and B8 applies.
 
-- *Registration.* Each drone declares an upper bound τ_max on its actuator lag, beside its nominal τ_a.
-- *Margin.* EPS_LAG uses τ_max until the lag is identified, and τ_a after: 0.5 τ² · 2 DC_MAX, with τ = τ_max or τ_a. At τ_max = 2 τ_a this is four times EPS_LAG, 3.0 m in place of 0.76 m.
-- *Identifier states.* The identifier reports one of three states each cycle, not silence: *consistent* (the declared lag fits and an alternative would have been detected), *mismatch* (the `lag` alarm), and *not identifiable* (the window does not have the excitation to tell the declared lag from the alternatives).
-- *Excitation criterion.* For each alternative the window's predicted thrust differs from the declared lag's by Δy. With IMU noise σ_acc, the F test of §5 has non-centrality λ = Σ‖Δy‖² / σ²_acc. The window is identifying when λ for the nearest alternative reaches the value that gives the test a chosen power at its level, for example 90 %. Below that the state is *not identifiable*. This is the power of the existing test, not a new statistic.
-- *Why not in the prototype.* No source gives a τ_max for any airframe in the fleet (§2.4 gives one τ_a for all), so the margin would rest on an invented number. The rule also changes the margin of every in-limit run, and the in-limit rows were already being produced at a fixed commit; changing the code partway would mix two designs in one matrix.
+**B8 is a stated limit.** A single receiver without integrity can report a σ five times smaller than its true error. A steady bias moves the fix and the track together, so the NIS cannot see it (§5). The design does not detect this fault and adds no bespoke bias detector (founder decision). It is a limit of single-receiver GNSS without integrity.
+
+**Lag: declared upper bound until identified (documented, not prototyped).** The lag monitor cannot tell lags apart while the command is steady (§5). The founder's interim design: each drone declares an upper bound τ_max beside τ_a, and the backup rollout of §3.5 flies τ_max until the identifier reports the lag *consistent*, then τ_a. The identifier reports *consistent*, *mismatch* (the `lag` alarm) or *not identifiable* (the window's non-centrality λ = Σ‖Δy‖² / σ²_acc for the nearest alternative is below the value that gives the F test 90 % power). It is not prototyped because no source gives a τ_max for any fleet type (§2.4). With the lag now inside the rollout, the change would be one parameter of `rollout.CTX`.
 
 ## 4. Tracker
 
@@ -306,7 +346,7 @@ The wind is identified from the residual between commanded and measured motion: 
 
 ### 4.2 Delayed and out-of-order data
 
-Telemetry messages z = (p, v) carry their measurement time, the drone's measured acceleration (IMU) and the echo of the commands it applied. The tracker keeps the posterior at the time of the latest fused measurement. An older message is dropped. To act, the tracker predicts from that time to the playout tick through the known commands (§3.4), then through the equivalent delay (§3.5).
+Telemetry messages z = (p, v) carry their measurement time, the drone's measured acceleration (IMU) and the echo of the commands it applied. The tracker keeps the posterior at the time of the latest fused measurement. An older message is dropped. To act, the tracker predicts from that time to the playout tick through the known commands and the lag (§3.4). It returns the actuator output at that tick, from which the backup rollout starts (§3.5).
 
 `CommandLog` holds the switches that the drone reports as applied (its echo, up to the measurement time) and, after that time, the commands sent and not yet confirmed. A planned command missing from the echo is counted as lost and extends the loss streak. *Shortcut:* the echo carries the whole switch history, which is free in simulation. A real link would acknowledge each command.
 
@@ -330,20 +370,26 @@ The margin of §3 is valid only while its assumptions hold. `margin.monitor` che
 
 | Condition | Live quantity | Limit | Physical meaning of the limit | Safe response (proposed) |
 |---|---|---|---|---|
-| `wind` | horizontal ‖ŵ‖ + K σ (largest eigenvalue of the horizontal wind covariance at T) | ≤ the drone's declared max wind resistance (12 m/s for the fleet) | the wind, with its uncertainty, exceeds what the manufacturer says the drone can fly in | Stop new departures in the area. Drones in flight hold or land. |
-| `headroom` | horizontal ‖D (ŵ − v̂)‖ + K σ | ≤ a_phys − u_max (2.16 m/s² at 30° tilt, 3.37 m/s² at 35°) | after cancelling the drag, the tilt authority cannot add the filter's u_max in every horizontal direction | As for `wind`, or a lower speed that brings the drag back inside the limit. |
-| `authority` | ρ (§3.3) | < A_REL = 4.95 m/s² | the drag uncertainty outweighs the pair's braking | As for `wind`. |
+| `wind` | horizontal ‖ŵ‖ + K2 σ (largest eigenvalue of the horizontal wind covariance at T) | ≤ the drone's declared max wind resistance (12 m/s for the fleet) | the wind, with its uncertainty, exceeds what the manufacturer says the drone can fly in | Stop new departures in the area. Drones in flight hold or land. |
+| `headroom` (safety alarm) | u_avail = a_phys − ‖D (ŵ − v̂)‖ − K2 σ, horizontal, σ at T | ≥ u_max ‖v̂‖ / v_max | the thrust left after the drag no longer gives the braking that T assumes (§3.3); the drone flies above its cleared speed for the wind it meets | Slow the drone to its cleared speed for the measured wind; stop new departures in the area until it is back inside. |
 | `saturation` | thrust command clipped by `_authority` | not clipped | the airframe cannot deliver the command | As for `wind`. |
-| `lag` | F statistic of the lag identification (below) | ≤ F₁,₅₆(1 − P_RISK / 5) = 15.8 | the drone answers commands with a lag other than the declared one | Treat the drone's lag as unknown: replace EPS_LAG by the bound for the largest lag in the grid and take the drone out of dense flows until it is re-identified. |
+| `lag` | F statistic of the lag identification (below) | ≤ F₁,₅₃(1 − P_RISK / 5) = 15.97 | the drone answers commands with a lag other than the declared one | Fly the drone's backup rollout at the largest lag in the grid (§3.10) and take the drone out of dense flows until it is re-identified. |
 | `nis` | Σ of the last 10 NIS | ≤ χ²₆₀(0.999) = 99.6 | the GNSS error or the wind is outside the tracker's model (GNSS noise larger than reported, a jump in the fix, a gust front); a steady bias is not seen | Treat the drone's position as unknown: set its σ to the worst-site figure (`SPS_WORST`), widen the margin, take it out of the flow and land it. |
-| `link` | age of the latest confirmed command; loss streak | ≤ 1.0 s (`COM_OF_LOSS_T`); streak < 2 | the drone is about to fall back to its own failsafe; or the single-loss bound of §3.6 is broken | Treat the drone as non-cooperative. Reserve its reachable set from the last estimate and move the others away. |
+| `link` | age of the latest confirmed command; loss streak; age of the latest telemetry | ≤ 1.0 s (`COM_OF_LOSS_T`); streak < 2; ≤ AGE_S = 0.46 s | the drone is about to fall back to its own failsafe; or the single-loss bound of §3.6 is broken | Treat the drone as non-cooperative. Reserve its reachable set from the last estimate and move the others away. |
 | `wall` | any world-box acceleration limit active | none active | the backup's A_REL holds only away from the walls | Keep traffic one stopping distance from the box edges, or plan with the reduced A_REL there. |
-| `margin` | required margin m_req | ≤ 48.57 m (`FilterConfig` bound) | the filter cannot express the margin | Deconflict strategically: wider spacing or a ground hold. |
-| `absorb` | m_req − m_app (§3.9) | 0 | the margin rose faster than the barrier could absorb; the claim does not hold this cycle | Hold new clearances in the area until the deficit is gone. |
+| `margin` | required margin m_req | ≤ 48.57 m (`FilterConfig` bound) | the filter cannot express the margin | Deconflict strategically: wider spacing or a ground hold. Not counted as a warning in §6: it marks a condition outside the limits, not a fault. |
+| `absorb` | m_req − m_app (§3.9) | 0 | the margin in force is short of the one required this cycle | Hold new clearances in the area until the deficit is gone. Not counted as a warning in §6 (review B2). |
 
-**Wind against the declared limit, and headroom apart (founder decision 2b).** The `wind` check compares the estimated wind with the registration figure, as the founder's rule asks. It does not by itself protect the margin's assumptions: the margin needs the filter's u_max on top of the drag cancellation, which is the `headroom` check. The two are kept separate because they mean different things. `wind` says the drone is outside its manufacturer's envelope. `headroom` says the drone is inside it but cannot deliver the filter's full acceleration in every direction. `headroom` is isotropic: it asks for u_max in any horizontal direction, including the one that adds to the drag cancellation. The backup brakes along the line of sight, where drag usually helps, so the check is sufficient but conservative. At cruise speed in still air the drag alone exceeds the limit above 7.6–11.3 m/s of airspeed for the fleet (for the M350, 2.16 / 0.246 = 8.8 m/s).
+The `authority` alarm of the first version is removed with the fixed-point T it guarded (§3.3).
 
-**Lag identification (founder decision 3).** Each telemetry message carries the drone's IMU acceleration (noise 0.35 m/s², PX4's `EKF2_ACC_NOISE`). Its thrust part, a_meas − D (ŵ − v_meas), is compared with the actuator output that the echoed commands give through a first-order lag, for the declared τ_a and for 0.5, 0.75, 1.5, 2 and 3 times it (`LagMonitor`). Over the last 20 samples (2 s), with a free offset per axis to absorb a slow wind-estimate error, an F test asks whether any alternative fits better than the declared lag. The level P_RISK is split over the five alternatives (Bonferroni). Without command changes all candidates agree and the test cannot fire, so a drone flying a steady command is not checked; this is when the lag also does not matter, because EPS_LAG scales with the command change. `check.check_lag_id` shows it finds a doubled lag under a square-wave command and stays quiet at the declared one. A variant with a free slope per axis was tried to absorb a drifting wind estimate on takeoff tracks and was rejected (DECISIONS). B6 showed that a head-on encounter can arrive before the first command change, so the lag is never checked; the design answer, a declared upper-bound lag until the identifier reports the lag identified, is in §3.10 and not in the prototype.
+**Wind against the declared limit, and headroom apart (founder decision 2b, review B3).** The `wind` check compares the estimated wind with the registration figure, as the founder's rule asks. It does not by itself protect the margin's assumptions. `headroom` does: T assumes that each drone can brake at u_max |v| / v_max on top of cancelling its drag (§3.3), and `headroom` checks that the thrust left, u_avail with its K2 σ uncertainty, still gives that braking at the drone's estimated speed. It is the live form of the cleared-speed rule and is now a safety alarm: when it fires, the stopping time on which the margin rests is not guaranteed. The two are kept separate because they mean different things. `wind` says the drone is outside its manufacturer's envelope. `headroom` says the drone may be inside it but is flying too fast for the wind it meets. The check uses the magnitude of the drag, so it is conservative where the drag helps the braking.
+
+**Lag identification (founder decision 3, review N1).** Each telemetry message carries the drone's IMU acceleration (noise 0.35 m/s², PX4's `EKF2_ACC_NOISE`). The regressor is a_meas + D v_meas, which is the actuator output plus D w. It is compared with the actuator output that the echoed thrust commands give through a first-order lag, for the declared τ_a and for 0.5, 0.75, 1.5, 2 and 3 times it (`LagMonitor`). Two errors of the first version are fixed (review N1):
+
+- The regressor used the tracker's wind estimate, so a wind estimate still converging, or a wind changing over the window, entered the residual as a lag would. The wind is now not taken from the tracker. Over the last 20 samples (2 s) each axis gets a free offset and a free linear trend, which absorb D w for a wind that is constant or changes at a constant rate over the window.
+- The echo reported the commanded thrust before the airframe's clip, so a saturated command looked like a slow lag. The drone now echoes the thrust it applies, after the clip (`sim.py`), including during its own braking failsafe.
+
+An F test with 1 and 53 degrees of freedom asks whether any alternative fits better than the declared lag, at P_RISK split over the five alternatives (Bonferroni). The windows overlap, so the false-alarm rate per run is higher than P_RISK per test. Without command changes all candidates agree and the test cannot fire, so a drone flying a steady command is not checked. With the lag now flown inside the backup rollout (§3.5), a wrong lag makes the certificate wrong whenever the backup is the binding constraint, not only after a command change; the design answer, a declared upper-bound lag until the identifier reports the lag identified, is in §3.10 and not in the prototype. `check.check_lag_id` shows the identifier finds a doubled lag under a square-wave command and stays quiet at the declared one.
 
 Conditions without a monitor:
 
