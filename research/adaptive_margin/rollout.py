@@ -27,6 +27,7 @@ the lag (no drag), in place of main's (k* + 0.5) dt^2.
 
 from __future__ import annotations
 
+import inspect
 import math
 from functools import lru_cache
 
@@ -42,6 +43,9 @@ DT = 0.1
 # Per drone id: (a0 actuator output (3,), drag D (1/s), estimated wind w_hat (3,), a_phys (m/s²)).
 CTX: dict[str, tuple[np.ndarray, float, np.ndarray, float]] = {}
 _MAIN_CONSTRAINTS = F._backup_constraints
+# PR #26's filter (perf/solver-exact) also returns the backup margin d* - d_eff
+# per pair; main's returns four values. Match whichever filter is imported.
+_RETURNS_MARGIN = "return m, rhs, used, capped, d_star - d_eff" in inspect.getsource(_MAIN_CONSTRAINTS)
 _limits = F._limits_kernel
 _evasive = F._evasive_kernel
 
@@ -178,6 +182,8 @@ def backup_constraints(states, pairs, config, frames=None):
     sens = sensitivity(horizon()[1])[k_star]
     rhs = (np.einsum("ij,ij->i", m, a_first)
            - config.gamma * DT * (d_star - (SAFE_SEPARATION_M + config.margin_m)) / sens)
+    if _RETURNS_MARGIN:
+        return m, rhs, used, capped, d_star - (SAFE_SEPARATION_M + config.margin_m)
     return m, rhs, used, capped
 
 
