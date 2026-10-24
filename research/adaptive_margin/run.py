@@ -19,6 +19,7 @@ from collections import defaultdict
 from pathlib import Path
 
 from research.adaptive_margin import sim
+from research.adaptive_margin.margin import TARGETS, risk
 
 SEEDS = range(8)
 BEYOND_FAMILIES = ("headon2", "ring4")
@@ -29,28 +30,25 @@ CORRIDOR_W_M, CORRIDOR_H_M = 100.0, 30.0
 
 
 def jobs() -> list[dict]:
-    out = [dict(family=f, cond=c.name, seed=s, mode=m) for f in sim.FAMILIES for c in sim.NOMINAL
-           for s in SEEDS for m in MODES]
-    out += [dict(family=f, cond=c.name, seed=s, mode="adaptive") for c in sim.BEYOND
+    out = [dict(family=f, cond=c.name, seed=s, mode=m, target=t) for t in TARGETS for f in sim.FAMILIES
+           for c in sim.NOMINAL for s in SEEDS for m in MODES]
+    out += [dict(family=f, cond=c.name, seed=s, mode="adaptive", target=t) for t in TARGETS for c in sim.BEYOND
             for f in BEYOND_FAMILIES for s in SEEDS]
-    out += [dict(family=f, cond=c.name, seed=s, mode="adaptive") for c in sim.TAKEOFF
+    out += [dict(family=f, cond=c.name, seed=s, mode="adaptive", target=t) for t in TARGETS for c in sim.TAKEOFF
             for f in sim.FAMILIES for s in SEEDS]
     return sorted(out, key=_priority)
 
 
-# Founder's run order (2026-10-24): the decision cases first, then the other
-# beyond-limit cases, then the in-limit matrix. Calm-air baseline runs with
-# lag_s = 0 follow the lag_s = 0.25 s ones, as their comparison.
-PRIORITY = ("B6_lag_2x_rtk", "B6_lag_2x", "baseline_lag/calm", "baseline/calm",
-            "B8_bias_5sigma_rtk", "B8_bias_5sigma")
+# Founder's run order (2026-10-24, after the Fable review): in-limit RTK and
+# SBAS adaptive at both targets, then the B6 and B8 cases, then the rest.
+PRIORITY_GRADES = ("rtk_f9p/", "sbas_gagan/")
+PRIORITY_CASES = ("B6_lag_2x", "B6_lag_2x_rtk", "B8_bias_5sigma", "B8_bias_5sigma_rtk")
 
 
 def _priority(j: dict) -> int:
-    calm_baseline = j["mode"] != "adaptive" and j["cond"].endswith("/calm")
-    tag = f"{j['mode']}/calm" if calm_baseline else j["cond"]
-    if tag in PRIORITY:
-        return PRIORITY.index(tag)
-    return len(PRIORITY) + (0 if j["cond"].startswith("B") else 1)
+    if j["mode"] == "adaptive" and j["cond"].startswith(PRIORITY_GRADES):
+        return 0
+    return 1 if j["cond"] in PRIORITY_CASES else 2
 
 
 def _git() -> dict:
@@ -63,7 +61,7 @@ def _git() -> dict:
 
 
 def _key(j: dict) -> tuple:
-    return j["family"], j["cond"], j["seed"], j["mode"]
+    return j["family"], j["cond"], j["seed"], j["mode"], j["target"]
 
 
 def run(shard: int, of: int, path: Path) -> None:
@@ -75,26 +73,37 @@ def run(shard: int, of: int, path: Path) -> None:
         for j in jobs()[shard::of]:
             if _key(j) in done:
                 continue
-            p0, v0 = sim.scenario(j["family"], j["seed"])
-            sk = (j["family"], j["seed"])
+            cond = conds[j["cond"]]
+            p0, v0, v_clr = sim.cleared(*sim.scenario(j["family"], j["seed"]), cond, risk(j["target"]), j["seed"])
+            sk = (j["family"], j["seed"], v0.tobytes())
             if sk not in rec:
                 rec[sk] = sim.recoverable(p0, v0)
             t0 = time.perf_counter()
-            r = sim.episode(p0, v0, conds[j["cond"]], j["mode"], j["seed"])
-            r.update(j, n=len(p0), ideal_min_sep=rec[sk], wall_s=round(time.perf_counter() - t0, 1), **rev)
+            r = sim.episode(p0, v0, cond, j["mode"], j["seed"], j["target"])
+            r.update(j, n=len(p0), ideal_min_sep=rec[sk], v_clr=[round(float(x), 2) for x in v_clr],
+                     wall_s=round(time.perf_counter() - t0, 1), **rev)
             fh.write(json.dumps(r) + "\n")
             fh.flush()
 
 
-def _first_alarm(r: dict):
-    """First alarm time, not counting a headroom alarm already raised at warm-up (founder, 2026-10-24).
+# Reports that the margin in force is below the requested one: they say the
+# claim is not in force, they do not warn of a fault (founder, 2026-10-24).
+NOT_WARNINGS = ("absorb", "margin")
 
-    known limit: rows keep only each alarm's first time, so a headroom alarm
-    raised at warm-up and raised again later is not counted either; revisit
-    if headroom becomes an alarm the design relies on.
-    """
-    ts = [t for k, t in r["alarms"].items() if not (k == "headroom" and t <= sim.WARMUP_S)]
+
+def _first_alarm(r: dict):
+    """First time of an alarm that warns of a fault; ``absorb`` and ``margin`` do not count."""
+    ts = [t for k, t in r["alarms"].items() if k not in NOT_WARNINGS]
     return min(ts) if ts else None
+
+
+def _admissible(rows: list[dict]) -> set[tuple]:
+    """Scenarios whose adaptive run found them admissible at clearance (review B2); baselines share the flag."""
+    return {(r["family"], r["cond"], r["seed"], r["target"]) for r in rows if r["mode"] == "adaptive" and r["admissible"]}
+
+
+def _in_limit(r: dict, adm: set[tuple]) -> bool:
+    return r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M and (r["family"], r["cond"], r["seed"], r["target"]) in adm
 
 
 def _silent_los(r: dict) -> bool:
@@ -124,70 +133,90 @@ def _monitored(rs: list[dict]) -> list[str]:
             f"{max(r['absorb_max_m'] for r in rs):.2f})"]
 
 
+def _lanes(width: float, m: float, sp: float) -> int:
+    """Lanes across ``width`` at spacing ``sp``, each at least the margin ``m`` from the corridor's walls."""
+    return max(0, math.floor((width - 2.0 * m) / sp) + 1) if width >= 2.0 * m else 0
+
+
 def table(paths: list[Path]) -> str:
     rows = [json.loads(x) for p in paths for x in p.read_text().splitlines()]
     beyond = {c.name for c in sim.BEYOND}
     takeoff = {c.name for c in sim.TAKEOFF}
+    adm = _admissible(rows)
     revs = sorted({(r["git"], r["dirty"]) for r in rows})
     lines = [f"Rows: {len(rows)}; commits: {', '.join(f'{g}{' (dirty)' if d else ''}' for g, d in revs)}.", "",
-             "Absorb: runs with a margin deficit (cycles, largest deficit m). Wind at t0: runs whose first "
-             "cycle raised the wind alarm (prior).", "",
-             "### In-limit conditions (recoverable encounters only)", "",
-             "| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
-             "| runs saturated | margin p50 (m) | min sep (m) |",
-             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
-    groups = defaultdict(list)
-    for r in rows:
-        if r["cond"] not in beyond | takeoff and r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M:
-            groups[(r["cond"], r["mode"])].append(r)
-    for (c, m), rs in sorted(groups.items()):
-        mon = _monitored(rs) if m == "adaptive" else ["-"] * 5
-        lines.append(
-            f"| {c} | {m} | {len(rs)} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(mon)} | "
-            f"{sum(r['saturated_cycles'] > 0 for r in rs)} | "
-            f"{_median([r['margin_p50'] for r in rs]) if m == 'adaptive' else 0.5} | {min(r['min_sep'] for r in rs):.2f} |")
-    n_unrec = len({(r["family"], r["seed"]) for r in rows if r["ideal_min_sep"] < sim.SAFE_SEPARATION_M})
-    lines += ["", f"Scenarios excluded as not recoverable (main, ground truth, no delay): {n_unrec}.", "",
-              "### Beyond-limit conditions (adaptive)", "",
-              "| case | runs | alarm before any LoS | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 "
-              "| absorb | first alarm (s, median) | first lag alarm (s, median) |",
-              "|---|---|---|---|---|---|---|---|---|---|---|"]
-    groups = defaultdict(list)
-    for r in rows:
-        if r["cond"] in beyond:
-            groups[r["cond"]].append(r)
-    for c, rs in sorted(groups.items()):
-        firsts = [_first_alarm(r) for r in rs]
-        before = sum(f is not None and (r["los_s"] is None or f <= r["los_s"]) for f, r in zip(firsts, rs))
-        lines.append(
-            f"| {c} | {len(rs)} | {before} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
-            f"{_median([f for f in firsts if f is not None])} | "
-            f"{_median([r['alarms']['lag'] for r in rs if 'lag' in r['alarms']])} |")
-    lines += ["", f"### Takeoff tracks (adaptive, track starts {sim.PREROLL_S:g} s before the run's t = 0, at hover)", "",
-              "| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
-              "| alarm in the last 5 s before the encounter | margin p50 (m) |",
-              "|---|---|---|---|---|---|---|---|---|---|"]
-    groups = defaultdict(list)
-    for r in rows:
-        if r["cond"] in takeoff and r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M:
-            groups[r["cond"]].append(r)
-    for c, rs in sorted(groups.items()):
-        late = sum(any(r["t_encounter_s"] - 5.0 <= s_ <= r["t_encounter_s"] for s_ in r["alarms"].values()) for r in rs)
-        lines.append(f"| {c} | {len(rs)} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
-                     f"{late} | {_median([r['margin_p50'] for r in rs])} |")
-    lines += ["", f"### Corridor capacity per GNSS grade (India wind, adaptive, in-limit runs; reference corridor "
-              f"{CORRIDOR_W_M:g} m x {CORRIDOR_H_M:g} m, square lane grid at s = 5 m + margin)", "",
-              "| grade | margin p50 of runs (m) | lane spacing s (m) | lanes | drones per km of corridor |",
-              "|---|---|---|---|---|"]
-    for g in ("rtk_f9p", "sbas_gagan", "gps_sps"):
-        rs = [r for r in rows if r["cond"] == f"{g}/india" and r["mode"] == "adaptive"
-              and r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M]
-        if not rs:
-            continue
-        m = _median([r["margin_p50"] for r in rs])
-        sp = sim.SAFE_SEPARATION_M + m
-        lanes = (math.floor(CORRIDOR_W_M / sp) + 1) * (math.floor(CORRIDOR_H_M / sp) + 1)
-        lines.append(f"| {g} | {m} | {sp:.1f} | {lanes} | {lanes * math.floor(1000.0 / sp)} |")
+             "Risk target per pair-hour in each heading. Absorb: runs with a margin deficit (cycles, largest "
+             "deficit m). Wind at t0: runs whose first cycle raised the wind alarm (prior). `absorb` and `margin` "
+             "are listed but do not count as a warning before LoS.", ""]
+    for target in TARGETS:
+        rk = risk(target)
+        lines += [f"## Target {target:g} per pair-hour (K1 = {rk.k1:.2f}, K2 = {rk.k2:.2f})", "",
+                  "### In-limit conditions (recoverable and admissible encounters only)", "",
+                  "| condition | mode | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
+                  "| runs saturated | margin p50 (m) | GNSS / lost-command term p50 (m) | min sep (m) |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|---|---|"]
+        tr = [r for r in rows if r["target"] == target]
+        groups = defaultdict(list)
+        for r in tr:
+            if r["cond"] not in beyond | takeoff and _in_limit(r, adm):
+                groups[(r["cond"], r["mode"])].append(r)
+        for (c, m), rs in sorted(groups.items()):
+            ad = m == "adaptive"
+            mon = _monitored(rs) if ad else ["-"] * 5
+            lines.append(
+                f"| {c} | {m} | {len(rs)} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(mon)} | "
+                f"{sum(r['saturated_cycles'] > 0 for r in rs)} | "
+                f"{_median([r['margin_p50'] for r in rs]) if ad else 0.5} | "
+                f"{f'{_median([r['gnss_p50'] for r in rs])} / {_median([r['lost_p50'] for r in rs])}' if ad else '-'} | "
+                f"{min(r['min_sep'] for r in rs):.2f} |")
+        nominal = [r for r in tr if r["cond"] not in beyond | takeoff and r["mode"] == "adaptive"]
+        n_unrec = len({(r["family"], r["seed"], r["cond"]) for r in nominal if r["ideal_min_sep"] < sim.SAFE_SEPARATION_M})
+        n_inadm = sum(not r["admissible"] for r in nominal if r["ideal_min_sep"] >= sim.SAFE_SEPARATION_M)
+        lines += ["", f"Excluded: {n_unrec} adaptive runs not recoverable (main, ground truth, no delay); "
+                  f"{n_inadm} recoverable but not admissible at clearance (separation below 5 m + requested margin "
+                  "along the backup).", "",
+                  "### Beyond-limit conditions (adaptive)", "",
+                  "| case | runs | alarm before any LoS | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 "
+                  "| absorb | first alarm (s, median) | first lag alarm (s, median) |",
+                  "|---|---|---|---|---|---|---|---|---|---|---|"]
+        groups = defaultdict(list)
+        for r in tr:
+            if r["cond"] in beyond:
+                groups[r["cond"]].append(r)
+        for c, rs in sorted(groups.items()):
+            firsts = [_first_alarm(r) for r in rs]
+            before = sum(f is not None and (r["los_s"] is None or f <= r["los_s"]) for f, r in zip(firsts, rs))
+            lines.append(
+                f"| {c} | {len(rs)} | {before} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
+                f"{_median([f for f in firsts if f is not None])} | "
+                f"{_median([r['alarms']['lag'] for r in rs if 'lag' in r['alarms']])} |")
+        lines += ["", f"### Takeoff tracks (adaptive, track starts {sim.PREROLL_S:g} s before the run's t = 0, at hover)", "",
+                  "| condition | runs | LoS | runs with alarm | LoS, monitor silent | alarms | wind at t0 | absorb "
+                  "| alarm in the last 5 s before the encounter | margin p50 (m) |",
+                  "|---|---|---|---|---|---|---|---|---|---|"]
+        groups = defaultdict(list)
+        for r in tr:
+            if r["cond"] in takeoff and _in_limit(r, adm):
+                groups[r["cond"]].append(r)
+        for c, rs in sorted(groups.items()):
+            late = sum(any(r["t_encounter_s"] - 5.0 <= s_ <= r["t_encounter_s"] for s_ in r["alarms"].values())
+                       for r in rs)
+            lines.append(f"| {c} | {len(rs)} | {sum(r['los_s'] is not None for r in rs)} | {' | '.join(_monitored(rs))} | "
+                         f"{late} | {_median([r['margin_p50'] for r in rs])} |")
+        lines += ["", f"### Corridor capacity per GNSS grade (India wind, adaptive, in-limit runs; reference corridor "
+                  f"{CORRIDOR_W_M:g} m x {CORRIDOR_H_M:g} m, square lane grid at s = 5 m + margin, lanes at least "
+                  "the margin from the walls)", "",
+                  "| grade | margin p50 of runs (m) | lane spacing s (m) | lanes | drones per km of corridor |",
+                  "|---|---|---|---|---|"]
+        for g in ("rtk_f9p", "sbas_gagan", "gps_sps"):
+            rs = [r for r in tr if r["cond"] == f"{g}/india" and r["mode"] == "adaptive" and _in_limit(r, adm)]
+            if not rs:
+                continue
+            m = _median([r["margin_p50"] for r in rs])
+            sp = sim.SAFE_SEPARATION_M + m
+            lanes = _lanes(CORRIDOR_W_M, m, sp) * _lanes(CORRIDOR_H_M, m, sp)
+            lines.append(f"| {g} | {m} | {sp:.1f} | {lanes} | {lanes * math.floor(1000.0 / sp)} |")
+        lines.append("")
     return "\n".join(lines)
 
 

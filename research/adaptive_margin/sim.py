@@ -12,15 +12,22 @@ The filter's output u is an acceleration in the contract's drag-free model
 (v' = u); the station turns it into a thrust command. Three ground
 stations share the plant and every random draw:
 
-- ``adaptive``: trackers, equivalent-delay prediction, adaptive margin
-  raised no faster than the barrier absorbs, envelope monitor, main's
-  ``apply_filter`` on the predicted states; thrust u - D (w_hat - v_hat).
+- ``adaptive``: trackers, prediction to the next command's playout,
+  adaptive margin raised no faster than the barrier absorbs, envelope
+  monitor, main's ``apply_filter`` on the predicted states with the backup
+  rollout flown through the lag, drag and thrust limit (``rollout.py``);
+  thrust u - D (w_hat - v_hat).
 - ``baseline``: main as it is, on the latest raw measurement, margin 0.5 m,
   no prediction; thrust u + D v_route, the trim that holds the planned
   velocity in still air (it knows no wind).
 - ``baseline_lag``: as ``baseline`` with ``lag_s`` = the declared tau.
 
-src/ is not modified; the filter is called as any caller would.
+Every scenario is flown at the cleared cruise speed (``cleared``): each
+drone's planned speed is capped where its thrust, after the drag at the
+forecast wind, still gives the braking the margin assumes (review B3).
+
+src/ is not modified; the filter is called as any caller would, with its
+backup rollout replaced by ``rollout.backup_constraints`` in adaptive mode.
 """
 
 from __future__ import annotations
@@ -42,19 +49,24 @@ from shared.contracts import (
 from utm_services.safety import filter as F
 
 from research.adaptive_margin import envelope as E
-from research.adaptive_margin.margin import U_MAX, Pred, absorbable, margin, monitor
+from research.adaptive_margin import rollout
+from research.adaptive_margin.margin import (
+    CYCLE,
+    P_TICKS,
+    TARGETS,
+    U_MAX,
+    Pred,
+    Risk,
+    absorbable,
+    margin,
+    monitor,
+    risk,
+)
 from research.adaptive_margin.tracker import H, CommandLog, Tracker, kin_step
 
-CYCLE = 10                       # ticks per 100 ms filter cycle
 T_C_S = 12.0                     # time to the scenario's conflict point
 EPISODE_S = T_C_S + 10.0
 Z_CENTRE_M = 115.0
-# Uplink playout delay: the 99.9 % quantile of the one-way latency, rounded up
-# to the tick. A command arriving later is dropped (counted as lost).
-P_TICKS = math.ceil(
-    E.LTE_AIR_ONE_WAY_MEDIAN_S * math.exp(E.LTE_AIR_SIGMA_LN * 3.090232) / H - 1e-9
-)
-A_TICKS = round(E.TAU_ACT_S / H)
 _LO = np.array([WORLD_XY_MIN_M, WORLD_XY_MIN_M, WORLD_Z_MIN_M])
 _HI = np.array([WORLD_XY_MAX_M, WORLD_XY_MAX_M, WORLD_Z_MAX_M])
 
@@ -74,6 +86,7 @@ class Cond:
     tau_true_s: float = E.TAU_ACT_S  # plant actuator lag (B6)
     bias_sigma: float = 0.0          # >0: GNSS bias of this Mahalanobis length, random direction (B8)
     preroll_s: float = 0.0           # >0: the track starts this long earlier, at hover (takeoff runs)
+    forecast: tuple[float, float] | None = None   # (U, W20) the clearance used, if not the true wind
 
 
 OUTAGE_S = T_C_S - 3.0
@@ -89,7 +102,8 @@ CALM, INDIA = dict(wind_mps=0.0), dict(wind_mps=E.INDIA_MEAN_100M_MPS, w20_mps=E
 NOMINAL = [Cond(f"{g.name}/{w}", g, **kw) for g in (E.RTK, E.SBAS, E.SPS)
            for w, kw in (("calm", CALM), ("india", INDIA))]
 BEYOND = [
-    Cond("B1_squall_11mps", E.SBAS, wind_mps=E.SQUALL_PEAK_MPS, w20_mps=E.W20_MODERATE_MPS),
+    Cond("B1_squall_11mps", E.SBAS, wind_mps=E.SQUALL_PEAK_MPS, w20_mps=E.W20_MODERATE_MPS,
+         forecast=(E.INDIA_MEAN_100M_MPS, E.W20_LIGHT_MPS)),
     Cond("B2_gust_front_8mps", E.SBAS, gust_step_mps=E.SQUALL_RISE_MPS, **INDIA),
     Cond("B3_gnss_underreports_5x", E.SBAS, white_factor=5.0, **INDIA),
     Cond("B4_downlink_out_3s", E.SBAS, down_out_s=3.0, **INDIA),
@@ -128,6 +142,36 @@ def scenario(family: str, seed: int) -> tuple[np.ndarray, np.ndarray]:
                    s * np.sin(climb[:n])], axis=1)
     off = rng.normal(0.0, [2.0, 2.0, 1.0], (n, 3))
     return centre + off - v0 * T_C_S, v0
+
+
+def _fleet(seed: int, n: int) -> list[E.Airframe]:
+    """The run's airframes: the first draw of the run's generator, as in ``episode``."""
+    return [E.FLEET[k] for k in np.random.default_rng([seed, 7]).integers(0, len(E.FLEET), n)]
+
+
+def cleared_speed(af: E.Airframe, cond: Cond, rk: Risk) -> float:
+    """Highest cruise speed at which the airframe keeps the braking the margin assumes (review B3).
+
+    The stopping time T (``margin.stopping_s``) assumes each drone can brake
+    at u_max |v| / v_max on top of cancelling its drag. With airspeed at most
+    W + v, the thrust left is a_phys - D (W + v), so the cleared speed solves
+    a_phys - D (W + v) = u_max v / v_max, with W the forecast mean wind plus
+    K2 sigma of its gusts. An operating rule: the station plans no faster.
+    The ``headroom`` alarm checks the same inequality on the estimates.
+    """
+    U, w20 = cond.forecast or (cond.wind_mps, cond.w20_mps)
+    sigma_u = E.dryden(w20, Z_CENTRE_M)[0] if w20 > 0.0 and U > 0.0 else 0.0
+    D = af.drag_per_s
+    v = (af.a_phys_mps2 - D * (U + rk.k2 * sigma_u)) / (D + U_MAX / MAX_SPEED_MPS)
+    assert v > 0.0, f"{af.name} cannot hold the braking in {cond.name}"
+    return min(MAX_SPEED_MPS, v)
+
+
+def cleared(p0: np.ndarray, v0: np.ndarray, cond: Cond, rk: Risk, seed: int):
+    """The scenario at the cleared speeds, meeting at the same point and time: (p0, v0, v_clr per drone)."""
+    vc = np.array([cleared_speed(af, cond, rk) for af in _fleet(seed, len(p0))])
+    v1 = v0 * np.minimum(1.0, vc / np.linalg.norm(v0, axis=1))[:, None]
+    return p0 + (v0 - v1) * T_C_S, v1, vc
 
 
 def recoverable(p0: np.ndarray, v0: np.ndarray) -> float:
@@ -192,6 +236,11 @@ class _Out:
     alarms_t0: list[str] = field(default_factory=list)
     margins: list[float] = field(default_factory=list)
     requested: list[float] = field(default_factory=list)
+    gnss: list[float] = field(default_factory=list)
+    lost: list[float] = field(default_factory=list)
+    admissible: bool | None = None
+    t0_req: float | None = None
+    t0_star: float | None = None
     alarm_cycles: int = 0
     absorb_cycles: int = 0
     absorb_max: float = 0.0
@@ -201,12 +250,15 @@ class _Out:
     cap_pairs: int = 0
 
 
-def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) -> dict:
-    """One closed-loop run; ``mode`` is "adaptive", "baseline" or "baseline_lag"."""
+def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int, target: float = TARGETS[0]) -> dict:
+    """One closed-loop run; ``mode`` is "adaptive", "baseline" or "baseline_lag"; ``target`` risk per pair-hour."""
     rng = np.random.default_rng([seed, 7])
     n = len(p0)
     ids = [f"d{i}" for i in range(n)]
     fleet = [E.FLEET[k] for k in rng.integers(0, len(E.FLEET), n)]
+    rk = risk(target)
+    pairs = [(ids[i], ids[j]) for i in range(n) for j in range(i + 1, n)]
+    rollout.CTX.clear()   # baseline modes run main's own backup rollout
     D = np.array([af.drag_per_s for af in fleet])
     g = cond.gnss
     sig_p = np.array([g.sigma_h_m, g.sigma_h_m, g.sigma_v_m])
@@ -296,24 +348,33 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) ->
             if mode == "adaptive":
                 preds = {}
                 for i, aid in enumerate(ids):
-                    x, P, _ = trackers[i].predict_delay(t + P_TICKS, logs[i], A_TICKS)
-                    preds[aid] = Pred(x, P, trackers[i], logs[i], fleet[i])
-                res = margin(preds, t + P_TICKS + A_TICKS)
-                monitor(preds, res, t)
+                    x, P, a0 = trackers[i].predict(t + P_TICKS, logs[i], floor=True)
+                    preds[aid] = Pred(x, P, trackers[i], logs[i], fleet[i], a0)
+                    rollout.CTX[aid] = (a0, D[i], x[6:], fleet[i].a_phys_mps2)
                 states = [_state(aid, pr.x[:3], pr.x[3:6], t) for aid, pr in preds.items()]
+                # The backup each pair would fly now, through the lag (review B1, B4).
+                traj = rollout.pair_rollout({s.agent_id: s for s in states}, pairs,
+                                            F.FilterConfig(margin_m=m_prev), latch)[0]
+                res = margin(preds, rk, {pr: traj[:, q] for q, pr in enumerate(pairs)})
                 # Raise the margin no faster than the barrier absorbs (P3-SA-03 §3.9).
-                m_star = absorbable(states, latch, F.FilterConfig(margin_m=m_prev))
+                m_star = absorbable(traj)
                 m_app = min(res.margin_m, max(m_star, m_prev))
                 deficit = res.margin_m - m_app
                 if deficit > 1e-9:
                     res.alarms.add("absorb")
+                monitor(preds, res, t + P_TICKS, rk, m_app)
                 cfg = F.FilterConfig(margin_m=m_app)
                 m_prev = m_app
                 if t == 0:
                     out.alarms_t0 = sorted(res.alarms)
+                if t * H >= WARMUP_S and out.admissible is None:
+                    # Admissible (review B2): at clearance the states satisfy the margin the pair needs.
+                    out.admissible, out.t0_req, out.t0_star = m_star >= res.requested_m, res.requested_m, m_star
                 if t * H >= WARMUP_S:
                     out.margins.append(m_app)
-                    out.requested.append(res.margin_m)
+                    out.requested.append(res.requested_m)
+                    out.gnss.append(res.gnss_m)
+                    out.lost.append(res.lost_m)
                     if deficit > 1e-9:
                         out.absorb_cycles += 1
                         out.absorb_max = max(out.absorb_max, deficit)
@@ -354,6 +415,7 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) ->
         for i in range(n):
             if (t - last_rx[i]) * H > E.OFFBOARD_LOSS_S:   # PX4 offboard loss: brake, autopilot trims its own drag
                 c_now[i] = _authority(np.clip(-v[i] / 0.1, -U_MAX, U_MAX) - D[i] * (w_now[i] - v[i]), fleet[i])[0]
+                echo[i].append((t, c_now[i].copy()))   # the drone reports what it applies (review N1)
             p[i], v[i], a[i] = kin_step(p[i], v[i], a[i], c_now[i], w_now[i], D[i], cond.tau_true_s)
         gust = gust * e_g + sig_g * np.sqrt(1.0 - e_g**2) * rng.standard_normal((n, 3))
         sep = min(float(np.linalg.norm(p[i] - p[j])) for i in range(n) for j in range(i + 1, n))
@@ -361,12 +423,19 @@ def episode(p0: np.ndarray, v0: np.ndarray, cond: Cond, mode: str, seed: int) ->
         if sep < SAFE_SEPARATION_M and out.los_s is None:
             out.los_s = round((t + 1) * H, 2)
     m = np.array(out.margins) if out.margins else np.zeros(1)
+
+    def p50(xs: list[float]):
+        return round(float(np.median(xs)), 2) if xs else None
+
     return {
         "min_sep": round(out.min_sep, 3), "los_s": out.los_s, "alarms": out.alarms,
         "first_alarm_s": min(out.alarms.values(), default=None), "alarm_cycles": out.alarm_cycles,
         "alarms_t0": out.alarms_t0 if mode == "adaptive" else None,
         "margin_p50": round(float(np.median(m)), 2), "margin_max": round(float(m.max()), 2),
         "margin_req_max": round(max(out.requested, default=0.0), 2),
+        "gnss_p50": p50(out.gnss), "lost_p50": p50(out.lost), "target": target,
+        "admissible": out.admissible, "m_req_t0": out.t0_req and round(out.t0_req, 2),
+        "m_star_t0": out.t0_star and round(out.t0_star, 2),
         "absorb_cycles": out.absorb_cycles, "absorb_max_m": round(out.absorb_max, 3),
         "saturated_cycles": out.saturated_cycles,
         "fallbacks": out.fallbacks, "solver_errors": out.solver_errors, "cap_pairs": out.cap_pairs,

@@ -98,8 +98,8 @@ class CommandLog:
             return
         self.applied = [self.applied[0]] + echo
         self.known = tick_m
-        if echo:
-            self.delivered = max(self.delivered, echo[-1][0])
+        # The echo also holds the autopilot's own commands (offboard-loss
+        # braking), so only the station's commands count as delivered.
         switched = {t for t, _ in echo}
         for t, _ in self.planned:
             if t > tick_m:
@@ -108,6 +108,8 @@ class CommandLog:
             hit = t not in switched
             self.lost += hit
             self.streak = self.streak + 1 if hit else 0
+            if not hit:
+                self.delivered = t
         self.planned = [e for e in self.planned if e[0] > tick_m]
 
     def plan(self, tick: int, c: np.ndarray) -> None:
@@ -128,14 +130,18 @@ class LagMonitor:
     """Identify the actuator lag from the command echo and the measured acceleration (P3-SA-03 §5).
 
     Each telemetry message carries the drone's acceleration a_meas (IMU,
-    noise ``ACC_NOISE_MPS2``). The thrust part a_meas - D (w_hat - v_meas)
-    is compared with the actuator output that the echoed thrust commands
-    give through a first-order lag, for the declared tau and for each
-    alternative in ``LAG_GRID``. Over the last ``LAG_WINDOW`` samples,
-    with a free offset per axis (slow wind-estimate error), an F test asks
-    whether any alternative fits better than the declared lag. The level
-    is P_RISK split over the alternatives (Bonferroni). Without command
-    changes all candidates agree and the test cannot fire.
+    noise ``ACC_NOISE_MPS2``). The thrust part a_meas - D (w - v_meas) is
+    compared with the actuator output that the echoed thrust commands give
+    through a first-order lag, for the declared tau and for each alternative
+    in ``LAG_GRID``. The wind is not taken from the tracker: over the last
+    ``LAG_WINDOW`` samples each axis gets a free offset and a free linear
+    trend, which absorb D w for a wind that is constant or changes at a
+    constant rate over the window (review N1: the per-sample wind estimate
+    and the wind's own change entered the residual as lag would). An F test
+    asks whether any alternative fits better than the declared lag, at
+    P_RISK split over the alternatives (Bonferroni). The windows overlap,
+    so the false-alarm rate per run is higher than P_RISK per test. Without
+    command changes all candidates agree and the test cannot fire.
     """
 
     def __init__(self, tau_a: float, a0: np.ndarray, tick0: int):
@@ -143,25 +149,31 @@ class LagMonitor:
         self.e = np.exp(-H / taus)[:, None]
         self.a = np.tile(np.asarray(a0, float), (len(taus), 1))
         self.tick = tick0
-        self.res: deque[np.ndarray] = deque(maxlen=LAG_WINDOW)
-        self.limit = float(f_dist.ppf(1.0 - P_RISK / len(LAG_GRID), 1, 3 * LAG_WINDOW - 4))
+        self.res: deque[tuple[int, np.ndarray]] = deque(maxlen=LAG_WINDOW)
+        self.dof = 3 * LAG_WINDOW - 6 - 1
+        self.limit = float(f_dist.ppf(1.0 - P_RISK / len(LAG_GRID), 1, self.dof))
 
     def add(self, tick_m: int, log: CommandLog, thrust: np.ndarray) -> None:
+        """``thrust`` = a_meas + D v_meas: the thrust up to the wind's D w, which the trend absorbs."""
         if tick_m <= self.tick:
             return
         for t in range(self.tick, tick_m):
             c = log.at(t)
             self.a = c + (self.a - c) * self.e
         self.tick = tick_m
-        self.res.append(thrust - self.a)
+        self.res.append((tick_m, thrust - self.a))
 
     def alarm(self) -> bool:
         if len(self.res) < LAG_WINDOW:
             return False
-        r = np.stack(self.res, axis=1)                       # (candidates, samples, 3)
-        ssr = ((r - r.mean(axis=1, keepdims=True)) ** 2).sum(axis=(1, 2))
+        t = np.array([k for k, _ in self.res], float)
+        X = np.stack([np.ones_like(t), t - t.mean()], axis=1)            # offset and trend
+        r = np.stack([e for _, e in self.res], axis=1)                   # (candidates, samples, 3)
+        M = np.eye(len(t)) - X @ np.linalg.pinv(X)                         # residual projector
+        r = np.einsum("st,ctd->csd", M, r)
+        ssr = (r**2).sum(axis=(1, 2))
         best = float(ssr[1:].min())
-        return best > 0.0 and (float(ssr[0]) - best) / (best / (3 * LAG_WINDOW - 4)) > self.limit
+        return best > 0.0 and (float(ssr[0]) - best) / (best / self.dof) > self.limit
 
 
 class Tracker:
@@ -199,21 +211,6 @@ class Tracker:
         P = self.floored(self.P) if floor else self.P
         return x, phi @ P @ phi.T + qm, a
 
-    def predict_delay(self, tick: int, log: CommandLog, ticks_a: int) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """State the filter acts on: at ``tick`` (the next command's playout), then
-        ``ticks_a`` more ticks holding the actuator output a0 (P3-SA-03 §3.5).
-
-        With a first-order lag the true path from ``tick`` on differs from this
-        pure-delay model by at most tau_a^2 / 2 |u - a0| in position
-        (``margin.EPS_LAG_M``). Covariance floored (``floored``).
-        """
-        x, P, a0 = self.predict(tick, log, floor=True)
-        p, v = x[:3], x[3:6]
-        for _ in range(ticks_a):   # a0 held: the actuator state stays a0
-            p, v, _a = kin_step(p, v, a0, a0, x[6:], self.drag, self.tau_a)
-        phi, qm = transition(ticks_a * H, self.drag, self.q)
-        return np.concatenate([p, v, x[6:]]), phi @ P @ phi.T + qm, a0
-
     def update(self, tick_m: int, z: np.ndarray, log: CommandLog, a_meas: np.ndarray | None = None) -> float | None:
         """Fuse the measurement taken at ``tick_m``; older-than-posterior messages are dropped.
 
@@ -232,12 +229,15 @@ class Tracker:
         nis = float(nu @ np.linalg.solve(S, nu))
         self.nis.append(nis)
         if a_meas is not None:
-            self.lag.add(tick_m, log, a_meas - self.drag * (self.x[6:] - z[3:]))
+            self.lag.add(tick_m, log, a_meas + self.drag * z[3:])
         return nis
 
     def nis_alarm(self) -> bool:
         """Windowed NIS above the chi-square bound at P_RISK (6 dof per message)."""
         return len(self.nis) == NIS_WINDOW and sum(self.nis) > NIS_LIMIT
+
+    def lag_alarm(self) -> bool:
+        return self.lag.alarm()
 
     def floored(self, P: np.ndarray) -> np.ndarray:
         """No credit for averaging GNSS position: P_pp is raised to at least R_p per axis.

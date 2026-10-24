@@ -1,31 +1,33 @@
 """Adaptive separation margin and envelope monitor (P3-SA-03 §3, §5).
 
 Every term is computed each filter cycle from live quantities: the trackers'
-covariance, the predicted velocities, the disturbance estimate, the age of
-the unconfirmed commands and the actuator lag. The only fixed numbers are
-the risk level P_RISK (founder choice), the contract limits and the
-measured linearisation gap EPS_LIN_M.
+covariance, the predicted velocities, the disturbance estimate and the
+backup rollout's lines of sight. The only fixed numbers are the risk target
+per pair-hour (founder choice, ``Risk``), the contract limits, the link's
+playout delay and the measured linearisation gap EPS_LIN_M.
 
-Per pair (i, j), with t_a the time the filter acts at (``Tracker.predict_delay``)
-and T the backup's stopping time:
+Per pair (i, j), with the filter acting at the next command's playout and T
+the pair's worst-case stopping time (constant per pair, review B2):
 
-    m_ij = K sqrt(lmax(S_i(t_a+T) + S_j(t_a+T)))      estimate error, open loop over T
-         + du_i + du_j                                  one lost uplink command each
-         + EPS_LAG_M                                    lag vs equivalent delay
-         + delta_sample(V_rel)                          closest approach between samples
-         + EPS_LIN_M                                    filter gap (measured, PR #12)
+    m_ij = K1 max_k sqrt(n_k' (S_i(T) + S_j(T))_pp n_k)    estimate error along the backup's lines of sight
+         + lost_i + lost_j                                  one lost uplink command each (constant per drone)
+         + delta_sample(|v_rel| + K1 sigma_vrel)            closest approach between samples
+         + EPS_LIN_M                                        filter gap (measured, PR #12)
 
-    T = (V_c + K sigma_vc) / (a_rel - rho),  rho = K sqrt(lmax(Cov d_i(T) + Cov d_j(T)))
+    T = (2 v_max + K1 sigma_vc) / (sqrt(2) u_max) + tau_a
 
-with d = D (w - v) the drag acceleration left after the feedforward. The
-filter takes one margin, the largest over all pairs, and raises it no
-faster than the barrier can absorb (``absorbable``, P3-SA-03 §3.9).
+The actuator lag, the drag and the airframe's thrust limit are simulated
+inside the backup rollout (``rollout.py``), so no separate lag term remains
+(review B4). The filter takes one margin, the largest over all pairs, and
+raises it no faster than the barrier can absorb (``absorbable``, P3-SA-03
+§3.9).
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from functools import lru_cache
 
 import numpy as np
 from scipy.stats import chi2
@@ -37,49 +39,77 @@ from shared.contracts import (
     WORLD_XY_MIN_M,
     WORLD_Z_MAX_M,
     WORLD_Z_MIN_M,
-    DroneState,
 )
 from utm_services.safety import filter as F
 
-from research.adaptive_margin.envelope import FLEET, OFFBOARD_LOSS_S, P_RISK, TAU_ACT_S, Airframe
+from research.adaptive_margin import envelope as E
 from research.adaptive_margin.tracker import H, CommandLog, Tracker, transition
 
 U_MAX = MAX_ACCEL_COMPONENT_MPS2
-K = math.sqrt(float(chi2.ppf(1.0 - P_RISK, 3)))   # 3-D Gaussian error inside K sqrt(lmax) w.p. 1 - P_RISK
-A_REL = math.sqrt(2.0) * U_MAX   # pair braking along the line of sight away from walls (_backup_steps)
-T_MAX_S = F._backup_max_steps(F.FilterConfig()) * 0.1
+CYCLE = 10                         # ticks per 100 ms filter cycle
+CHECKS_PER_HOUR = 36000            # one margin check per pair per 100 ms cycle
+TARGETS = (1e-5, 1e-7)             # risk per pair-hour, founder decision B6 (2026-10-24)
+# Uplink playout delay: the 99.9 % quantile of the one-way latency, rounded up
+# to the tick. A command arriving later is dropped (counted as lost).
+P_TICKS = math.ceil(E.LTE_AIR_ONE_WAY_MEDIAN_S * math.exp(E.LTE_AIR_SIGMA_LN * 3.090232) / H - 1e-9)
+# Oldest telemetry the lost-command bound allows at the action time: the
+# latest message may be lost and the one before it still in flight (latency
+# up to P_TICKS), so the station knows the applied commands up to at least
+# 2 CYCLE + P_TICKS ticks before now, and acts P_TICKS after now. Older is a
+# `link` alarm.
+AGE_S = (2 * P_TICKS + 2 * CYCLE) * H
 # FilterConfig's margin bound at the default barrier offset c = 1 m/s.
 M_MAX_M = (min(WORLD_XY_MAX_M - WORLD_XY_MIN_M, WORLD_Z_MAX_M - WORLD_Z_MIN_M) / 2.0
            - ((MAX_SPEED_MPS + 1.0) ** 2 - 1.0) / (2.0 * U_MAX))
-# |u - a0| per drone: the filter's command and the actuator output both lie in
-# [-u_max, u_max] per component (feedforward changes slowly, P3-SA-03 §3.5).
-DC_MAX = 2.0 * math.sqrt(3.0) * U_MAX
-EPS_LAG_M = 0.5 * TAU_ACT_S**2 * 2.0 * DC_MAX
-# A command lost in the cycle being sent now is seen by the next cycle's
-# margin (it is then unconfirmed); until then it moves the drone by at most
-# 0.5 |dc| dt^2. Thrust lies in a horizontal disc of radius a_phys and
-# |c_z| <= a_phys, so |dc| <= 2 sqrt(2) a_phys; the fleet's largest a_phys.
-DU_NOW_M = 0.5 * 2.0 * math.sqrt(2.0) * max(a.a_phys_mps2 for a in FLEET) * 0.1**2
 EPS_LIN_M = 0.137   # measured, PR #12 ablation (docs/results/pr12-final-report.md); not proven
+
+
+@dataclass(frozen=True)
+class Risk:
+    """Risk target per pair-hour and its per-check quantiles (union bound over CHECKS_PER_HOUR)."""
+
+    target: float
+    q: float        # per-check risk
+    k1: float       # 1-D Gaussian quantile: P(|x| > k1 sigma) = q
+    k2: float       # 2-D: P(|x|_S > k2) = q
+
+
+@lru_cache(maxsize=8)
+def risk(target: float) -> Risk:
+    q = target / CHECKS_PER_HOUR
+    return Risk(target, q, math.sqrt(float(chi2.isf(q, 1))), math.sqrt(float(chi2.isf(q, 2))))
+
+
+def dc_max(af: E.Airframe) -> float:
+    """Largest change between two thrust commands: horizontal disc of radius a_phys and |c_z| <= a_phys."""
+    return 2.0 * math.sqrt(2.0) * af.a_phys_mps2
+
+
+def lost_m(af: E.Airframe, horizon_s: float) -> float:
+    """Position error at the end of the horizon if one unconfirmed command was lost (hold-last).
+
+    A lost command leaves its predecessor in force for one 100 ms segment: a
+    velocity error of at most 0.1 dc_max, held open loop from the segment's
+    start (at most AGE_S before the action time) to the end of the horizon.
+    The lag only delays the error, so the bound holds through it.
+    """
+    return 0.1 * dc_max(af) * (AGE_S + horizon_s)
+
+
+def stopping_s(rk: Risk, sigma_vel_i: float, sigma_vel_j: float) -> float:
+    """Worst-case stopping time T of a pair: closing at 2 v_max plus K1 sigma, braking at sqrt(2) u_max, plus the lag.
+
+    The cleared cruise speed (``sim.cleared_speed``) keeps the braking the
+    airframe can add to its drag at least u_max v / v_max, so sqrt(2) u_max
+    is the pair's relative braking at every speed up to v_max.
+    """
+    return ((2.0 * MAX_SPEED_MPS + rk.k1 * math.hypot(sigma_vel_i, sigma_vel_j)) / (math.sqrt(2.0) * U_MAX)
+            + E.TAU_ACT_S)
 
 
 def delta_sample(v_rel: float) -> float:
     """Separation lost between 100 ms samples at relative speed v_rel (straight-line pass)."""
     return math.hypot(SAFE_SEPARATION_M, v_rel * 0.1 / 2.0) - SAFE_SEPARATION_M
-
-
-def lost_bound(log: CommandLog, tick_a: int, horizon_s: float) -> float:
-    """Position error at t_a + horizon if one unconfirmed command was lost (hold-last).
-
-    A lost command c_k leaves c_{k-1} in force for its 100 ms segment: a
-    velocity error |c_k - c_{k-1}| 0.1 s from the segment's middle on, held
-    open loop to the end of the horizon.
-    """
-    worst = 0.0
-    for t, c in log.planned:
-        dv = float(np.linalg.norm(c - log.before(t))) * 0.1
-        worst = max(worst, dv * ((tick_a - t - 5) * H + horizon_s))
-    return worst + DU_NOW_M
 
 
 def _lmax(m: np.ndarray) -> float:
@@ -95,10 +125,15 @@ class Pred:
     tracker: Tracker
     log: CommandLog
     airframe: Airframe
+    a0: np.ndarray      # actuator output
 
     def at(self, horizon_s: float) -> np.ndarray:
         phi, qm = transition(horizon_s, self.tracker.drag, self.tracker.q)
         return phi @ self.P @ phi.T + qm
+
+    @property
+    def sigma_vel(self) -> float:
+        return math.sqrt(float(self.tracker.R[3, 3]))
 
     @property
     def drag(self) -> np.ndarray:
@@ -111,66 +146,73 @@ class Pred:
         return M @ S @ M.T
 
 
+Airframe = E.Airframe
+
+
 @dataclass
 class Result:
-    margin_m: float
+    margin_m: float                 # requested margin, clamped to M_MAX_M
+    requested_m: float = 0.0        # before the clamp
     alarms: set[str] = field(default_factory=set)
     worst_pair: tuple[str, str] | None = None
     horizon_s: float = 0.0
+    gnss_m: float = 0.0             # terms of the worst pair
+    lost_m: float = 0.0
 
 
-def margin(preds: dict[str, Pred], tick_a: int) -> Result:
-    """Margin for this cycle: the largest pair margin, clamped to FilterConfig's bound."""
-    res = Result(margin_m=EPS_LAG_M + DU_NOW_M * 2 + EPS_LIN_M)
+def margin(preds: dict[str, Pred], rk: Risk, los: dict[tuple[str, str], np.ndarray]) -> Result:
+    """Margin for this cycle: the largest pair margin, clamped to FilterConfig's bound.
+
+    ``los`` maps each pair (lower id, higher id) to the relative positions
+    r_i - r_j along its backup rollout (K, 3), NaN rows after its end.
+    """
+    res = Result(margin_m=0.0)
     ids = sorted(preds)
     for k, i in enumerate(ids):
         for j in ids[k + 1:]:
             a, b = preds[i], preds[j]
-            r = a.x[:3] - b.x[:3]
-            n = r / max(float(np.linalg.norm(r)), 1e-9)
-            dv = a.x[3:6] - b.x[3:6]
-            vc = max(0.0, -float(n @ dv))
-            svc = math.sqrt(float(n @ (a.P[3:6, 3:6] + b.P[3:6, 3:6]) @ n))
-            T = 0.0
-            for _ in range(3):   # fixed point: rho grows with T
-                rho = K * math.sqrt(_lmax(a.drag_cov(a.at(T)) + b.drag_cov(b.at(T))))
-                if rho >= A_REL:
-                    res.alarms.add("authority")
-                    T = T_MAX_S
-                    break
-                T = min((vc + K * svc) / (A_REL - rho), T_MAX_S)
-            Sa, Sb = a.at(T), b.at(T)
-            m = (K * math.sqrt(_lmax(Sa[:3, :3] + Sb[:3, :3]))
-                 + lost_bound(a.log, tick_a, T) + lost_bound(b.log, tick_a, T)
-                 + EPS_LAG_M + delta_sample(float(np.linalg.norm(dv))) + EPS_LIN_M)
-            if m > res.margin_m:
-                res.margin_m, res.worst_pair, res.horizon_s = m, (i, j), T
-    if res.margin_m > M_MAX_M:
+            T = stopping_s(rk, a.sigma_vel, b.sigma_vel)
+            S = a.at(T)[:3, :3] + b.at(T)[:3, :3]
+            r = np.vstack([a.x[:3] - b.x[:3], los[(i, j)]])
+            r = r[np.isfinite(r).all(axis=1)]
+            n = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-9)
+            gnss = rk.k1 * math.sqrt(float(np.einsum("ki,ij,kj->k", n, S, n).max()))
+            lost = lost_m(a.airframe, T) + lost_m(b.airframe, T)
+            v_rel = float(np.linalg.norm(a.x[3:6] - b.x[3:6]))
+            s_rel = math.sqrt(_lmax(a.P[3:6, 3:6] + b.P[3:6, 3:6]))
+            m = gnss + lost + delta_sample(v_rel + rk.k1 * s_rel) + EPS_LIN_M
+            if m > res.requested_m:
+                res.requested_m, res.worst_pair, res.horizon_s, res.gnss_m, res.lost_m = m, (i, j), T, gnss, lost
+    res.margin_m = min(res.requested_m, M_MAX_M)
+    if res.requested_m > M_MAX_M:
         res.alarms.add("margin")
-        res.margin_m = M_MAX_M
     return res
 
 
-def monitor(preds: dict[str, Pred], res: Result, tick_now: int) -> set[str]:
-    """Per-drone envelope checks (P3-SA-03 §5 table); adds to ``res.alarms``."""
-    cfg = F.FilterConfig(margin_m=res.margin_m)
+def monitor(preds: dict[str, Pred], res: Result, tick_a: int, rk: Risk, m_app: float) -> set[str]:
+    """Per-drone envelope checks (P3-SA-03 §5 table) at the action tick; adds to ``res.alarms``."""
+    cfg = F.FilterConfig(margin_m=m_app)
     for p in preds.values():
         S = p.at(res.horizon_s)
-        # Wind: the estimate plus K sigma must stay within the declared max wind.
-        if float(np.linalg.norm(p.x[6:8])) + K * math.sqrt(_lmax(S[6:8, 6:8])) > p.airframe.wind_max_mps:
+        # Wind: the estimate plus K2 sigma must stay within the declared max wind.
+        if float(np.linalg.norm(p.x[6:8])) + rk.k2 * math.sqrt(_lmax(S[6:8, 6:8])) > p.airframe.wind_max_mps:
             res.alarms.add("wind")
-        # Headroom: drag feedforward plus K sigma, plus u_max in any one
-        # horizontal direction, must fit the tilt authority a_phys.
-        if (float(np.linalg.norm(p.drag[:2])) + K * math.sqrt(_lmax(p.drag_cov(S)[:2, :2]))
-                > p.airframe.a_phys_mps2 - U_MAX):
+        # Headroom (safety alarm, review B3): the thrust left after the drag,
+        # with K2 sigma over the horizon, must give the braking the stopping
+        # time T assumes, u_max |v| / v_max (``stopping_s``).
+        avail = (p.airframe.a_phys_mps2 - float(np.linalg.norm(p.drag[:2]))
+                 - rk.k2 * math.sqrt(_lmax(p.drag_cov(S)[:2, :2])))
+        if avail < U_MAX * float(np.linalg.norm(p.x[3:5])) / MAX_SPEED_MPS:
             res.alarms.add("headroom")
         if p.tracker.nis_alarm():
             res.alarms.add("nis")
-        if p.tracker.lag.alarm():
+        if p.tracker.lag_alarm():
             res.alarms.add("lag")
         # Link: the drone holds the last command and brakes after OFFBOARD_LOSS_S;
-        # two lost commands in a row are 1e-6 under the 3GPP rate (single-loss bound broken).
-        if (tick_now - p.log.delivered) * H > OFFBOARD_LOSS_S or p.log.streak >= 2:
+        # two lost commands in a row (1e-6 under the 3GPP rate) break the
+        # one-loss bound, and so does telemetry older than AGE_S.
+        if ((tick_a - P_TICKS - p.log.delivered) * H > E.OFFBOARD_LOSS_S or p.log.streak >= 2
+                or (tick_a - p.log.known) * H > AGE_S):
             res.alarms.add("link")
         # Walls: a_rel = sqrt(2) u_max holds only where no world limit is active.
         low, high = F._world_accel_limits(p.x[:3], p.x[3:6], cfg)
@@ -179,27 +221,15 @@ def monitor(preds: dict[str, Pred], res: Result, tick_now: int) -> set[str]:
     return res.alarms
 
 
-def absorbable(states: list[DroneState], latch: dict, cfg: F.FilterConfig) -> float:
-    """m*: the largest margin the states still satisfy under main's backup barrier (P3-SA-03 §3.9).
+def absorbable(traj: np.ndarray) -> float:
+    """m*: the largest margin the states still satisfy under the backup barrier (P3-SA-03 §3.9).
 
-    Main's barrier for a pair is h = min |r| over the backup rollout -
+    The barrier for a pair is h = min |r| over the backup rollout -
     (SAFE_SEPARATION_M + margin), so h >= 0 for every pair exactly when the
-    margin is at most min over pairs of (min |r| - SAFE_SEPARATION_M). The
-    rollout uses the latched frames in ``latch`` (read only) and ``cfg``'s
-    wall standoff and horizon: those of the previous cycle's margin.
+    margin is at most min over pairs of (min |r| - SAFE_SEPARATION_M).
+    ``traj`` is ``rollout.pair_rollout``'s (K, M, 3), run with the latched
+    frames and the wall standoff of the margin in force.
     """
-    by_id = {s.agent_id: s for s in states}
-    pairs = [(i, j) for k, i in enumerate(sorted(by_id)) for j in sorted(by_id)[k + 1:]]
-    if not pairs:
+    if traj.shape[1] == 0:
         return math.inf
-
-    def col(attr: str, k: int) -> np.ndarray:
-        return np.array([getattr(by_id[pr[k]], attr) for pr in pairs], dtype=float)
-
-    traj, *_ = F._backup_rollout(
-        col("position_m", 0), col("position_m", 1), col("velocity_mps", 0), col("velocity_mps", 1), cfg,
-        np.array([F._latch_axis(latch, pr) for pr in pairs]).reshape(-1, 3),
-        np.array([latch[pr].up if pr in latch else 0.0 for pr in pairs]),
-    )
-    dist = np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf)
-    return float(dist.min()) - SAFE_SEPARATION_M
+    return float(np.nan_to_num(np.linalg.norm(traj, axis=2), nan=np.inf).min()) - SAFE_SEPARATION_M
