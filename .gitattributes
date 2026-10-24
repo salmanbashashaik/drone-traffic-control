@@ -1,0 +1,2 @@
+# WSL runs these scripts from the Windows checkout; CRLF breaks bash.
+*.sh text eol=lf
