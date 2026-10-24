@@ -177,6 +177,8 @@ def cleared(p0: np.ndarray, v0: np.ndarray, cond: Cond, rk: Risk, seed: int):
 def recoverable(p0: np.ndarray, v0: np.ndarray) -> float:
     """Min separation of main on ground truth, no disturbance, no delay (fuzz dynamics)."""
     from research.consistent_backup import harness
+    # Main's own backup rollout: an adaptive episode leaves its drones in CTX (re-review R1).
+    rollout.CTX.clear()
     # The harness caps speed at exactly MAX_SPEED_MPS, which rounding can put a
     # hair above the contract's limit; cap a hair below, as kin_step's callers do.
     harness.MAX_SPEED_MPS = MAX_SPEED_MPS * (1.0 - 1e-9)

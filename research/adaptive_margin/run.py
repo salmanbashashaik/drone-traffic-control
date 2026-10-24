@@ -2,6 +2,7 @@
 
     python -m research.adaptive_margin.run --shard 0 --of 2 --out results/runs.jsonl
     python -m research.adaptive_margin.run --table results/runs*.jsonl
+    python -m research.adaptive_margin.run --rerecord results/runs*.jsonl   # ideal_min_sep only
 
 Shards append one JSON line per run and skip runs already in their file, so
 an interrupted shard resumes. Every row carries the git commit it ran at
@@ -84,6 +85,29 @@ def run(shard: int, of: int, path: Path) -> None:
                      wall_s=round(time.perf_counter() - t0, 1), **rev)
             fh.write(json.dumps(r) + "\n")
             fh.flush()
+
+
+def rerecord(paths: list[Path]) -> None:
+    """Recompute ``ideal_min_sep`` of existing rows in place, stamped ``ideal_git`` (re-review R1).
+
+    Rows written before the fix ran ``sim.recoverable`` with the previous
+    adaptive episode's drones still in ``rollout.CTX``. Only this column
+    depended on it; every other field is left as written.
+    """
+    conds = {c.name: c for c in sim.NOMINAL + sim.BEYOND + sim.TAKEOFF}
+    rev = _git()
+    assert not rev["dirty"], "re-record from a clean tree"
+    rec: dict[tuple, float] = {}
+    for path in paths:
+        rows = [json.loads(x) for x in path.read_text().splitlines()]
+        for r in rows:
+            p0, v0, _ = sim.cleared(*sim.scenario(r["family"], r["seed"]), conds[r["cond"]], risk(r["target"]),
+                                    r["seed"])
+            sk = (r["family"], r["seed"], v0.tobytes())
+            if sk not in rec:
+                rec[sk] = sim.recoverable(p0, v0)
+            r["ideal_min_sep"], r["ideal_git"] = rec[sk], rev["git"]
+        path.write_text("".join(json.dumps(r) + "\n" for r in rows))
 
 
 # Reports that the margin in force is below the requested one: they say the
@@ -226,8 +250,11 @@ if __name__ == "__main__":
     ap.add_argument("--of", type=int, default=1)
     ap.add_argument("--out", type=Path)
     ap.add_argument("--table", nargs="*", type=Path)
+    ap.add_argument("--rerecord", nargs="*", type=Path)
     a = ap.parse_args()
-    if a.table:
+    if a.rerecord:
+        rerecord(a.rerecord)
+    elif a.table:
         print(table(a.table))
     else:
         run(a.shard, a.of, a.out)
