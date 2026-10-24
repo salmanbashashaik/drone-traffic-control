@@ -109,7 +109,7 @@ def main(argv: list[str] | None = None) -> int:
     if not args.no_launch:
         subprocess.run(["bash", str(SITL_SH), "start", *(f"{e},{n}" for e, n in enc.spawns_en)], check=True)
 
-    fleet = None
+    fleet = records = None
     try:
         warm_up_s = warm_up_filter(filter_config, len(enc.agent_ids)) if filter_on else 0.0
         fleet = Px4Fleet(len(enc.agent_ids))
@@ -144,24 +144,29 @@ def main(argv: list[str] | None = None) -> int:
         fleet.start_offboard()
         t0 = time.monotonic()
         records, reason = run_encounter(fleet, enc, filter_on, filter_config, args.stop_after)
-        last_send_unix = time.time() - (time.monotonic() - t0 - records[-1]["wall_time_s"]) if records else math.nan
+        last_step_unix = time.time() - (time.monotonic() - t0 - records[-1]["wall_time_s"]) if records else None
         manifest["end_reason"], manifest["encounter_s"] = reason, round(time.monotonic() - t0, 2)
-        manifest["last_step_unix"] = round(last_send_unix, 3)  # wall clock of the last step's start
+        # wall clock of the last step's start; its setpoints left loop_latency_ms later
+        manifest["last_step_unix"] = round(last_step_unix, 3) if records else None
         print(f"end: {reason} after {manifest['encounter_s']} s, {len(records)} steps")
         if reason == "stopped":
             summary = _write(out, manifest, records, SAFE_SEPARATION_M + filter_config.margin_m)
             print(json.dumps(summary, indent=2))
             manifest["exit_unix"] = round(time.time(), 3)
             (out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
-            print(f"link-loss test: last fresh setpoint at unix {last_send_unix:.3f}; bridge exits at "
+            print(f"link-loss test: last step started at unix {manifest['last_step_unix']}; bridge exits at "
                   f"{manifest['exit_unix']:.3f} without landing; PX4 failsafe in charge")
             sys.stdout.flush()
             os._exit(3)  # no cleanup, no offboard stop: the link just disappears
         fleet.land()
     except BaseException as exc:
-        if fleet is not None and any(v.telemetry.armed() for v in fleet.vehicles):
-            print(f"error during the flight ({exc!r}): landing every vehicle", file=sys.stderr)
-            fleet.land()
+        try:
+            if fleet is not None and any(v.telemetry.armed() for v in fleet.vehicles):
+                print(f"error during the flight ({exc!r}): landing every vehicle", file=sys.stderr)
+                fleet.land()
+        finally:
+            if records is not None:  # keep the evidence of an aborted run, even if landing failed
+                _write(out, manifest, records, SAFE_SEPARATION_M + filter_config.margin_m)
         raise
     finally:
         if fleet is not None:

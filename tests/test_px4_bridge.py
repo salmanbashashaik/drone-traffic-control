@@ -189,3 +189,33 @@ def test_run_encounter_stall_inside_step_aborts_before_send(no_sleep, monkeypatc
     assert fleet.sends == 6  # steps 0-2 sent, step 3 sent nothing
     assert len(records) == 3 and records[-1]["end_reason"] == reason
     assert all(i["status"] == "aborted" and i["abort_reason"] == reason for i in records[-1]["infos"].values())
+
+
+class _AgedFleet(_FakeFleet):
+    """Telemetry 400 ms old; send number `stall_on_send` (1-based) blocks for `stall_s`."""
+
+    def __init__(self, enc, clock, stall_on_send=None, stall_s=0.0):
+        super().__init__(enc)
+        self.clock, self.stall_on_send, self.stall_s = clock, stall_on_send, stall_s
+
+    def ned(self, i):
+        return *super().ned(i)[:2], 400.0
+
+    def send(self, i, vel_ned, acc_ned):
+        super().send(i, vel_ned, acc_ned)
+        if self.sends == self.stall_on_send:
+            self.clock["t"] += self.stall_s
+
+
+def test_run_encounter_stall_inside_send_aborts_before_next_send(no_sleep, monkeypatch) -> None:
+    clock = {"t": 0.0}
+    real_perf = px4_bridge.time.perf_counter
+    monkeypatch.setattr(px4_bridge.time, "perf_counter", lambda: real_perf() + clock["t"])
+    # 400 ms telemetry age alone stays under the 500 ms limit
+    _, reason = run_encounter(_AgedFleet(HEADON, clock), HEADON, filter_on=False)
+    assert reason == "completed"
+    # age + a 150 ms stall in the send to a at step 3 (send 7) stops before the send to b
+    fleet = _AgedFleet(HEADON, clock, stall_on_send=7, stall_s=0.15)
+    records, reason = run_encounter(fleet, HEADON, filter_on=False)
+    assert reason.startswith("stale_at_send: step 3") and reason.endswith("this step sent to ['a']")
+    assert fleet.sends == 7 and len(records) == 3 and records[-1]["end_reason"] == reason

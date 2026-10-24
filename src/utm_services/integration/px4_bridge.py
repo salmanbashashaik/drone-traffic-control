@@ -57,9 +57,10 @@ from utm_services.simulation.env import GOAL_RADIUS_M
 WORLD_ORIGIN_XY = (500.0, 500.0)    # our (x, y) of the Gazebo world origin
 ALT_OFFSET_M = 20.0                 # our z = SITL height above ground + ALT_OFFSET_M
 DT_S = SIMULATION_STEP_MS / 1000.0
-TELEMETRY_STALE_MS = 500.0          # state this old when read or when its setpoint would be sent, or a step
+TELEMETRY_STALE_MS = 500.0          # state this old when read or before any setpoint is sent, or a step
                                     # starting this late, stops the run and lands every vehicle
-ORIGIN_TOLERANCE_M = 0.25           # per vehicle vs vehicle 0, so a pair can be off by 0.5 m, the filter margin
+ORIGIN_TOLERANCE_M = 0.25           # per vehicle vs vehicle 0; a pair can be off by 0.5 m, the whole filter
+                                    # margin, so at the limit no margin is left
 PORT_BASE = 14540                   # PX4 instance i sends its offboard link to PORT_BASE + i
 
 
@@ -489,15 +490,17 @@ def run_encounter(fleet: Px4Fleet, enc: Encounter, filter_on: bool,
             returned = [SafeAction(agent_id=a.agent_id, safe_accel_mps2=a.proposed_accel_mps2, timestamp_ms=ts,
                                    shield_active=False, h_min_m2=h_min, qp_feasible=True, fallback_used=False)
                         for a in proposed]
-        # A stall inside the step (solve, GC, scheduling) must not send a setpoint computed on old state.
-        state_age_ms = max(ages.values()) + (time.perf_counter() - t0) * 1000.0
-        if state_age_ms > TELEMETRY_STALE_MS:
-            reason = f"stale_at_send: step {k} state {state_age_ms:.0f} ms old"
-            for info in records[-1]["infos"].values() if records else ():
-                info.update(status="aborted", abort_reason=reason)
-            return finish(reason)
         extra = {}
         for i, (s, act) in enumerate(zip(states, returned, strict=True)):
+            # A stall inside the step (solve, GC, scheduling, a blocking send) must not send a setpoint
+            # computed on old state, so the age is checked again before every send.
+            state_age_ms = max(ages.values()) + (time.perf_counter() - t0) * 1000.0
+            if state_age_ms > TELEMETRY_STALE_MS:
+                reason = (f"stale_at_send: step {k} state {state_age_ms:.0f} ms old before the setpoint of "
+                          f"{s.agent_id}; this step sent to {list(extra)}")
+                for info in records[-1]["infos"].values() if records else ():
+                    info.update(status="aborted", abort_reason=reason)
+                return finish(reason)
             vel_ned, acc_ned, capped = setpoint(s.velocity_mps, act.safe_accel_mps2)
             fleet.send(i, vel_ned, acc_ned)
             extra[s.agent_id] = {"speed_capped": capped, "v_cmd_ned_mps": [round(x, 4) for x in vel_ned],
