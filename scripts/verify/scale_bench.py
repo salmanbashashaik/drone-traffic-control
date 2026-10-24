@@ -16,7 +16,7 @@ and speed cap, one latch dict per run). Densities:
 
 The time split is exclusive (a nested timed call is not counted twice) and is measured by wrapping
 filter-module functions from outside, so older commits run unchanged (--src points at their checkout):
-QP matrix build (build_hocbf_qp_matrices, first solve), OSQP setup and update, OSQP solve (+ retries),
+QP matrix build (build_hocbf_qp_matrices, first solve), OSQP setup and update, OSQP and DAQP solve (+ retries),
 escape stage (the escape re-solve's build, setup and solve, and _escape_signs), _update_latches,
 backup rollout (_backup_constraints: rollout and row derivation), everything else (pair loop,
 diagnostics, contract objects, fallback). The wrappers cost a few microseconds per call.
@@ -147,6 +147,13 @@ class Split:
 
         real = filt.osqp
         filt.osqp = type("osqp_shim", (), {"OSQP": TimedOSQP})
+        if hasattr(filt, "daqp"):  # KKT-exact solver (perf/solver-exact): DAQP time counts as solve
+            daqp_solve = filt.daqp.solve
+
+            def timed_daqp(*a, **k):
+                split.counts["solves"] += 1
+                return split.timed(staged("solve"), daqp_solve)(*a, **k)
+            filt.daqp = type("daqp_shim", (), {"solve": staticmethod(timed_daqp)})
         filt.build_hocbf_qp_matrices = self.timed(staged("build"), filt.build_hocbf_qp_matrices)
         filt._solve_hocbf_qp = solve_hocbf(filt._solve_hocbf_qp)
         if hasattr(filt, "_update_latches"):

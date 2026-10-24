@@ -1085,6 +1085,7 @@ def build_hocbf_qp_matrices(
     escape_signs: dict[tuple[str, str], tuple[float, float]] | None = None,
     backup: tuple[np.ndarray, ...] | None = None,
     frames: dict[tuple[str, str], _PairLatch] | None = None,
+    dense: bool = False,
 ) -> tuple[sp.csc_matrix, np.ndarray, sp.csc_matrix, np.ndarray, np.ndarray, list[str]]:
     """Build OSQP matrices for the joint HOCBF optimization problem.
 
@@ -1099,6 +1100,8 @@ def build_hocbf_qp_matrices(
     uses ``_backup_constraints`` instead, with no tie-break; pass its result
     as ``backup`` to reuse it across the solves of one step. ``frames`` holds
     the latched sideways frames of pairs in conflict (``_update_latches``).
+    ``dense`` returns P and A as numpy arrays with the same entries (zeros
+    +0.0), for the small QPs DAQP solves, without the cost of scipy blocks.
 
     Returns
     -------
@@ -1122,9 +1125,7 @@ def build_hocbf_qp_matrices(
     # pairs instead of loading one pair (an approximation of max-min).
     escape_signs = escape_signs or {}
     is_escape = np.array([pair in escape_signs for pair in pairs_in_qp], dtype=bool)
-    P = sp.block_diag(
-        [sp.eye(dim) * 2.0, sp.diags(np.where(is_escape, 2.0 * _ESCAPE_WEIGHT, 0.0))], format="csc"
-    )
+    slack_hessian = np.where(is_escape, 2.0 * _ESCAPE_WEIGHT, 0.0)
     nom_stacked = np.zeros(dim, dtype=np.float64)
     for aid, idx in agent_idx.items():
         nom_stacked[3 * idx : 3 * idx + 3] = actions[aid].proposed_accel_mps2
@@ -1132,7 +1133,6 @@ def build_hocbf_qp_matrices(
 
     # Box bounds on control accelerations: -u_max <= a_{i,k} <= u_max,
     # tightened per drone by the world-box barriers (hard: no slack).
-    A_box = sp.hstack([sp.eye(dim), sp.csc_matrix((dim, n_pairs))])
     l_box, u_box = (
         limit.ravel()
         for limit in _world_accel_limits(
@@ -1175,24 +1175,37 @@ def build_hocbf_qp_matrices(
                 target[3 * idx_j : 3 * idx_j + 3] -= lateral
 
     q = np.concatenate([-2.0 * target, np.where(is_escape, 0.0, config.slack_weight)])
+    l = np.concatenate([l_cbf, l_box, np.zeros(n_pairs)])
+    u = np.concatenate([np.full(n_pairs, np.inf), u_box, np.full(n_pairs, np.inf)])
+    idx_i = np.array([agent_idx[p[0]] for p in pairs_in_qp], dtype=np.intp)
+    idx_j = np.array([agent_idx[p[1]] for p in pairs_in_qp], dtype=np.intp)
+    cols = np.concatenate([3 * idx_i[:, None] + np.arange(3), 3 * idx_j[:, None] + np.arange(3)], axis=1)
+    data = np.concatenate([coef, -coef], axis=1)
+    rows = np.repeat(np.arange(n_pairs), 6).reshape(n_pairs, 6)
+    keep = data != 0.0
 
+    if dense:
+        n = dim + n_pairs
+        slack = dim + np.arange(n_pairs)
+        P = np.zeros((n, n))
+        P[np.arange(dim), np.arange(dim)] = 2.0
+        P[slack, slack] = slack_hessian
+        A = np.zeros((2 * n_pairs + dim, n))
+        A[rows[keep], cols[keep]] = data[keep]
+        A[np.arange(n_pairs), slack] = 1.0
+        A[n_pairs + np.arange(dim), np.arange(dim)] = 1.0
+        A[n_pairs + dim + np.arange(n_pairs), slack] = 1.0
+        return P, q, A, l, u, agent_ids
+
+    P = sp.block_diag([sp.eye(dim) * 2.0, sp.diags(slack_hessian)], format="csc")
+    A_box = sp.hstack([sp.eye(dim), sp.csc_matrix((dim, n_pairs))])
     if n_pairs:
-        idx_i = np.array([agent_idx[p[0]] for p in pairs_in_qp], dtype=np.intp)
-        idx_j = np.array([agent_idx[p[1]] for p in pairs_in_qp], dtype=np.intp)
-        cols = np.concatenate([3 * idx_i[:, None] + np.arange(3), 3 * idx_j[:, None] + np.arange(3)], axis=1)
-        data = np.concatenate([coef, -coef], axis=1)
-        rows = np.repeat(np.arange(n_pairs), 6).reshape(n_pairs, 6)
-        keep = data != 0.0
         A_rows = sp.csc_matrix((data[keep], (rows[keep], cols[keep])), shape=(n_pairs, dim))
         A_cbf = sp.hstack([A_rows, sp.eye(n_pairs)])
         A_slack = sp.hstack([sp.csc_matrix((n_pairs, dim)), sp.eye(n_pairs)])
         A = sp.vstack([A_cbf, A_box, A_slack], format="csc")
-        l = np.concatenate([l_cbf, l_box, np.zeros(n_pairs)])
-        u = np.concatenate([np.full(n_pairs, np.inf), u_box, np.full(n_pairs, np.inf)])
     else:
         A = sp.csc_matrix(A_box)
-        l = l_box
-        u = u_box
 
     return P, q, A, l, u, agent_ids
 
@@ -1359,8 +1372,9 @@ def _solve_one_qp(
     frames: dict[tuple[str, str], _PairLatch] | None,
 ) -> tuple[dict[str, tuple[float, float, float]], dict[tuple[str, str], float]] | None:
     """One QP of ``build_hocbf_qp_matrices``, KKT-certified: (safe_accels, pair_slack), None on solver error."""
+    dense = 3 * len(states) + len(pairs_in_qp) <= _EXACT_MAX_VARS
     P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
-        states, actions, pairs_in_qp, config, escape_signs, backup, frames
+        states, actions, pairs_in_qp, config, escape_signs, backup, frames, dense
     )
     x = _solve_exact(P, q, A, l, u, config, bool(escape_signs))
     if x is None:
@@ -1447,18 +1461,26 @@ def _solve_daqp(
     (eps_prox < 0) solves such QPs to the exact optimum.
     """
     n = P.shape[0]
-    rows = A.tocsr()
-    single = np.flatnonzero(np.diff(rows.indptr) == 1)
-    single = single[rows.data[rows.indptr[single]] == 1.0]
-    cols = rows.indices[rows.indptr[single]]
+    if sp.issparse(A):
+        rows = A.tocsr()
+        single = np.flatnonzero(np.diff(rows.indptr) == 1)
+        single = single[rows.data[rows.indptr[single]] == 1.0]
+        cols = rows.indices[rows.indptr[single]]
+        H = P.toarray()
+    else:  # dense (``build_hocbf_qp_matrices(dense=True)``): the same rows
+        rows, H = A, P
+        single = np.flatnonzero(np.count_nonzero(A, axis=1) == 1)
+        cols = np.argmax(A[single] != 0.0, axis=1)
+        single, cols = single[A[single, cols] == 1.0], cols[A[single, cols] == 1.0]
     low, high = np.full(n, -_DAQP_INF), np.full(n, _DAQP_INF)
     np.maximum.at(low, cols, np.where(np.isfinite(l[single]), l[single], -_DAQP_INF))
     np.minimum.at(high, cols, np.where(np.isfinite(u[single]), u[single], _DAQP_INF))
     general = np.setdiff1d(np.arange(A.shape[0]), single)
     lower = np.concatenate([low, np.where(np.isfinite(l[general]), l[general], -_DAQP_INF)])
     upper = np.concatenate([high, np.where(np.isfinite(u[general]), u[general], _DAQP_INF)])
+    general_rows = rows[general].toarray() if sp.issparse(rows) else np.ascontiguousarray(rows[general])
     x, _, flag, info = daqp.solve(
-        P.toarray(), np.ascontiguousarray(q, dtype=np.float64), rows[general].toarray(), upper, lower,
+        H, np.ascontiguousarray(q, dtype=np.float64), general_rows, upper, lower,
         np.zeros(len(upper), dtype=np.int32), primal_tol=1e-10,
     )
     if flag != 1:
@@ -1476,6 +1498,8 @@ def _solve_osqp(
     escape: bool,
 ) -> tuple[np.ndarray, np.ndarray] | None:
     """OSQP at config.solver_eps: (x, y), None when it does not converge."""
+    if not sp.issparse(A):
+        P, A = sp.csc_matrix(P), sp.csc_matrix(A)
     # On non-convergence retry once without over-relaxation (alpha 1.0
     # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
     # rho alone (up to 10) and 20000 iterations did not (PR #12 review).
