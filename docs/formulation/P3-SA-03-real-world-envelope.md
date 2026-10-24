@@ -298,7 +298,8 @@ The speed cap and the thrust clip are projections onto convex sets, so they cann
 The first part is 12.12 m/s². The trim change has two parts between the predictions of consecutive cycles, which are 100 ms apart:
 
 - *Propagation.* The predicted velocity moves at the model's acceleration a_act + D (ŵ − v̂), with a_act in the thrust set (|a_act| ≤ √2 a_phys) and the airspeed at most v_max + the declared wind limit (the contract's 15 m/s plus 12 m/s; `wind` checks the second). The predicted wind has no drift. So the propagation adds at most 0.1 (√2 a_phys + D (v_max + w_lim)), 0.36–0.61 m/s² after the factor D for the fleet.
-- *Correction.* Each Kalman update moves the estimate by K ν, whose covariance is K S Kᵀ. Along v − w its size is at most K3 √λ_max(M K S Kᵀ Mᵀ), with M = [0, I, −I], K3 = √χ²₃(1 − q) for a three-dimensional vector at the per-check risk q, and at most N_UPD = 2 updates per cycle. A third update in one cycle needs a message delayed past the 99.9 % latency quantile.
+- *Correction.* Each Kalman update moves the estimate by K ν, whose covariance is K S Kᵀ. Along v − w its size is at most K3 √λ_max(M K S Kᵀ Mᵀ), with M = [0, I, −I], K3 = √χ²₃(1 − q) for a three-dimensional vector at the per-check risk q, and N_UPD = 2 updates per cycle. A third update in one cycle is rare, not impossible: the Fable re-check puts it at about 5.6 × 10⁻⁸ per drone-cycle (2 × 10⁻³ per drone-hour). The bound still covers it, because three independent corrections have a combined spread of √3 times one, and N_UPD = 2 > √3.
+- *Discovery of a lost command* (Fable re-check). When the echo reveals a lost command, the command log is rewritten and the predicted velocity jumps by up to 0.0755 dc_i, which adds 0.24–0.32 m/s² (2–2.5 %) to the trim change in that cycle. The formula does not include it. It matters only if a second loss follows within about five cycles. The exact `dc` check covers it: across 1462 lost uplink commands per target the largest ratio was 0.78.
 
 So
 
@@ -310,7 +311,9 @@ with C_i the correction covariance of drone i's latest update. To keep the term 
 
   lost_i = dc_i · g_i(AGE_S + T).
 
-At clearance with RTK this is about 3.4–4.1 m per drone in calm air (`check.check_lost_bound` recomputes the pieces), against 11.06–13.41 m before. The matrix values are in §6.
+With RTK this is about 3.5–4.2 m per drone (`check.check_pulse_gain` and `check.check_dc_bound` test the pieces), against 11.06–13.41 m before. The matrix values are in §6.
+
+**Horizon.** g is evaluated at AGE_S + T. That bounds the error over the backup only while the barrier's critical step k* lies within T (64 steps). The rollout can run 69–111 steps, and by 11.56 s g is up to 17 % larger. In the episodes the Fable re-check instrumented, k* was at most 36. The same limit applied to the earlier term (it concerns T, review B2), and it is listed in §7.
 
 ### 3.7 Sampling and linearisation
 
