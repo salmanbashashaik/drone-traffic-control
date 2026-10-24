@@ -192,7 +192,8 @@ def worker(n, density, cluster, seed):
     split.install(filt)
     times, rows, digest = [], [], hashlib.sha256()
     out = {"min_sep": float("inf"), "fallback_steps": 0, "solver_err_steps": 0, "inside_steps": 0,
-           "escape_steps": 0, "max_cluster": 0, "deadline_steps": 0, "deadline_agent_steps": 0}
+           "escape_steps": 0, "max_cluster": 0, "deadline_steps": 0, "deadline_agent_steps": 0,
+           "step_deadline": getattr(cfg, "step_deadline", None)}  # runtime default: on (None: before v1.5)
     for k in range(WARMUP + TIMED):
         ts = k * 100
         states = [DroneState(agent_id=ids[i], position_m=tuple(p[i]), velocity_mps=tuple(v[i]),
@@ -309,7 +310,9 @@ def main(argv=None):
             with open(a.json, "a") as f:
                 f.write(json.dumps(r, sort_keys=True) + "\n")
     text = (f"### {label}\n\nMachine: {machine()}. Seed {a.seed}, {WARMUP} warm-up and {TIMED} timed steps per "
-            f"config, one process per config, split in mean ms per timed step.\n\n{table(results)}\n")
+            f"config, one process per config, split in mean ms per timed step. "
+            f"FilterConfig defaults, step_deadline {sorted({str(r.get('step_deadline')) for r in results})}."
+            f"\n\n{table(results)}\n")
     print(text)
     if a.out:
         with open(a.out, "a") as f:

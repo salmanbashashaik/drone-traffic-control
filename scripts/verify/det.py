@@ -19,7 +19,8 @@ SC = {
 out = []
 for name, ds in SC.items():
     sc = ScenarioConfig(scenario_id=name, seed=0, episode_limit_steps=200, drones=ds)
-    recs = run_episode(sc, "shielded_marl", policy=compute_reference_action, policy_id="ref", keep_records=True).records
+    recs = run_episode(sc, "shielded_marl", policy=compute_reference_action, policy_id="ref", keep_records=True,
+                       filter_config=FilterConfig(step_deadline=False)).records
     h = hashlib.sha256()
     for r in recs:
         for a in sorted(r["returned_actions"], key=lambda x: x.agent_id if hasattr(x, "agent_id") else x["agent_id"]):
@@ -33,7 +34,7 @@ for seed in (3, 17, 101, 9002, 9003):
     for k in range(100):
         st = [DroneState(agent_id=ids[i], position_m=tuple(p[i]), velocity_mps=tuple(v[i]), goal_m=(900.0, 900.0, 100.0), timestamp_ms=k * 100) for i in range(n)]
         ac = [MARLAction(agent_id=i, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=k * 100) for i in ids]
-        safe, _ = apply_filter(st, ac, FilterConfig(), latch=latch)
+        safe, _ = apply_filter(st, ac, FilterConfig(step_deadline=False), latch=latch)
         a = np.array([s.safe_accel_mps2 for s in sorted(safe, key=lambda s: s.agent_id)])
         h.update(a.tobytes())
         vn = v + a * 0.1; sp = np.linalg.norm(vn, axis=1)

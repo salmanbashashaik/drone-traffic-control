@@ -168,3 +168,26 @@ Founder decision 2026-10-24 (before merging PR #26): per-cluster solve deadlines
 - **Founder decision 2026-10-24, logged by Claude (CTO session):**
   - The separation loss above in clusters of 32 and 64 drones is accepted for now, in exchange for a bounded step time. Reason: an unbounded step (55 s measured) cannot be flown, so step 3 without a deadline is not a real alternative. Revisit when strategic deconfliction (keeping clusters small) or a consistent per-drone backup (BL-03) lands.
   - Contract v1.5 (`deadline_fallback`, `deadline_fallback_agents`, `deadline_fallbacks`) is approved. `ScenarioConfig.disturbances` moves to v1.6.
+
+## 2026-10-24 (scale lane, perf/solver-exact: deadline-free verification and first-call warm-up)
+
+Found by the founder's Windows check of PR #26 (167ad90): `test_threaded_rollout_gives_the_same_closed_loop[backup]` failed under pytest-xdist with "certified solve missed its deadline at t=0 ms ... backup applied". The deadline was always on, so every bit-exact test, the fuzz and the tiers depended on machine load. Decided by Claude under the Decision authority rules (test structure; the runtime behaviour is unchanged). Numbers: `docs/results/deadline-2026-10-24.md`, "Deadline-free verification and the first-call warm-up".
+
+- **`FilterConfig.step_deadline: bool = True`.** True keeps the v1.5 behaviour, so the runtime default is unchanged. False gives the solvers no time limit, as in step 3. The deadline tier matched step 3 bit for bit, since it had no miss. No contract change: `SafeAction` and the diagnostics are the same, and a run with False never sets `deadline_fallback`.
+- **Verification runs deadline-free, so its results reproduce on any machine.**
+  - Every verify script passes `step_deadline=False`, as does `scripts/disturbance_matrix.py`: `fuzz.py` (and so the tiers and `compare_results.py`), `det.py`, `probe.py`, `squeeze2.py`, `inv2.py`, `invariance.py`, `inv_ablate.py`, `horizon.py`, `vnoise.py`, `hnoise.py`, `vsweep.py`, `vertical.py`, `floor.py` and `targeted.py`.
+  - `fuzz.py` writes `<results>.manifest.json` with the full filter config, including `step_deadline: false`; the tiers leave it next to `fuzz.jsonl`. Episode manifests already record `vars(filter_config)`.
+  - `scale_bench.py` keeps the runtime default (on): it measures the step time. Its header and JSON now record the setting.
+- **The test suite runs deadline-free by default.** `tests/conftest.py` sets the dataclass default to False in `pytest_configure`, before the test modules import. That covers the module-level configs and the `FilterConfig()` that `apply_filter` and `run_episode` build when given none. It is one switch in one place, and a new exact test cannot forget it.
+  - `tests/test_filter_deadline.py` turns the deadline on explicitly and keeps its forced misses.
+  - Its baselines (the runs it compares against bit for bit) run deadline-free.
+  - Where only the forced or simulated miss should act, it widens `_STEP_BUDGET_S`, so load cannot add a second miss.
+  - New tests check that the runtime default is on and that the warm-up runs before the first step's clock starts.
+- **Why step 0 missed: measured, first-call cost.** First `apply_filter` call of a process, the test's 24 drones (276 pairs, threaded rollout):
+  - The backup rollout took 7132 ms with a cold Numba cache (compiling the threaded kernel) and 278 ms with a warm one (cache load, thread pool start). On later steps it takes 2-4 ms.
+  - The deadline then left the solves only the 25 ms floor, and with 8 xdist workers on 4 cores, each with its own Numba pool, they missed it.
+- **Fix: `_warm_up()` once per process, before the first step's clock starts.** It runs both rollout kernels, a latch update, and a DAQP and an OSQP solve on a three-drone conflict, with its own latch. It takes 6.7 s cold and 0.3 s warm, outside any step. After it, step 0 takes 38-39 ms (rollout 3 ms).
+  - The 29 ms of `_update_latches` left in step 0 is real work, not first-call cost. 43 pairs latch at once; repeated with fresh latches in a warmed process it takes 28-42 ms, against 0.2 ms on later steps.
+  - The warm-up changes no result: the quick tier is bit-identical to the deadline tier at bd9823d.
+  - The warm-up is best effort. An error in it (a patched solver in a test, for example) is logged at debug level and left to the step, which handles solver errors.
+- **Load-induced misses remain possible at runtime.** That is the deadline's purpose, so verification does not depend on it.

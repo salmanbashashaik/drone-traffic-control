@@ -7,6 +7,9 @@ other (`fuzz`, `optbound`, `invariance`, `probe`) without extra setup. `apply_fi
 dict (UTM-077). The closed-loop scripts (`fuzz.py`, `probe.py`, `vnoise.py`, `hnoise.py`, `invariance.py`,
 `inv2.py`, `det.py`) pass one per run or trial, as the episode runner does; `inv_ablate.py none` passes a
 fresh one every step.
+Every script except `scale_bench.py` runs with `FilterConfig(step_deadline=False)`, so no result depends on
+machine load (the step deadline is wall-clock time; `tests/test_filter_deadline.py` tests it). `fuzz.py` records
+its filter config in `<results>.manifest.json`; `scale_bench.py` measures with the runtime default (on).
 
 | Script | What it checks | Command |
 | --- | --- | --- |

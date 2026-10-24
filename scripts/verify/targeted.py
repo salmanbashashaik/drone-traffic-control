@@ -16,7 +16,7 @@ def drone(aid, pos, goal, vel=(0.0, 0.0, 0.0)):
             "goal_m": tuple(map(float, goal))}
 
 
-def run(name, drones, cfg=F.FilterConfig(), steps=400):
+def run(name, drones, cfg=F.FilterConfig(step_deadline=False), steps=400):
     sc = ScenarioConfig(scenario_id=name, seed=0, episode_limit_steps=steps, drones=drones)
     s = run_episode(sc, "shielded_marl", policy=compute_reference_action, policy_id="ref",
                     filter_config=cfg, keep_records=False).summary
@@ -43,7 +43,7 @@ for n in (3, 4, 5, 6):
             u = -(p - [500, 500, 100]) / r
             ds.append(drone(f"d{i}", p, np.array([500, 500, 100]) + u * 300, u * spd))
         for bar in ("backup", "braking"):
-            run(f"ring n={n} r={r:.0f} v={spd:.0f} {bar}", ds, F.FilterConfig(barrier=bar))
+            run(f"ring n={n} r={r:.0f} v={spd:.0f} {bar}", ds, F.FilterConfig(step_deadline=False, barrier=bar))
 
 print("== C. vertical encounters (flat lateral axis branch)")
 run("vertical head-on 10 m/s", [drone("a", (500, 500, 60), (500, 500, 190), (0, 0, 10)),

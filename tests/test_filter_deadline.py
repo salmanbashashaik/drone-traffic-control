@@ -1,10 +1,16 @@
 """Bounded step time: per-cluster solve deadlines and the backup on a missed deadline (contract v1.5).
 
+The suite runs with the deadline off (tests/conftest.py); these tests turn it
+on (``DEADLINE``). Where a test compares against a run without a miss, that
+baseline runs with the deadline off, and where only the forced miss should act,
+the window is widened (``_wide_window``), so machine load cannot add a miss.
+
 Two separate encounters in one sky make two conflict clusters. A forced or
 real deadline miss on one cluster makes its drones fly their backup manoeuvre
 (flagged ``deadline_fallback``); the other cluster's solution is unchanged.
 """
 
+import dataclasses
 import itertools
 import time
 
@@ -12,6 +18,8 @@ import numpy as np
 from shared.contracts import DroneState, MARLAction
 
 from utm_services.safety import filter as F
+
+DEADLINE = F.FilterConfig(step_deadline=True)
 
 
 def _two_clusters():
@@ -30,12 +38,42 @@ def _two_clusters():
     return states, actions
 
 
-def _run(states, actions):
-    safe, diag = F.apply_filter(states, actions, F.FilterConfig(), latch={})
+def _run(states, actions, config=DEADLINE):
+    safe, diag = F.apply_filter(states, actions, config, latch={})
     return {a.agent_id: a for a in safe}, diag
 
 
+def _wide_window(monkeypatch, seconds=2.0):
+    # A long step budget, so only the forced or simulated miss can act.
+    monkeypatch.setattr(F, "_STEP_BUDGET_S", seconds)
+
+
+def test_the_runtime_default_has_the_deadline_on() -> None:
+    assert dataclasses.fields(F.FilterConfig)[-1].name == "step_deadline"
+    assert {f.name: f.default for f in dataclasses.fields(F.FilterConfig)}["step_deadline"] is True
+
+
+def test_first_call_warm_up_runs_before_the_step_clock_starts(monkeypatch) -> None:
+    # The first call of a process pays the Numba compile or cache load of the
+    # rollout kernels (seconds); that must not come out of step 0's budget.
+    events = []
+    monkeypatch.setattr(F, "_warmed_up", False)
+
+    def warm_up():
+        events.append(("warm-up", time.perf_counter()))
+        F._warmed_up = True  # restored by monkeypatch
+
+    monkeypatch.setattr(F, "_warm_up", warm_up)
+    real = F._solve_deadline
+    monkeypatch.setattr(F, "_solve_deadline", lambda start: events.append(("step start", start)) or real(start))
+    _run(*_two_clusters())
+    _run(*_two_clusters())
+    assert [e for e, _ in events] == ["warm-up", "step start", "step start"]
+    assert events[0][1] <= events[1][1]
+
+
 def test_two_clusters_are_solved_separately_most_urgent_first(monkeypatch) -> None:
+    _wide_window(monkeypatch)
     order = []
     real = F._solve_one_qp
 
@@ -52,7 +90,8 @@ def test_two_clusters_are_solved_separately_most_urgent_first(monkeypatch) -> No
 
 def test_forced_deadline_on_one_cluster_backs_it_up_and_leaves_the_other(monkeypatch) -> None:
     states, actions = _two_clusters()
-    normal, _ = _run(states, actions)
+    normal, _ = _run(states, actions, F.FilterConfig(step_deadline=False))
+    _wide_window(monkeypatch)
     real = F._solve_one_qp
 
     def a_misses(states_, *args, **kwargs):
@@ -78,9 +117,11 @@ def test_a_slow_cluster_does_not_delay_the_other(monkeypatch) -> None:
     # Cluster a (solved first, most urgent) gets a solver that runs until its
     # time limit and then gives up, as DAQP and OSQP do at their time limit.
     # Cluster b still gets its own share of the window and its normal solution,
-    # and the step ends within the solve window plus the reserve.
+    # and the step ends within the solve window plus the reserve. The budget is
+    # widened to 1 s so that b's share (about half) dwarfs machine-load jitter.
     states, actions = _two_clusters()
-    normal, _ = _run(states, actions)
+    normal, _ = _run(states, actions, F.FilterConfig(step_deadline=False))
+    _wide_window(monkeypatch, 1.0)
     real = F._solve_exact
 
     def slow_for_a(P, q, A, l, u, config, escape, deadline=None):
@@ -101,7 +142,7 @@ def test_a_slow_cluster_does_not_delay_the_other(monkeypatch) -> None:
     for aid in ("b0", "b1", "b2"):
         assert not safe[aid].deadline_fallback
         assert safe[aid].safe_accel_mps2 == normal[aid].safe_accel_mps2
-    assert elapsed < F._STEP_BUDGET_S + 0.05  # the window plus the backup and diagnostics, with CI margin
+    assert elapsed < 1.0 + 0.05  # the window plus the backup and diagnostics, with CI margin
 
 
 def test_cluster_deadlines_guarantee_each_share() -> None:
@@ -133,6 +174,6 @@ def test_episode_summary_counts_deadline_fallbacks(monkeypatch) -> None:
     cfg = ScenarioConfig(scenario_id="head-on", seed=0, episode_limit_steps=30, drones=drones)
     monkeypatch.setattr(F, "_solve_one_qp", lambda *a, **k: F._DEADLINE)
     s = run_episode(cfg, "shielded_marl", policy=compute_reference_action, policy_id="reference-standin",
-                    keep_records=False).summary
+                    filter_config=DEADLINE, keep_records=False).summary
     assert s["deadline_fallbacks"] > 0
     assert s["fallback_events"] >= s["deadline_fallbacks"]

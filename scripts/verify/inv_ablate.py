@@ -73,7 +73,7 @@ def h_filter(pi, pj, vi, vj, frames):
     return float(np.nanmin(np.linalg.norm(traj, axis=2))) - D_EFF
 
 rng = np.random.default_rng(7)
-cfg = FilterConfig()
+cfg = FilterConfig(step_deadline=False)
 stats = {"script": [0, 0, 0.0], "filter": [0, 0, 0.0]}  # tests, viol, worst
 n_inv_fail = tested_inv = 0
 worst_at = None

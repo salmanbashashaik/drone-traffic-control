@@ -138,6 +138,13 @@ class FilterConfig:
         through the same escape stage as "braking". "braking": the PR B
         braking-distance barrier plus the escape stage; kept selectable for
         one release. See docs/formulation/P2-SA-02-lateral-escape.md §4.2, §5.
+    step_deadline:
+        Bound the step time (contract v1.5, ``_solve_deadline``): each conflict
+        cluster's solve has a wall-clock deadline, and a cluster that misses it
+        flies its backup manoeuvre. True at runtime. Verification (fuzz, tiers,
+        det.py, exact comparisons) runs with False, so its results do not
+        depend on machine load and reproduce on any machine; the deadline
+        behaviour has its own tests (tests/test_filter_deadline.py).
     """
 
     gamma: float = 1.0
@@ -150,6 +157,7 @@ class FilterConfig:
     slack_weight: float = 1e4
     barrier_offset_mps: float = 1.0
     barrier: str = "backup"
+    step_deadline: bool = True
 
     def __post_init__(self) -> None:
         # gamma >= 1 and the margin_m bound keep the world-box limits from
@@ -185,6 +193,8 @@ class FilterConfig:
             raise ValueError(f"barrier_offset_mps must be positive, got {self.barrier_offset_mps}")
         if self.barrier not in ("braking", "backup"):
             raise ValueError(f"barrier must be 'braking' or 'backup', got {self.barrier!r}")
+        if not isinstance(self.step_deadline, bool):
+            raise TypeError(f"step_deadline must be a bool, got {self.step_deadline!r}")
 
 
 @dataclass
@@ -1400,6 +1410,52 @@ _POST_SOLVE_RESERVE_S = 0.010
 _MIN_SOLVE_WINDOW_S = 0.025
 
 
+_warmed_up = False
+
+
+def _warm_up() -> None:
+    """Pay the filter's first-call costs once per process, outside any step's clock.
+
+    Measured on the first ``apply_filter`` call of a process, 24 drones and
+    276 pairs (docs/results/deadline-2026-10-24.md): the backup rollout took
+    7.1 s with a cold Numba cache (compiling the threaded kernel) and 0.28 s
+    with a warm one (cache load, thread pool start), against 2-4 ms on later
+    steps. That time fell inside step 0's clock, so its solves were left only
+    ``_MIN_SOLVE_WINDOW_S``, and under load they missed it. This runs both
+    rollout kernels, a latch update and a DAQP and an OSQP solve on a small
+    three-drone conflict before the first step's clock starts, and changes no
+    result (it uses its own latch dict; the filter keeps no other state).
+    Best effort: an error here is left to the step, which handles solver errors.
+    """
+    global _warmed_up
+    _warmed_up = True
+    try:
+        _warm_up_calls()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("filter: warm-up stopped early: %s", exc)
+
+
+def _warm_up_calls() -> None:
+    config = FilterConfig(step_deadline=False)
+    p = np.array([[500.0, 500.0, 100.0], [520.0, 500.0, 100.0], [510.0, 515.0, 100.0]])
+    v = np.array([[5.0, 0.0, 0.0], [-5.0, 0.0, 0.0], [0.0, -5.0, 0.0]])
+    states = {f"w{k}": DroneState(agent_id=f"w{k}", position_m=tuple(p[k]), velocity_mps=tuple(v[k]),
+                                  goal_m=(900.0, 900.0, 100.0), timestamp_ms=0) for k in range(3)}
+    actions = {aid: MARLAction(agent_id=aid, proposed_accel_mps2=(0.0, 0.0, 0.0), timestamp_ms=0) for aid in states}
+    pairs = [("w0", "w1"), ("w0", "w2"), ("w1", "w2")]
+    frames = _update_latches(states, pairs, config, {})
+    backup = _backup_constraints(states, pairs, config, frames)
+    pair_arrays = [np.repeat(x, 2, axis=0) for x in _pair_states(states, pairs[:1])]
+    _rollout_kernel_parallel(
+        *pair_arrays, np.zeros((2, 3)), np.zeros(2), _WORLD_MIN_M, _WORLD_MAX_M, float(config.margin_m),
+        float(config.gamma), float(config.barrier_offset_mps), *_NEAR_VERTICAL_SIN, MAX_ACCEL_COMPONENT_MPS2,
+        MAX_SPEED_MPS, SIMULATION_STEP_MS / 1000.0, _backup_steps(config), _backup_max_steps(config),
+    )
+    for dense in (True, False):
+        P, q, A, l, u, _ = build_hocbf_qp_matrices(states, actions, pairs, config, None, backup, frames, dense)
+        _solve_daqp(P, q, A, l, u) if dense else _solve_osqp(P, q, A, l, u, config, False)
+
+
 def _solve_deadline(step_start: float) -> float:
     """Absolute end (``time.perf_counter()`` s) of the solve window of a step that started at ``step_start``."""
     return max(step_start + _STEP_BUDGET_S - _POST_SOLVE_RESERVE_S, time.perf_counter() + _MIN_SOLVE_WINDOW_S)
@@ -1863,6 +1919,8 @@ def apply_filter(
     TypeError
         When ``latch`` is not a dict.
     """
+    if not _warmed_up:
+        _warm_up()  # first-call costs (Numba kernels, solvers), before the step's clock starts
     step_start = time.perf_counter()
     if not isinstance(latch, dict):
         raise TypeError(f"latch must be the caller's per-episode dict (UTM-077), got {type(latch).__name__}")
@@ -1970,7 +2028,7 @@ def apply_filter(
                     "filter: backup rollout still closing at the cap at t=%d ms on %d pairs",
                     step_ts, len(diag.backup_rollout_cap_pairs),
                 )
-        deadline = _solve_deadline(step_start)
+        deadline = _solve_deadline(step_start) if config.step_deadline else None
         safe_accels, pair_slack, qp_feasible = _solve_hocbf_qp(
             state_map, action_map, pairs_in_qp, config, backup=backup, frames=frames,
             deadline=deadline, missed=missed, reuse=reuse,

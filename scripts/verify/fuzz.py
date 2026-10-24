@@ -89,7 +89,7 @@ def run(args):
     p, v = enc
     n = len(p)
     ids = [f"d{i}" for i in range(n)]
-    cfg = FilterConfig(barrier=barrier)
+    cfg = FilterConfig(step_deadline=False, barrier=barrier)  # as in the manifest (main)
     out = {"mode": mode, "seed": seed, "n": n, "fallback_steps": 0, "solver_err_steps": 0, "min_sep": 1e9,
            "exc": None, "first_inside": None, "max_rollout": 0, "cap_hits": 0}
     latch = {}  # one filter memory per run, like the episode runner
@@ -155,7 +155,7 @@ def _summary(rows, barrier):
         print(" solver-error runs:", [r["seed"] for r in ok if r["solver_err_steps"]])
         rollouts = [r["max_rollout"] for r in ok]
         print(f" backup rollout steps: max {max(rollouts)}, runs past the minimum: "
-              f"{sum(k > _backup_steps(FilterConfig()) for k in rollouts)}, cap hits: {sum(r['cap_hits'] for r in ok)}")
+              f"{sum(k > _backup_steps(FilterConfig(step_deadline=False)) for k in rollouts)}, cap hits: {sum(r['cap_hits'] for r in ok)}")
         print(" exceptions:", [(r["seed"], r["exc"]) for r in ok if r["exc"]][:20], sum(bool(r["exc"]) for r in ok))
         bad = sorted([r for r in ok if r["min_sep"] < D_EFF], key=lambda r: r["min_sep"])
         print(f" runs inside d_eff: {len(bad)}; below 5 m: {sum(r['min_sep'] < 5.0 for r in bad)}")
@@ -195,6 +195,11 @@ def main(argv=None):
         with open(path, "w") as f:
             f.writelines(json.dumps(done[t], sort_keys=True) + "\n" for t in tasks if t in done)
     todo = [t for t in tasks if t not in done]
+    # The manifest: the filter config every run uses. step_deadline is off so the results do not
+    # depend on machine load (docs/DECISIONS.md, 2026-10-24).
+    with open(os.path.splitext(path)[0] + ".manifest.json", "w") as f:
+        json.dump({"filter_config": vars(FilterConfig(step_deadline=False, barrier=a.barrier)), "steps": a.steps,
+                   "tier": a.tier, "early_stop": not a.no_early_stop}, f, sort_keys=True, indent=1)
     print(f"{path}: {len(tasks)} runs, {len(tasks) - len(todo)} already done, {a.procs} processes", flush=True)
     t0 = time.perf_counter()
     with Pool(a.procs) as pool, open(path, "a") as f:
