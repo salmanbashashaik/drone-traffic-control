@@ -174,6 +174,7 @@ def clusters(latch):
 def worker(n, density, cluster, seed):
     logging.disable(logging.CRITICAL)
     from shared.contracts import MAX_SPEED_MPS, DroneState, MARLAction
+
     import utm_services.safety.filter as filt
 
     p, v = dense_states(n, seed, cluster) if density == "dense" else city_states(n, seed)
@@ -273,16 +274,17 @@ def main(argv=None):
     src = os.path.abspath(a.src)
     env = {**os.environ, "PYTHONPATH": os.pathsep.join([os.path.join(src, "src"), src]),
            "OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"}
-    rev = subprocess.run(["git", "-C", src, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout
+    rev = subprocess.run(["git", "-C", src, "rev-parse", "--short", "HEAD"], capture_output=True, text=True, check=False).stdout
     dirty = subprocess.run(["git", "-C", src, "status", "--porcelain", "--", "src"], capture_output=True,
-                           text=True).stdout.strip()
+                           text=True, check=False).stdout.strip()
     label = a.label or rev.strip() + (" (uncommitted src changes)" if dirty else "")
     configs = [(n, d, c) for n in a.n for d in a.density for c in (a.cluster if d == "dense" else [0])]
     results = []
     for n, density, cluster in configs:
         t0 = time.perf_counter()
         proc = subprocess.run([sys.executable, os.path.abspath(__file__), "--worker", str(n), density,
-                               str(cluster), str(a.seed)], env=env, capture_output=True, text=True, cwd=src)
+                               str(cluster), str(a.seed)], env=env, capture_output=True, text=True, cwd=src,
+                              check=False)
         if proc.returncode != 0:
             print(proc.stderr, file=sys.stderr)
             return 1

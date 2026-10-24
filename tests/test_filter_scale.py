@@ -94,7 +94,7 @@ def test_sparse_build_matches_the_dense_row_build(barrier) -> None:
         frames = F._update_latches(states, pairs, config, {})
         escape = ({pair: (float(rng.choice([-1, 0, 1])), float(rng.choice([-1, 0, 1]))) for pair in pairs
                    if rng.random() < 0.3} if trial % 2 else None)
-        P, q, A, l, u, ids = F.build_hocbf_qp_matrices(states, actions, pairs, config, escape, None, frames)
+        _, q, A, l, u, _ = F.build_hocbf_qp_matrices(states, actions, pairs, config, escape, None, frames)
         rows, lower, target = _dense_row_build(states, actions, pairs, config, escape, None, frames)
         m, dim = len(pairs), 3 * n
         top = A[:m, :dim].tocsc()
