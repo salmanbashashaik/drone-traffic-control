@@ -76,7 +76,7 @@ Current = keep true. Historical = a record of a past state, do not update, do no
 | `docs/formulation/P0-SA-01-formulation.md`, `P1-SA-01-method.md`, `P1-SA-01-reward.md` | partly historical: the original HOCBF design was replaced; use for notation and assumptions |
 | `docs/simulation/SIMULATOR_NOTE.md` | current (tiers, seeding) |
 | `docs/training/QUICKSTART.md`, `MARL_TRAINING.md` | current |
-| `docs/results/` | historical records of dated runs; `pr12-final-report.md` and `pr12-b1-2026-10-23.jsonl` are the reference baseline for the safety filter |
+| `docs/results/` | historical records of dated runs; `solver-exact-2026-10-24.jsonl` is the per-seed reference of the safety filter (KKT-exact QP, founder-accepted 2026-10-24; `solver-exact-2026-10-24.md` has its better/worse against `pr12-b1-2026-10-23.jsonl`, the reference before) |
 | `docs/results/reviews/` | historical adversarial reviews |
 | `docs/HANDOVER.md` | historical (2026-10-21 snapshot of main before Sprint 1); its section 9 open questions are still useful |
 | `docs/workstreams/*.md` | historical owner briefs |

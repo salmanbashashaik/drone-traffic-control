@@ -18,7 +18,7 @@ import sys
 
 D_EFF = 5.5
 REFERENCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "results",
-                         "pr12-b1-2026-10-23.jsonl")
+                         "solver-exact-2026-10-24.jsonl")
 
 
 def load(path):

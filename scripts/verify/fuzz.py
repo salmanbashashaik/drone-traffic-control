@@ -5,7 +5,7 @@ Dynamics replicate DroneEnv._advance (ZOH, speed cap, trapezoid).
 
 Results are collected in the parent process: one line per run in seed order, and one JSONL row per
 run appended to the output file as it arrives, so a killed run resumes where it stopped. Rows have
-the schema of docs/results/pr12-b1-2026-10-23.jsonl; check them with compare_results.py.
+the schema of docs/results/solver-exact-2026-10-24.jsonl (the reference since 2026-10-24); check them with compare_results.py.
 """
 import argparse
 import json
@@ -23,7 +23,7 @@ from utm_services.safety.filter import FilterConfig, _backup_steps, _world_accel
 logging.disable(logging.CRITICAL)
 DT, D_EFF = 0.1, 5.5
 REFERENCE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "docs", "results",
-                         "pr12-b1-2026-10-23.jsonl")
+                         "solver-exact-2026-10-24.jsonl")
 
 
 def encounter(seed, hard=None):
