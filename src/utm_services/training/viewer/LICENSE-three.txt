@@ -1,0 +1,29 @@
+three.js r128 (three.min.js, OrbitControls.js) is vendored unmodified for the offline 3D replay viewer.
+
+Source and integrity (checked by re-downloading and comparing hashes on 2026-10-24):
+  https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js                         sha256 9274bbcec8d96168626c732b5d31c775aa8cfb7eaa0599bec0c175908a2c1ce2
+  https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js      sha256 02bb4ade710f3e607329e37a21f098bc3ac70eb6e33daf8a65e79f4db785e7b2
+The generated replay3d.html embeds both files, so it carries three.js's own licence header (SPDX: MIT) and this
+licence text ships with the package (viewer/LICENSE-three.txt).
+
+The MIT License
+
+Copyright © 2010-2021 three.js authors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.

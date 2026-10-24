@@ -1,0 +1,26 @@
+{
+  "artifact_id": "marl-mappo-s42-it220-f93dca3638",
+  "weights_sha256": "f93dca363888babc4b26f121b290c364832a5a5ea5ae12ba6f9777b7d667f136",
+  "suites": [
+    "six"
+  ],
+  "episodes": 50,
+  "seed_base": null,
+  "profile": "ideal",
+  "filter_config": {
+    "gamma": 1.0,
+    "margin_m": 0.5,
+    "tie_break_mps2": 1.0,
+    "lag_s": 0.0,
+    "range_gate_m": null,
+    "solver_eps": 1e-05,
+    "solver_max_iter": 4000,
+    "slack_weight": 10000.0,
+    "barrier_offset_mps": 1.0,
+    "barrier": "backup"
+  },
+  "git": {
+    "commit": "1b650e7621f727eb3f8622912e4e28118e46c566",
+    "src_dirty": false
+  }
+}

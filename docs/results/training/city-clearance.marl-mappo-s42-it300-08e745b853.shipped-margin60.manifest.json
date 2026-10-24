@@ -1,0 +1,14 @@
+{
+  "artifact_id": "marl-mappo-s42-it300-08e745b853",
+  "weights_sha256": "08e745b853386b44ea6cdaf4880d35c8f592dd95e0f6c9d9305f33824cd49ede",
+  "suite": "shipped",
+  "episodes": 50,
+  "city_seeds": 20,
+  "seed_base": 12000000,
+  "buildings": 26,
+  "margin_m": 60.0,
+  "code_git": {
+    "commit": "74445ddd113218a588f2c0bc802e90b3aa370445",
+    "src_dirty": true
+  }
+}
