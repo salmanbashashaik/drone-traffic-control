@@ -87,7 +87,7 @@ Forms: `swap:<seed>` (repeatable), `swap:random` (new random scenario every run,
 
 ### Compare with and without the safety filter
 
-Run the same scenario with `--variant unshielded_marl` (learned policy alone) and `--variant shielded_marl` (policy plus the HOCBF safety filter), then open both pages:
+Run the same scenario with `--variant unshielded_marl` (learned policy alone) and `--variant shielded_marl` (policy plus the backup-set barrier safety filter), then open both pages:
 
 ```bash
 utm-replay heldout:18000044:6 --artifact artifacts/policies/marl-mappo-s42-it300-08e745b853 \

@@ -70,7 +70,7 @@ Both: network 18-256-256-3 tanh, training seed 42, 2–4 agents per episode, beh
 
 ## Results
 
-Variants on identical scenarios: `reference` (PD controller, no filter), `unshielded_marl` (learned policy, no filter), `shielded_marl` (learned policy + HOCBF filter, default `FilterConfig`), `shielded_reference` (reference + filter, a baseline for context). "Viol." is separation-violation pair-steps below 5 m (`INTERFACES.md`). All runs completed 0 aborts, 0 infeasible steps and 0 fallbacks unless a column says otherwise.
+Variants on identical scenarios: `reference` (PD controller, no filter), `unshielded_marl` (learned policy, no filter), `shielded_marl` (learned policy + backup-set barrier filter, default `FilterConfig`), `shielded_reference` (reference + filter, a baseline for context). "Viol." is separation-violation pair-steps below 5 m (`INTERFACES.md`). All runs completed 0 aborts, 0 infeasible steps and 0 fallbacks unless a column says otherwise.
 
 ### Fresh seeds (12,000,000+)
 
