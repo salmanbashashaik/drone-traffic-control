@@ -141,3 +141,27 @@ Decided by Claude under the founder's step-3 instruction (per-cluster QPs and th
 - **Out of scope, open point for the founder:** a single converging cluster of 64 drones takes p95 6.4 s (worst step 55 s), against 2.0 s on main, although it no longer falls back (24 → 0) and keeps more separation (0.91 → 3.74 m). A solve-time cap with a defined fallback would be a safety-behaviour change, so it was not built.
 - **INTERFACES.md wording, not a contract change:** the fallback trigger now reads "no KKT-certified solution from DAQP or OSQP, or an exception". The behaviour is still fallback on solver error only, and no field changed.
 - **`ruff` SIM102** on the nested range-gate `if` in `apply_filter` is left as is, so the full tier covers the final filter code; ruff is not run in CI.
+
+## 2026-10-24 (scale lane, perf/solver-exact: bounded step time, contract v1.5)
+
+Founder decision 2026-10-24 (before merging PR #26): per-cluster solve deadlines from the 100 ms step, most urgent first, backup on a missed deadline, one cluster never delays another. The choices below were made by Claude under it. Numbers: `docs/results/deadline-2026-10-24.md`.
+
+- **Derivation of the deadline.**
+  - The work after the solves gets a 10 ms reserve (measured at most 3.4 ms at N = 64, 9.6 ms at N = 128).
+  - The solves of both stages get what is left of the 100 ms, at least 25 ms (above the 99.9th percentile of a whole solve stage at N = 64, 16.5 ms).
+  - Within that window each cluster, in urgency order (smallest backup margin d* - d_eff first), has a guaranteed share proportional to its QP size. It may use what earlier clusters leave, never a later cluster's share (`_cluster_deadlines`).
+  - DAQP and OSQP get the time left as their own time limit.
+- **Backup on a miss:** each drone of the cluster flies `_evasive_accel` against its most critical neighbour in the cluster, the manoeuvre the backup rows simulate. Those drones get `qp_feasible=false`, `fallback_used=true` and the new `deadline_fallback=true`. A miss is not a solver error. A miss in the escape stage keeps the cluster's first solve.
+- **Contract v1.5 (founder-directed):** `SafeAction.deadline_fallback` (default false; requires `fallback_used`), `FilterDiagnostics.deadline_fallback_agents`, and episode summary `deadline_fallbacks`, also counted in `fallback_events`. The planned v1.5 `ScenarioConfig.disturbances` item stays planned.
+- **Escape stage reuses unchanged first-stage solutions:** bit-identical, since the same QP goes to the same deterministic solvers. It saves the escape stage's time.
+- **`_backup_constraints` returns the backup margin as a fifth value**, for the urgency order. `test_filter_backup_horizon.py` unpacks five values, and the solver-wrapping tests in `test_filter_safety_core.py` pass `**kwargs` through. Their expectations are unchanged.
+- **Results:**
+  - Full tier bit-identical to the step-3 tier: no deadline hit in fuzz or in any verify script.
+  - N = 64 (groups of 2-16, city) has no deadline hit; p95 62 ms dense (groups of 8) and city.
+  - The single 64-drone cluster's worst step is 134 ms instead of 55 s.
+- **Safety cost, founder decision needed:**
+  - Groups of 32: min sep 5.591 m → 3.232 m, 21 steps inside d_eff (12 deadline steps).
+  - One cluster of 64: 3.738 m → 1.264 m, 29 steps inside d_eff (19 deadline steps).
+  - Both are against step 3 without a deadline, and both are still better than main (1.753 m and 0.909 m). The cause is that the pairwise backup (BL-02, BL-03) is weak in large clusters.
+  - N = 128 misses on some steps (13 dense, 5 city), with min sep 5.612 m and 8.019 m.
+  - Options, not built: warm-start large-cluster OSQP from the previous step, a faster certified path for large clusters, a consistent per-drone backup (BL-03).
