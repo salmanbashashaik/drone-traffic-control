@@ -54,6 +54,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import osqp
 import scipy.sparse as sp
+from numba import njit
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
     MAX_SPEED_MPS,
@@ -773,44 +774,170 @@ def _backup_rollout(
     while the pair still closes), the steps each pair flew (M,) and whether
     it was still closing at the cap (M,).
     """
-    dt = SIMULATION_STEP_MS / 1000.0
+    count = len(p_i)
     min_steps = _backup_steps(config)
     steps = max(min_steps, _backup_max_steps(config))
-    used = np.full(len(p_i), steps)
-    still = np.ones(len(p_i), dtype=bool)
-    closing = np.zeros(len(p_i))
+    axis = np.zeros((count, 3)) if axis is None else axis
+    up_latched = np.zeros(count) if up_latched is None else up_latched
+    arrays = [np.ascontiguousarray(x, dtype=np.float64) for x in (p_i, p_j, v_i, v_j, axis, up_latched)]
+    # The kernel neither checks bounds nor propagates NaN as numpy does: reject
+    # what the numpy rollout would have raised on or turned into NaN.
+    if any(x.shape != (count, 3) for x in arrays[:5]) or arrays[5].shape != (count,):
+        raise ValueError("backup rollout needs (M, 3) states and axes and (M,) up_latched")
+    if not all(np.isfinite(x).all() for x in arrays):
+        raise ValueError("backup rollout inputs must be finite")
+    traj, a_first, closing, used, still = _rollout_kernel(
+        *arrays,
+        _WORLD_MIN_M, _WORLD_MAX_M, float(config.margin_m), float(config.gamma),
+        float(config.barrier_offset_mps), *_NEAR_VERTICAL_SIN, MAX_ACCEL_COMPONENT_MPS2,
+        MAX_SPEED_MPS, SIMULATION_STEP_MS / 1000.0, min_steps, steps,
+    )
+    return traj[: used.max(initial=0)], a_first, closing, used.astype(np.int_), still
 
-    def cap(v: np.ndarray) -> np.ndarray:
-        speed = np.linalg.norm(v, axis=1, keepdims=True)
-        return v * np.minimum(1.0, MAX_SPEED_MPS / np.maximum(speed, 1e-9))
 
-    traj = np.full((steps, len(p_i), 3), np.nan)
-    for k in range(steps):
-        r = p_i - p_j
-        n = r / np.maximum(np.linalg.norm(r, axis=1, keepdims=True), 1e-9)
-        # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
-        up = np.where(np.abs(n[:, 2]) > 1e-3, np.sign(n[:, 2]), 1.0)
-        if up_latched is not None:
-            up = np.where(up_latched != 0.0, up_latched, up)
-        a_i = _evasive_direction(n, up, _world_accel_limits(p_i, v_i, config), axis)
-        a_j = _evasive_direction(-n, -up, _world_accel_limits(p_j, v_j, config), axis)
-        if k == 0:
-            a_first = a_i - a_j
-        v_i_next, v_j_next = cap(v_i + a_i * dt), cap(v_j + a_j * dt)
-        p_i = p_i + 0.5 * (v_i + v_i_next) * dt
-        p_j = p_j + 0.5 * (v_j + v_j_next) * dt
-        v_i, v_j = v_i_next, v_j_next
-        r = p_i - p_j
-        traj[k, still] = r[still]
-        rate = -np.einsum("ij,ij->i", r, v_i - v_j) / np.maximum(np.linalg.norm(r, axis=1), 1e-9)
-        closing[still] = rate[still]
-        if k + 1 >= min_steps:
-            done = still & (closing <= 0.0)
-            used[done] = k + 1
-            still &= ~done
-            if not still.any():
+# Numba kernel of ``_backup_rollout``, one pair at a time (89 % of fuzz time
+# in numpy, docs/results/profile-2026-10-23.md). It repeats the floating-point
+# operations of the numpy helpers it inlines (_lateral with the default
+# plumb_sin, _frame_lateral, _world_accel_limits, _evasive_direction) in the
+# same order: norms and sums add x, y, z left to right, the einsum of the
+# closing rate adds x, z, then y, as numpy does; no fastmath. On finite float64
+# inputs its results match the numpy rollout bit for bit
+# (tests/test_filter_rollout_kernel.py), and those helpers stay the reference
+# for every other caller. _max and _min do not propagate NaN, so the wrapper
+# rejects non-finite inputs.
+
+
+@njit(cache=True)
+def _max(a, b):
+    return a if a >= b else b  # noqa: FURB136 (np.maximum, spelled out)
+
+
+@njit(cache=True)
+def _min(a, b):
+    return a if a <= b else b  # noqa: FURB136 (np.minimum, spelled out)
+
+
+@njit(cache=True)
+def _norm3(x0, x1, x2):
+    return math.sqrt(x0 * x0 + x1 * x1 + x2 * x2)
+
+
+@njit(cache=True)
+def _lateral_kernel(n0, n1, n2, lo, hi):
+    horizontal = math.sqrt(n0 * n0 + n1 * n1)
+    scale = _max(horizontal, 1e-12)
+    t0 = (0.0 * n2 - 1.0 * n1) / scale
+    t1 = (1.0 * n0 - 0.0 * n2) / scale
+    t2 = (0.0 * n1 - 0.0 * n0) / scale
+    if horizontal < 1e-9:  # min(max(plumb_sin, 1e-9), lo) at the default plumb_sin
+        o0, o1, o2 = (1.0 if n2 >= 0.0 else -1.0), 0.0, 0.0
+    else:
+        o0, o1, o2 = n0 * 1.0, n1 * 1.0, n2 * 0.0
+    dot = o0 * n0 + o1 * n1 + o2 * n2
+    o0, o1, o2 = o0 - dot * n0, o1 - dot * n1, o2 - dot * n2
+    scale = _max(_norm3(o0, o1, o2), 1e-12)
+    o0, o1, o2 = o0 / scale, o1 / scale, o2 / scale
+    weight = _min(_max((horizontal - lo) / (hi - lo), 0.0), 1.0)
+    rest = 1.0 - weight
+    l0, l1, l2 = weight * t0 + rest * o0, weight * t1 + rest * o1, weight * t2 + rest * o2
+    scale = _norm3(l0, l1, l2)
+    return l0 / scale, l1 / scale, l2 / scale
+
+
+@njit(cache=True)
+def _frame_lateral_kernel(n0, n1, n2, w0, w1, w2, lo, hi):
+    c0, c1, c2 = w1 * n2 - w2 * n1, w2 * n0 - w0 * n2, w0 * n1 - w1 * n0
+    size = _norm3(c0, c1, c2)
+    if size > 0.5:
+        scale = _max(size, 1e-12)
+        return c0 / scale, c1 / scale, c2 / scale
+    return _lateral_kernel(n0, n1, n2, lo, hi)
+
+
+@njit(cache=True)
+def _min_away_kernel(s, w, gamma, c, u_max):
+    root = math.sqrt(2.0 * u_max * _max(s, 0.0) + c * c)
+    if s >= 0.0:
+        b, slope = root - c, u_max / root
+    else:
+        b, slope = u_max * s / c, u_max / c
+    return _min(_max(-gamma * (b - w) + slope * w, -u_max), u_max)
+
+
+@njit(cache=True)
+def _limits_kernel(p, v, world_min, world_max, margin, gamma, c, u_max, low, high):
+    for d in range(3):
+        below = _min_away_kernel(p[d] - world_min[d] - margin, -v[d], gamma, c, u_max)
+        above = -_min_away_kernel(world_max[d] - margin - p[d], v[d], gamma, c, u_max)
+        nearer_min = (p[d] - world_min[d]) <= (world_max[d] - p[d])
+        crossed = below > above
+        low[d] = above if crossed and not nearer_min else below
+        high[d] = below if crossed and nearer_min else above
+
+
+@njit(cache=True)
+def _evasive_kernel(n, up, low, high, w, lo, hi, u_max, out):
+    l0, l1, l2 = _frame_lateral_kernel(n[0], n[1], n[2], w[0], w[1], w[2], lo, hi)
+    d0, d1, d2 = n[0] + l0, n[1] + l1, n[2] + l2 + up
+    scale = u_max / _max(_max(abs(d0), abs(d1)), abs(d2))
+    out[0] = _min(_max(d0 * scale, low[0]), high[0])
+    out[1] = _min(_max(d1 * scale, low[1]), high[1])
+    out[2] = _min(_max(d2 * scale, low[2]), high[2])
+
+
+@njit(cache=True)
+def _rollout_kernel(
+    p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+    lo, hi, u_max, v_max, dt, min_steps, steps,
+):
+    count = p_i.shape[0]
+    traj = np.full((steps, count, 3), np.nan)
+    a_first = np.zeros((count, 3))
+    closing = np.zeros(count)
+    used = np.full(count, steps)
+    still = np.ones(count, dtype=np.bool_)
+    pi, pj, vi, vj = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    wi, wj, n, m = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    ai, aj = np.empty(3), np.empty(3)
+    low_i, high_i, low_j, high_j = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    for q in range(count):
+        pi[:], pj[:], vi[:], vj[:] = p_i[q], p_j[q], v_i[q], v_j[q]
+        for k in range(steps):
+            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+            size = _max(_norm3(r0, r1, r2), 1e-9)
+            n[0], n[1], n[2] = r0 / size, r1 / size, r2 / size
+            m[0], m[1], m[2] = -n[0], -n[1], -n[2]
+            # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
+            up = (1.0 if n[2] > 0.0 else -1.0) if abs(n[2]) > 1e-3 else 1.0
+            if up_latched[q] != 0.0:
+                up = up_latched[q]
+            _limits_kernel(pi, vi, world_min, world_max, margin, gamma, c, u_max, low_i, high_i)
+            _limits_kernel(pj, vj, world_min, world_max, margin, gamma, c, u_max, low_j, high_j)
+            _evasive_kernel(n, up, low_i, high_i, axis[q], lo, hi, u_max, ai)
+            _evasive_kernel(m, -up, low_j, high_j, axis[q], lo, hi, u_max, aj)
+            if k == 0:
+                for d in range(3):
+                    a_first[q, d] = ai[d] - aj[d]
+            for d in range(3):
+                wi[d] = vi[d] + ai[d] * dt
+                wj[d] = vj[d] + aj[d] * dt
+            cap_i = _min(1.0, v_max / _max(_norm3(wi[0], wi[1], wi[2]), 1e-9))
+            cap_j = _min(1.0, v_max / _max(_norm3(wj[0], wj[1], wj[2]), 1e-9))
+            for d in range(3):
+                wi[d] = wi[d] * cap_i
+                wj[d] = wj[d] * cap_j
+                pi[d] = pi[d] + 0.5 * (vi[d] + wi[d]) * dt
+                pj[d] = pj[d] + 0.5 * (vj[d] + wj[d]) * dt
+                vi[d], vj[d] = wi[d], wj[d]
+            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+            traj[k, q, 0], traj[k, q, 1], traj[k, q, 2] = r0, r1, r2
+            u0, u1, u2 = vi[0] - vj[0], vi[1] - vj[1], vi[2] - vj[2]
+            closing[q] = -(r0 * u0 + r2 * u2 + r1 * u1) / _max(_norm3(r0, r1, r2), 1e-9)
+            if k + 1 >= min_steps and closing[q] <= 0.0:
+                used[q] = k + 1
+                still[q] = False
                 break
-    return traj[: used.max(initial=0)], a_first, closing, used, still
+    return traj, a_first, closing, used, still
 
 
 def _backup_constraints(
