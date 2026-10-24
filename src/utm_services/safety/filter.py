@@ -54,7 +54,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import osqp
 import scipy.sparse as sp
-from numba import njit
+from numba import njit, prange
 from shared.contracts import (
     MAX_ACCEL_COMPONENT_MPS2,
     MAX_SPEED_MPS,
@@ -839,7 +839,8 @@ def _backup_rollout(
         raise ValueError("backup rollout needs (M, 3) states and axes and (M,) up_latched")
     if not all(np.isfinite(x).all() for x in arrays):
         raise ValueError("backup rollout inputs must be finite")
-    traj, a_first, closing, used, still = _rollout_kernel(
+    kernel = _rollout_kernel_parallel if count >= _PARALLEL_MIN_PAIRS else _rollout_kernel
+    traj, a_first, closing, used, still = kernel(
         *arrays,
         _WORLD_MIN_M, _WORLD_MAX_M, float(config.margin_m), float(config.gamma),
         float(config.barrier_offset_mps), *_NEAR_VERTICAL_SIN, MAX_ACCEL_COMPONENT_MPS2,
@@ -939,58 +940,85 @@ def _evasive_kernel(n, up, low, high, w, lo, hi, u_max, out):
 
 
 @njit(cache=True)
+def _rollout_pair(
+    q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+    lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still,
+):
+    pi, pj, vi, vj = p_i[q].copy(), p_j[q].copy(), v_i[q].copy(), v_j[q].copy()
+    wi, wj, n, m = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    ai, aj = np.empty(3), np.empty(3)
+    low_i, high_i, low_j, high_j = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    for k in range(steps):
+        r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+        size = _max(_norm3(r0, r1, r2), 1e-9)
+        n[0], n[1], n[2] = r0 / size, r1 / size, r2 / size
+        m[0], m[1], m[2] = -n[0], -n[1], -n[2]
+        # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
+        up = (1.0 if n[2] > 0.0 else -1.0) if abs(n[2]) > 1e-3 else 1.0
+        if up_latched[q] != 0.0:
+            up = up_latched[q]
+        _limits_kernel(pi, vi, world_min, world_max, margin, gamma, c, u_max, low_i, high_i)
+        _limits_kernel(pj, vj, world_min, world_max, margin, gamma, c, u_max, low_j, high_j)
+        _evasive_kernel(n, up, low_i, high_i, axis[q], lo, hi, u_max, ai)
+        _evasive_kernel(m, -up, low_j, high_j, axis[q], lo, hi, u_max, aj)
+        if k == 0:
+            for d in range(3):
+                a_first[q, d] = ai[d] - aj[d]
+        for d in range(3):
+            wi[d] = vi[d] + ai[d] * dt
+            wj[d] = vj[d] + aj[d] * dt
+        cap_i = _min(1.0, v_max / _max(_norm3(wi[0], wi[1], wi[2]), 1e-9))
+        cap_j = _min(1.0, v_max / _max(_norm3(wj[0], wj[1], wj[2]), 1e-9))
+        for d in range(3):
+            wi[d] = wi[d] * cap_i
+            wj[d] = wj[d] * cap_j
+            pi[d] = pi[d] + 0.5 * (vi[d] + wi[d]) * dt
+            pj[d] = pj[d] + 0.5 * (vj[d] + wj[d]) * dt
+            vi[d], vj[d] = wi[d], wj[d]
+        r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
+        traj[k, q, 0], traj[k, q, 1], traj[k, q, 2] = r0, r1, r2
+        u0, u1, u2 = vi[0] - vj[0], vi[1] - vj[1], vi[2] - vj[2]
+        closing[q] = -(r0 * u0 + r2 * u2 + r1 * u1) / _max(_norm3(r0, r1, r2), 1e-9)
+        if k + 1 >= min_steps and closing[q] <= 0.0:
+            used[q] = k + 1
+            still[q] = False
+            break
+
+
+@njit(cache=True)
 def _rollout_kernel(
     p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
     lo, hi, u_max, v_max, dt, min_steps, steps,
 ):
     count = p_i.shape[0]
     traj = np.full((steps, count, 3), np.nan)
-    a_first = np.zeros((count, 3))
-    closing = np.zeros(count)
-    used = np.full(count, steps)
-    still = np.ones(count, dtype=np.bool_)
-    pi, pj, vi, vj = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
-    wi, wj, n, m = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
-    ai, aj = np.empty(3), np.empty(3)
-    low_i, high_i, low_j, high_j = np.empty(3), np.empty(3), np.empty(3), np.empty(3)
+    a_first, closing = np.zeros((count, 3)), np.zeros(count)
+    used, still = np.full(count, steps), np.ones(count, dtype=np.bool_)
     for q in range(count):
-        pi[:], pj[:], vi[:], vj[:] = p_i[q], p_j[q], v_i[q], v_j[q]
-        for k in range(steps):
-            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
-            size = _max(_norm3(r0, r1, r2), 1e-9)
-            n[0], n[1], n[2] = r0 / size, r1 / size, r2 / size
-            m[0], m[1], m[2] = -n[0], -n[1], -n[2]
-            # Pairs are (lower id, higher id); on equal altitude the lower id climbs.
-            up = (1.0 if n[2] > 0.0 else -1.0) if abs(n[2]) > 1e-3 else 1.0
-            if up_latched[q] != 0.0:
-                up = up_latched[q]
-            _limits_kernel(pi, vi, world_min, world_max, margin, gamma, c, u_max, low_i, high_i)
-            _limits_kernel(pj, vj, world_min, world_max, margin, gamma, c, u_max, low_j, high_j)
-            _evasive_kernel(n, up, low_i, high_i, axis[q], lo, hi, u_max, ai)
-            _evasive_kernel(m, -up, low_j, high_j, axis[q], lo, hi, u_max, aj)
-            if k == 0:
-                for d in range(3):
-                    a_first[q, d] = ai[d] - aj[d]
-            for d in range(3):
-                wi[d] = vi[d] + ai[d] * dt
-                wj[d] = vj[d] + aj[d] * dt
-            cap_i = _min(1.0, v_max / _max(_norm3(wi[0], wi[1], wi[2]), 1e-9))
-            cap_j = _min(1.0, v_max / _max(_norm3(wj[0], wj[1], wj[2]), 1e-9))
-            for d in range(3):
-                wi[d] = wi[d] * cap_i
-                wj[d] = wj[d] * cap_j
-                pi[d] = pi[d] + 0.5 * (vi[d] + wi[d]) * dt
-                pj[d] = pj[d] + 0.5 * (vj[d] + wj[d]) * dt
-                vi[d], vj[d] = wi[d], wj[d]
-            r0, r1, r2 = pi[0] - pj[0], pi[1] - pj[1], pi[2] - pj[2]
-            traj[k, q, 0], traj[k, q, 1], traj[k, q, 2] = r0, r1, r2
-            u0, u1, u2 = vi[0] - vj[0], vi[1] - vj[1], vi[2] - vj[2]
-            closing[q] = -(r0 * u0 + r2 * u2 + r1 * u1) / _max(_norm3(r0, r1, r2), 1e-9)
-            if k + 1 >= min_steps and closing[q] <= 0.0:
-                used[q] = k + 1
-                still[q] = False
-                break
+        _rollout_pair(q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+                      lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still)
     return traj, a_first, closing, used, still
+
+
+# The same kernel with pairs spread over threads. Pairs are independent and each
+# writes only its own slots, so the results are those of _rollout_kernel bit for
+# bit; used from _PARALLEL_MIN_PAIRS pairs, below which threading costs more.
+@njit(cache=True, parallel=True)
+def _rollout_kernel_parallel(
+    p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+    lo, hi, u_max, v_max, dt, min_steps, steps,
+):
+    count = p_i.shape[0]
+    traj = np.full((steps, count, 3), np.nan)
+    a_first, closing = np.zeros((count, 3)), np.zeros(count)
+    used, still = np.full(count, steps), np.ones(count, dtype=np.bool_)
+    for q in prange(count):
+        _rollout_pair(q, p_i, p_j, v_i, v_j, axis, up_latched, world_min, world_max, margin, gamma, c,
+                      lo, hi, u_max, v_max, dt, min_steps, steps, traj, a_first, closing, used, still)
+    return traj, a_first, closing, used, still
+
+
+_PARALLEL_MIN_PAIRS = 256
 
 
 def _backup_constraints(

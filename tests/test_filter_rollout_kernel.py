@@ -157,3 +157,14 @@ def test_kernel_matches_numpy_rollout_small(count) -> None:
 
     _assert_same(F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis, up),
                  _numpy_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis, up))
+
+
+@pytest.mark.parametrize("seed", range(3))
+def test_parallel_kernel_matches_serial_kernel(monkeypatch, seed) -> None:
+    # The 400-pair cases above run the parallel kernel (_PARALLEL_MIN_PAIRS); this pins both paths.
+    p_i, p_j, v_i, v_j, axis, up = _cases(40 + seed)
+    monkeypatch.setattr(F, "_PARALLEL_MIN_PAIRS", 10**9)
+    serial = F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis, up)
+    monkeypatch.setattr(F, "_PARALLEL_MIN_PAIRS", 0)
+
+    _assert_same(F._backup_rollout(p_i, p_j, v_i, v_j, F.FilterConfig(), axis, up), serial)
