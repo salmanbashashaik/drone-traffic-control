@@ -76,6 +76,10 @@ On macOS or Linux, activate the environment with `source .venv/bin/activate` ins
 
 This starts **only the synthetic API baseline**. The reference policy and a pass-through safety-filter stub exist as library code, but the simulator, real QP solve, end-to-end run orchestrator, and complete demo are still planned, so there is not yet a full V1 simulation run command. Do not point this API at live aircraft, sensor, USS/UTM, or registration services.
 
+## Run the trained-drone simulation (MARL)
+
+To train, evaluate and watch the learned drone policy in an interactive 3D view in your browser, follow [`docs/training/QUICKSTART.md`](./docs/training/QUICKSTART.md). Results and their limits are in [`docs/training/MARL_TRAINING.md`](./docs/training/MARL_TRAINING.md). This is simulation only and does not show that the system is safe.
+
 ## Long-term research direction
 
 The supporting report describes a broader layered architecture: strategic UTM intent and reservation coordination; tactical MARL or trajectory planning; CBF/HOCBF action filtering; a recoverability supervisor informed by Hamilton–Jacobi reachability; deterministic or independently validated backup behavior; and state-integrity, communication-trust, and conformance monitoring. This is a research direction, not the v1 architecture. V1 does not implement the full report architecture or inherit its possible assurance properties by using a simplified CBF filter.

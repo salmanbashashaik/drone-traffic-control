@@ -16,6 +16,7 @@ Suites
 heldout   procedural family, sizes 2..4, conflict 0.8, seeds from --seed-base (default: the
           development TEST seeds, which are not clean held-out for the final design)
 shipped   scenarios/*.json (head-on-40, crossing-90, sandwich-3)
+six       6 drones per episode, conflict 0.8, seeds 18,000,000+ (the policy was trained on 2-4)
 dense16   16 drones, random starts and goals (same generator as tests/test_random_traffic.py);
           far outside the trained team size
 """
@@ -36,9 +37,9 @@ from utm_services.policy.reference import ReferencePolicy
 from utm_services.safety.filter import FilterConfig
 from utm_services.simulation.env import PROFILES, DroneEnv
 from utm_services.simulation.runner import VARIANTS, run_episode
-from utm_services.training.scenarios import TEST_SEED_BASE, eval_scenarios
+from utm_services.training.scenarios import TEST_SEED_BASE, eval_scenarios, fixed_size_scenarios
 
-SUITES = ("heldout", "shipped", "dense16")
+SUITES = ("heldout", "shipped", "dense16", "six")
 # Baseline for context: the reference controller behind the same filter. Not a learned policy.
 SHIELDED_REFERENCE = "shielded_reference"
 ALL_VARIANTS = (*VARIANTS, SHIELDED_REFERENCE)
@@ -63,6 +64,8 @@ def suite_scenarios(name: str, count: int, seed_base: int | None = None) -> list
         return eval_scenarios(TEST_SEED_BASE if seed_base is None else seed_base, count, max_agents=4, conflict=0.8, episode_limit_steps=800)
     if name == "shipped":
         return [ScenarioConfig.model_validate_json(p.read_text()) for p in sorted((_REPO / "scenarios").glob("*.json"))]
+    if name == "six":
+        return fixed_size_scenarios(18_000_000 if seed_base is None else seed_base, count, 6)
     if name == "dense16":
         return [random_traffic(seed) for seed in range(seed_base or 0, (seed_base or 0) + count)]
     raise ValueError(f"unknown suite '{name}'")
