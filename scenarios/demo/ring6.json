@@ -1,0 +1,13 @@
+{
+  "scenario_id": "ring6",
+  "seed": 6,
+  "episode_limit_steps": 900,
+  "drones": [
+    {"agent_id": "a", "initial_position_m": [540.0, 500.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [460.0, 500.0, 40.0]},
+    {"agent_id": "b", "initial_position_m": [520.0, 534.641, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [480.0, 465.359, 40.0]},
+    {"agent_id": "c", "initial_position_m": [480.0, 534.641, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [520.0, 465.359, 40.0]},
+    {"agent_id": "d", "initial_position_m": [460.0, 500.0, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [540.0, 500.0, 40.0]},
+    {"agent_id": "e", "initial_position_m": [480.0, 465.359, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [520.0, 534.641, 40.0]},
+    {"agent_id": "f", "initial_position_m": [520.0, 465.359, 40.0], "initial_velocity_mps": [0.0, 0.0, 0.0], "goal_m": [480.0, 534.641, 40.0]}
+  ]
+}

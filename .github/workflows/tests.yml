@@ -15,7 +15,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -e ".[dev,plot]"
+      - run: pip install -e ".[dev,plot,viz]"
       # known limit: ruff is not run yet; main has 17 pre-existing lint errors. Add `ruff check .` once they are fixed.
       - run: pytest -q
 

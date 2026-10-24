@@ -41,6 +41,10 @@ train = [
 px4 = [
     "mavsdk==4.0.6",
 ]
+# Rerun viewer of decision logs, utm-viz-rerun.
+viz = [
+    "rerun-sdk==0.40.0",
+]
 # Replay plot for utm-run --plot.
 plot = [
     "matplotlib>=3.8,<4",
@@ -54,6 +58,9 @@ utm-eval-policy = "utm_services.training.evaluate:main"
 utm-replay = "utm_services.training.replay:main"
 utm-city-check = "utm_services.training.city_eval:main"
 utm-px4-demo = "utm_services.integration.px4_demo:main"
+utm-decision-log = "utm_services.evaluation.decision_log:main"
+utm-viz-rerun = "utm_services.evaluation.viz_rerun:main"
+utm-viz-cesium = "utm_services.evaluation.viz_cesium:main"
 
 [tool.setuptools]
 package-dir = {"" = "src", "shared" = "shared"}

@@ -77,6 +77,8 @@ On macOS or Linux, activate with `source .venv/bin/activate`. `utm-run` flies on
 
 ## Run the trained-drone simulation (MARL)
 
+To see what the safety filter decided at every step of a run, in Rerun or on a CesiumJS globe, follow [`docs/demo/VIEWERS.md`](./docs/demo/VIEWERS.md).
+
 To train, evaluate and watch the learned drone policy in an interactive 3D view in your browser, follow [`docs/training/QUICKSTART.md`](./docs/training/QUICKSTART.md). Results and their limits are in [`docs/training/MARL_TRAINING.md`](./docs/training/MARL_TRAINING.md). This is simulation only and does not show that the system is safe.
 
 ## Long-term research direction
