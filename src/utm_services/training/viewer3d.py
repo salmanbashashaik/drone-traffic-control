@@ -12,6 +12,7 @@ attitude. Buildings are scenery (see ``city.py``); the controller does not see t
 from __future__ import annotations
 
 import json
+from html import escape as html_escape
 from pathlib import Path
 from typing import Any
 
@@ -37,7 +38,23 @@ def build_payload(records: list[dict[str, Any]], ids: list[str], goals: dict[str
             vel[t, k] = float(np.linalg.norm(s["velocity_mps"]))
         for aid, info in rec["infos"].items():
             shield[t, ids.index(aid)] = bool(info.get("shield_active", False))
-    arrived = ~np.isfinite(pos[..., 0])
+    gone = ~np.isfinite(pos[..., 0])                    # absent from env.states(): finished or aborted
+    status = np.full((n_f, n_d), "active", dtype=object)
+    for t, rec in enumerate(records):
+        for aid, info in rec["infos"].items():
+            status[t, ids.index(aid)] = info.get("status", "active")
+    # info status describes the state AFTER the step, positions are BEFORE it, so "completed" at frame t
+    # means the drone arrives during step t (its last drawn position is one step earlier).
+    done_at = np.zeros((n_f, n_d), dtype=bool)
+    aborted = np.zeros((n_f, n_d), dtype=bool)
+    for k in range(n_d):
+        hit = np.flatnonzero(status[:, k] == "completed")
+        if len(hit):
+            done_at[hit[0]:, k] = True
+        bad = np.flatnonzero(status[:, k] == "aborted")
+        if len(bad):
+            aborted[bad[0]:, k] = True
+    arrived = gone | done_at | aborted
     for k in range(n_d):                       # hold the last known position once a drone has finished
         last = None
         for t in range(n_f):
@@ -48,7 +65,7 @@ def build_payload(records: list[dict[str, Any]], ids: list[str], goals: dict[str
                 vel[t, k] = 0.0
     min_sep, near = [], np.full((n_f, n_d), np.nan)
     for t in range(n_f):
-        live = [k for k in range(n_d) if not arrived[t, k]]
+        live = [k for k in range(n_d) if not gone[t, k]]      # drones that flew step t, as the simulator counts them
         best = np.nan
         for i in live:
             for j in live:
@@ -58,8 +75,8 @@ def build_payload(records: list[dict[str, Any]], ids: list[str], goals: dict[str
                     near[t, i] = d if np.isnan(near[t, i]) else min(near[t, i], d)
                     near[t, j] = d if np.isnan(near[t, j]) else min(near[t, j], d)
         min_sep.append(best)
-    min_clear = [float(min(b.distance_to(pos[t][~arrived[t]]).min() for b in buildings))
-                 if buildings and (~arrived[t]).any() else None for t in range(n_f)]
+    min_clear = [float(min(b.distance_to(pos[t][~gone[t]]).min() for b in buildings))
+                 if buildings and (~gone[t]).any() else None for t in range(n_f)]
 
     allxy = [pos[..., :2].reshape(-1, 2)[np.isfinite(pos[..., :2].reshape(-1, 2)).all(axis=1)],
              np.array([g[:2] for g in goals.values()])]
@@ -80,7 +97,8 @@ def build_payload(records: list[dict[str, Any]], ids: list[str], goals: dict[str
         "pos": [[[round(float(v), 2) for v in pos[t, k]] for t in range(n_f)] for k in range(n_d)],
         "speed": [[clean(vel[t, k]) for t in range(n_f)] for k in range(n_d)],
         "shield": [[bool(shield[t, k]) for t in range(n_f)] for k in range(n_d)],
-        "arrived": [[bool(arrived[t, k]) for t in range(n_f)] for k in range(n_d)],
+        "arrived": [[bool(arrived[t, k] and not aborted[t, k]) for t in range(n_f)] for k in range(n_d)],
+        "aborted": [[bool(aborted[t, k]) for t in range(n_f)] for k in range(n_d)],
         "near": [[clean(near[t, k]) for t in range(n_f)] for k in range(n_d)],
         "min_sep": [clean(v) for v in min_sep], "min_clear": [clean(v) for v in min_clear],
         "goals": [list(goals[i]) for i in ids],
@@ -98,7 +116,7 @@ def build_payload(records: list[dict[str, Any]], ids: list[str], goals: dict[str
 def write_viewer(path: Path, payload: dict[str, Any]) -> None:
     html = (_DIR / "template.html").read_text()
     data = json.dumps(payload, separators=(",", ":")).replace("</", "<\\/")
-    html = (html.replace("__TITLE__", payload["title"].replace("<", "&lt;"))
+    html = (html.replace("__TITLE__", html_escape(payload["title"]))
             .replace("__THREE__", (_DIR / "three.min.js").read_text())
             .replace("__ORBIT__", (_DIR / "OrbitControls.js").read_text())
             .replace("__DATA__", data))

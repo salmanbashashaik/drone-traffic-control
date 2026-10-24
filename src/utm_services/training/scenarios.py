@@ -26,6 +26,7 @@ VAL_SEED_BASE = 5_000_000
 TEST_SEED_BASE = 9_000_000
 FINAL_SEED_BASE = 12_000_000   # not used for training, selection or preprocessing; reused across evaluations
 
+MAX_RANDOM_DRONES = 20             # always placeable (checked on 40 seeds each up to 20)
 _MIN_POINT_SEPARATION_M = 30.0   # between any two starts
 _MIN_GOAL_SEPARATION_M = 12.0    # between any two goals (two goals < 5 m apart cannot both be completed)
 _MIN_TRIP_M = 60.0               # start-to-goal distance
@@ -41,8 +42,9 @@ def sample_scenario(
     scenario_id: str | None = None,
 ) -> ScenarioConfig:
     """Seeded scenario: n_agents drones in a square arena centred inside the world."""
-    if n_agents < 1:
-        raise ValueError("n_agents must be >= 1")
+    if not 1 <= n_agents <= MAX_RANDOM_DRONES:
+        raise ValueError(f"n_agents must be between 1 and {MAX_RANDOM_DRONES} (the arena cannot always fit more with "
+                         "30 m spacing; 24 drones fits for ~3 in 4 seeds)")
     if not 0.0 <= conflict <= 1.0:
         raise ValueError("conflict must be in [0, 1]")
     rng = np.random.default_rng(seed)
@@ -57,7 +59,7 @@ def sample_scenario(
         if all(np.linalg.norm(a - b) >= _MIN_POINT_SEPARATION_M for i, a in enumerate(starts) for b in starts[:i]):
             break
     else:  # pragma: no cover - arena is large enough for the supported n
-        raise RuntimeError("could not place starts")
+        raise ValueError(f"could not place {n_agents} start points with the required spacing in the arena; use fewer drones")
 
     for _ in range(10_000):
         # Drones in `forced` fly to another forced drone's start (a derangement of the subset).
@@ -77,7 +79,7 @@ def sample_scenario(
         if ok_goals and ok_trips:
             break
     else:  # pragma: no cover
-        raise RuntimeError("could not place goals")
+        raise ValueError(f"could not place {n_agents} goals with the required spacing in the arena; use fewer drones")
 
     drones = []
     for k in range(n_agents):
@@ -126,8 +128,10 @@ def swap_scenario(seed: int, n_agents: int = 6, gap_m: float = 25.0, episode_lim
     two must pass through each other's space: a head-on with a short run-up. The other
     ``n_agents - 2`` drones have random starts and goals in the same airspace and may cross the pair.
     """
-    if n_agents < 2:
-        raise ValueError("a swap scenario needs at least 2 drones")
+    if not 2 <= n_agents <= MAX_RANDOM_DRONES:
+        raise ValueError(f"a swap scenario needs between 2 and {MAX_RANDOM_DRONES} drones")
+    if not 10.0 <= gap_m <= 100.0:
+        raise ValueError("the swap gap must be between 10 and 100 m (below ~10 m the drones start inside the safety buffer)")
     rng = np.random.default_rng(seed)
     centre = np.array([*rng.uniform(400.0, 600.0, 2), 100.0])
     theta = rng.uniform(0.0, 2.0 * np.pi)
@@ -144,7 +148,7 @@ def swap_scenario(seed: int, n_agents: int = 6, gap_m: float = 25.0, episode_lim
                     and np.linalg.norm(st - gl) >= 60.0):
                 break
         else:  # pragma: no cover
-            raise RuntimeError("could not place the extra drones")
+            raise ValueError(f"could not place {n_agents} drones with the required spacing in the swap arena; use fewer drones")
         starts.append(st); goals.append(gl); taken += [st, gl]
     drones = [{"agent_id": f"d{k}", "initial_position_m": tuple(float(v) for v in starts[k]),
                "initial_velocity_mps": (0.0, 0.0, 0.0), "goal_m": tuple(float(v) for v in goals[k])}

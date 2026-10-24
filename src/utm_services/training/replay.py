@@ -147,7 +147,7 @@ def plot_tracks(records, ids, goals, buildings, path: Path, title: str) -> None:
         clr.legend(fontsize=8)
     else:
         clr.text(0.5, 0.5, "no buildings", ha="center", va="center", transform=clr.transAxes)
-    clr.set(xlabel="t (s)", ylabel="min distance to\na building (m)", ylim=(0, None))
+    clr.set(xlabel="t (s)", ylabel="min distance to a building (m)\n(measured, not controlled)", ylim=(0, None))
     clr.grid(alpha=0.3)
     fig.tight_layout()
     fig.savefig(path)
@@ -263,18 +263,26 @@ def main(argv: list[str] | None = None) -> int:
     goals = {d.agent_id: d.goal_m for d in config.drones}
     plot_tracks(result.records, ids, goals, buildings, a.out / "replay.png", title)
     animate(result.records, ids, goals, buildings, a.out / "replay.gif", title)
+    clear = clearance_report(result.records, buildings)
     if a.html:
-        note = ("Drones are enlarged for visibility and drawn level. Buildings are scenery: the policy and the filter "
-                "do not see them." if buildings else "Drones are enlarged for visibility and drawn level.")
+        note = ("Drones are about 240x real size and drawn level. Buildings are scenery: the policy and the filter do not "
+                "see them" + (f"; in this run a track passes through a building ({clear['samples_inside']} samples)."
+                              if clear["samples_inside"] else ".") if buildings else
+                "Drones are about 240x real size and drawn level.")
         write_viewer(a.out / "replay3d.html",
                      build_payload(result.records, ids, goals, buildings, result.summary, title, note))
-    clear = clearance_report(result.records, buildings)
+    warn = ""
+    if clear["samples_inside"]:
+        warn = (f"  WARNING: in this run a drone track passes through a building ({clear['samples_inside']} samples). "
+                "Buildings are scenery the controller cannot see, so this can happen; try another --buildings layout "
+                "or --buildings 0.\n")
     avoid = avoidance_summary(result.records, ids, config)
     s = result.summary
     extra = ""
     if holder:
         env = holder[-1]
-        extra = f"  building contacts (physics) {len(env.building_contacts)}"
+        extra = (f"  building contacts in the physics world {len(env.building_contacts)} (checked once per 100 ms step)"
+                 if env._scene else "  building contacts n/a (buildings exist in the physics world only with --snapshots or --gui)")
         if env.snapshots:
             from utm_services.training.pybullet_scene import save_snapshots
 
@@ -284,7 +292,7 @@ def main(argv: list[str] | None = None) -> int:
           f"interventions {s['shield_interventions']}  fallbacks {s['fallback_events']}\n"
           f"  buildings {clear['n_buildings']}  min clearance "
           f"{'n/a' if clear['min_clearance_m'] is None else format(clear['min_clearance_m'], '.1f') + ' m'}  "
-          f"track samples inside a building {clear['samples_inside']}{extra}\n  avoidance:\n{avoid}\n  -> {a.out}")
+          f"track samples inside a building {clear['samples_inside']}{extra}\n  deviation from each drone's straight route:\n{avoid}\n{warn}  -> {a.out}")
     if holder:
         if a.gui:
             import time

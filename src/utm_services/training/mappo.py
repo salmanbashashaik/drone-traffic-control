@@ -21,7 +21,6 @@ from __future__ import annotations
 import json
 import multiprocessing as mp
 import platform
-import subprocess
 import sys
 import time
 from dataclasses import asdict, dataclass
@@ -39,6 +38,7 @@ from utm_services.policy.learned import (
     weights_sha256,
 )
 from utm_services.simulation.env import ENV_VERSION, REWARD_VERSION
+from utm_services.training.provenance import git_state as _git_state
 from utm_services.training.rollout import collect_episode
 from utm_services.training.scenarios import (
     FAMILY_VERSION,
@@ -325,17 +325,6 @@ def _ppo_update(cfg: TrainConfig, actor: Actor, critic: Critic, opt: torch.optim
 
 
 # ----------------------------------------------------------------------------- driver
-
-
-def _git_state() -> dict[str, Any]:
-    try:
-        root = Path(__file__).resolve().parents[3]
-        sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root, capture_output=True, text=True, check=True).stdout.strip()
-        dirty = bool(subprocess.run(["git", "status", "--porcelain", "--", "src", "shared"], cwd=root,
-                                    capture_output=True, text=True, check=True).stdout.strip())
-        return {"commit": sha, "src_dirty": dirty}
-    except Exception:  # noqa: BLE001 - metadata only
-        return {"commit": None, "src_dirty": None}
 
 
 def _metadata(cfg: TrainConfig, weights: dict, it: int, val: dict, total_steps: int, label: str) -> dict[str, Any]:

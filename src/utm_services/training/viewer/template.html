@@ -20,6 +20,7 @@
   .chip.shield { background: #e0a100; color: #1b1500; }
   .chip.arrived { background: #2e7d4f; }
   .chip.close { background: #d32f2f; }
+  .chip.aborted { background: #8e24aa; }
   #hud { margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.18); padding-top: 6px; font-variant-numeric: tabular-nums; }
   #bar { left: 50%; bottom: 14px; transform: translateX(-50%); display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; max-width: 96vw; }
   button, select { background: #2b3644; color: #eef2f6; border: 1px solid #46556a; border-radius: 7px; padding: 5px 10px; font-size: 12.5px; cursor: pointer; }
@@ -28,7 +29,7 @@
   input[type=range] { vertical-align: middle; }
   #timeline { width: 320px; }
   label.t { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; font-size: 12.5px; }
-  #help { left: 12px; bottom: 78px; font-size: 12px; opacity: 0.92; }
+  #help { left: 12px; bottom: 100px; max-width: 520px; font-size: 12px; opacity: 0.92; }
   .tag { position: absolute; pointer-events: none; font-size: 12px; font-weight: 700; color: #111; text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 3px #fff; transform: translate(-50%, -100%); white-space: nowrap; }
   .tag.goal { font-weight: 600; font-size: 11px; opacity: 0.85; }
   .sep { opacity: 0.35; }
@@ -49,7 +50,8 @@
 
 <div id="help" class="panel">
   <b>Drag</b> orbit &nbsp; <b>Right-drag</b> / <b>Shift-drag</b> pan &nbsp; <b>Wheel</b> zoom &nbsp; <b>Space</b> play/pause<br>
-  <b>1</b> iso &nbsp; <b>2</b> top &nbsp; <b>3</b> side &nbsp; <b>4</b> front &nbsp; <b>F</b> follow next drone &nbsp; <b>R</b> reset view
+  <b>1</b> iso &nbsp; <b>2</b> top &nbsp; <b>3</b> side &nbsp; <b>4</b> front &nbsp; <b>F</b> follow next drone &nbsp; <b>R</b> reset view<br>
+  Halo colour: <b>amber</b> = safety filter changing this drone's command, <b>red</b> = within 5 m of another drone. The halo's size is decoration.
 </div>
 
 <div id="bar" class="panel">
@@ -265,16 +267,17 @@ for (let k = 0; k < nD; k++) {
 // ------------------------------------------------------------------ HUD
 document.getElementById("summary").innerHTML = D.summary_html;
 document.getElementById("note").textContent = D.note;
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const dtable = document.getElementById("dtable");
 const rows = D.ids.map((id, k) => {
   const tr = document.createElement("tr");
-  tr.innerHTML = `<td><span class="dot" style="background:${D.colors[k % D.colors.length]}"></span><b>${id}</b></td>` +
+  tr.innerHTML = `<td><span class="dot" style="background:${D.colors[k % D.colors.length]}"></span><b>${esc(id)}</b></td>` +
                  `<td class="spd" style="text-align:right"></td><td class="alt" style="text-align:right"></td><td class="st"></td>`;
   dtable.appendChild(tr); return tr;
 });
 const hud = document.getElementById("hud");
 const followSel = document.getElementById("follow");
-D.ids.forEach(id => { const o = document.createElement("option"); o.value = id; o.textContent = "Follow " + id; followSel.appendChild(o); });
+D.ids.forEach(id => { const o = document.createElement("option"); o.value = id; o.textContent = "Follow " + id;   /* textContent: safe */ followSel.appendChild(o); });
 
 // ------------------------------------------------------------------ camera presets
 const F = D.flight;                       // [xmin, ymin, xmax, ymax] of drone tracks and goals
@@ -342,6 +345,7 @@ function dronePos(k, t) {
   return _v.set(p[0] + (q[0] - p[0]) * a, p[1] + (q[1] - p[1]) * a, p[2] + (q[2] - p[2]) * a).clone();
 }
 function fmt(x, n) { return x === null || x === undefined ? "n/a" : x.toFixed(n); }
+function fmtm(x, n) { return x === null || x === undefined ? "n/a (fewer than 2 drones flying)" : x.toFixed(n) + " m"; }
 function update(dtReal) {
   if (playing) {
     if (tSec >= T_END) { if (performance.now() > holdUntil) { if (holdUntil === 0) { holdUntil = performance.now() + 1200; } else { tSec = 0; holdUntil = 0; } } }
@@ -355,7 +359,9 @@ function update(dtReal) {
     const p = dronePos(k, tSec);
     const d = drones[k];
     d.group.position.copy(p); d.group.scale.setScalar(spanNow);
-    const arrived = D.arrived[k][fi];
+    const arrived = D.arrived[k][fi] || D.aborted[k][fi];
+    d.group.visible = !arrived;                 // the simulator stops checking finished drones, so stop drawing them
+    stems[k].visible = !arrived; blobs[k].visible = !arrived;
     d.rotors.forEach((r, n) => { r.rotation.z += (arrived ? 0 : 1) * dtReal * (38 + 3 * n) * (n % 2 ? -1 : 1); });
     const shield = D.shield[k][fi], near = D.near[k][fi] !== null && D.near[k][fi] < D.dsafe;
     halos[k].position.copy(p); halos[k].scale.setScalar(spanNow * 0.78);
@@ -369,12 +375,12 @@ function update(dtReal) {
     const tr = rows[k];
     tr.querySelector(".spd").textContent = fmt(D.speed[k][fi], 1) + " m/s";
     tr.querySelector(".alt").textContent = "z " + fmt(p.z, 0);
-    tr.querySelector(".st").innerHTML = arrived ? '<span class="chip arrived">arrived</span>'
+    tr.querySelector(".st").innerHTML = D.aborted[k][fi] ? '<span class="chip aborted">aborted</span>' : arrived ? '<span class="chip arrived">arrived</span>'
       : near ? '<span class="chip close">&lt; d_safe</span>' : shield ? '<span class="chip shield">filter active</span>' : '<span class="chip">nominal</span>';
   }
-  hud.innerHTML = `t = <b>${tSec.toFixed(1)} s</b> &nbsp; min drone-drone separation <b>${fmt(D.min_sep[fi], 1)} m</b> (d_safe ${D.dsafe} m)` +
-    (D.min_clear.some(v => v !== null) ? `<br>nearest building to any drone <b>${fmt(D.min_clear[fi], 1)} m</b>` : "");
-  if (follow !== null) {
+  hud.innerHTML = `t = <b>${tSec.toFixed(1)} s</b> &nbsp; min drone-drone separation <b>${fmtm(D.min_sep[fi], 1)}</b> (d_safe ${D.dsafe} m)` +
+    (D.min_clear.some(v => v !== null) ? `<br>nearest building to any drone (measured, not controlled) <b>${fmt(D.min_clear[fi], 1)} m</b>` : "");
+  if (follow !== null && !tween) {
     const p = dronePos(follow, tSec);
     const delta = p.clone().sub(controls.target);
     camera.position.add(delta); controls.target.copy(p);
@@ -417,6 +423,7 @@ function loop(now) {
   const dtReal = Math.min(0.1, (now - last) / 1000); last = now;
   update(dtReal);
   if (tween) {
+    if (follow !== null) { const f = followPose(follow); tween.toP = f.pos; tween.toT = f.target.clone(); }   // aim at the drone's current pose
     tween.t = Math.min(1, tween.t + dtReal / 0.7);
     const e = tween.t < 0.5 ? 2 * tween.t * tween.t : 1 - Math.pow(-2 * tween.t + 2, 2) / 2;
     camera.position.lerpVectors(tween.fromP, tween.toP, e);

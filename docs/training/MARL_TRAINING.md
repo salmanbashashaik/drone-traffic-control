@@ -17,7 +17,7 @@ utm-train --out runs/train/my-t2  --iterations 300 --workers 4 --profile nominal
 
 # evaluate: reference / unshielded / shielded / shielded-reference on identical scenarios
 utm-eval-policy artifacts/policies/marl-mappo-s42-it220-f93dca3638 \
-    --suite heldout --suite dense16 --suite six --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
+    --suite heldout --suite dense16 --episodes 50 --seed-base 12000000 --profile realistic --out runs/eval/x
 
 # watch it: replay.png (tracks, separation, building clearance), replay.gif (top-down), and with --html
 # replay3d.html: a self-contained interactive 3D viewer for any browser (offline; opens by double-click)
@@ -29,9 +29,18 @@ utm-replay heldout:12000008:4 --artifact artifacts/policies/marl-mappo-s42-it300
     --variant shielded_marl --pybullet --gui --speed 0.6 --out runs/viz/x
 ```
 
-**Interactive 3D viewer (`--html`).** Drag to orbit, right-drag or Shift-drag to pan, wheel to zoom; keys `1` iso, `2` top, `3` side, `4` front, `F` follow the next drone, `R` reset, Space play/pause. The bar has a time scrubber, 0.25x-4x speed, a follow-camera menu, toggles for trails, halos, labels, see-through buildings and the 1 km airspace box, and a drone-size slider. Halos turn amber while the filter acts on a drone and red when a pair is closer than d_safe. The page embeds three.js r128 (MIT, vendored in `training/viewer/`), so it needs no internet. Verified in headless Chrome (no JavaScript errors; a scripted mouse drag moved the camera and the wheel zoomed), and by screenshots in `docs/training/figures/viewer-3d-*.jpg`. Drones are drawn about 20x larger than real and level (the point-mass simulator has no attitude); rotor spin is decoration.
+**Interactive 3D viewer (`--html`).** Drag to orbit, right-drag or Shift-drag to pan, wheel to zoom; keys `1` iso, `2` top, `3` side, `4` front, `F` follow the next drone, `R` reset, Space play/pause. The bar has a time scrubber, 0.25x-4x speed, a follow-camera menu, toggles for trails, halos, labels, see-through buildings and the 1 km airspace box, and a drone-size slider. Halos turn amber while the filter acts on a drone and red when a pair is closer than d_safe. The page embeds three.js r128 (MIT, vendored in `training/viewer/`), so it needs no internet. Verified in headless Chrome (no JavaScript errors; a scripted mouse drag moved the camera and the wheel zoomed), and by screenshots in `docs/training/figures/viewer-3d-*.jpg`. Drones are drawn about 240x larger than real (22 m across against 9 cm) and level (the point-mass simulator has no attitude); rotor spin and halo size are decoration, and the halo colour carries the information.
 
-**Buildings are scenery.** `training/city.py` places boxes at least 35 m from every drone's straight start-goal route. Neither the policy nor the filter nor `DroneEnv` knows about them (v1 has no obstacle contract). Measured over 50 scenarios (`docs/results/training/city-clearance.*`): minimum distance from any drone to any building was 21.8 m (5th percentile 30.7 m, median 39.2 m) for both variants, and no track entered a building. A single head-on run came within 10.6 m after the avoidance manoeuvre, so the clearance comes from the layout and is not a property of the controller. A scenario where a building sits in the way is not handled.
+**Buildings are scenery.** `training/city.py` places boxes a fixed margin away from every drone's *straight* start-goal route. Neither the policy nor the filter nor `DroneEnv` knows about them (v1 has no obstacle contract), and the filter can swing a drone far off its straight route (43 m for each drone in `head-on-40`, up to about 55 m in some layouts), so the margin does not bound the flown track. Measured (`docs/results/training/city-clearance.*`, `utm-city-check`):
+
+| Margin | Scenarios | Closest drone-to-building distance | Layouts where a track entered a building |
+|---|---|---|---|
+| 35 m (first default) | 50 generated | 21.8 m | 0 of 50 |
+| 35 m | 3 shipped scenarios x 20 layouts, shielded and unshielded | 0.0 m | 6 of 120 (head-on-40 shielded 3/20, sandwich-3 shielded 2/20, sandwich-3 unshielded 1/20) |
+| **60 m (current default)** | 50 generated | 47.7 m | 0 of 100 (50 scenarios x 2 variants) |
+| **60 m** | 3 shipped scenarios x 20 layouts | 20.6 m | 0 of 120 |
+
+The 35 m default was too small, and earlier text here and in the PR said no track entered a building; that was true only for the generated scenarios, not the shipped ones. 0 of 120 at 60 m is a measurement on these layouts, not a bound: the replay prints a `WARNING` when a run's track passes through a building, and a scenario where a building sits in the way is not handled.
 
 PyBullet on macOS (Apple silicon, macOS 26 SDK) needed two workarounds that the `physics` extra does not cover: `CFLAGS="-Dfdopen=fdopen" pip install pybullet` (the bundled zlib clashes with the SDK headers), and `pip install --no-deps --ignore-requires-python gym-pybullet-drones@7ebad1e` (that commit declares Python >= 3.12; this repo's venv is 3.11 and it imported fine). With the window open PyBullet sometimes answers a contact query with `None`; `utm-replay` retries and raises if it keeps failing, it never skips the collision check. The GUI episode is slow (a few minutes of wall time).
 
@@ -65,7 +74,7 @@ Variants on identical scenarios: `reference` (PD controller, no filter), `unshie
 
 ### Fresh seeds (12,000,000+)
 
-These seeds were not used for training, checkpoint selection, or any preprocessing change. They were consulted more than once after the design was frozen: for the T1 policy, for the T2-nominal policy under two profiles, and for deciding not to ship the first shield-in-loop run. Treat them as a repeatedly used test set, not a single untouched look.
+These seeds were not used for training, checkpoint selection, or any preprocessing change. They were consulted more than once after the design was frozen: for the T1 policy, for the T2-nominal policy under two profiles, for deciding not to ship the first shield-in-loop run, as the default seeds of the building-clearance sweep (`utm-city-check`), and for the example scenes (`heldout:12000008:4`). Treat them as a repeatedly used test set, not a single untouched look.
 
 Policy `…it300-08e745b853`, ideal (T1) dynamics, 50 episodes per suite. Held-out = 2–4 drones, conflict 0.8, trained team size. Dense16 = 16 drones with random starts and goals, outside the trained team size.
 
@@ -121,11 +130,11 @@ A fixed-size suite (`--suite six`, conflict 0.8, 50 episodes, 1000-step limit), 
 | T2-nominal-trained | shielded | 100% | 8.00 | 0 | 0 | 558 |
 | (none) | shielded reference | 100% | 8.04 | 0 | 0 | 2036 |
 
-Same pattern as with 2-4 drones: the policies finish every mission and have fewer violations than the reference, but not none; the filter removes them in these runs. The T2-nominal policy's closest approach unshielded (0.80 m) is lower than the T1 policy's (2.80 m) even though it has fewer violation pair-steps, so the two are not ranked here. Files: `docs/results/training/*.six-drones.*`. The 3D viewer screenshot of the worst unshielded episode is `figures/viewer-3d-six-drones-unshielded.jpg` (`heldout:18000044:6`, chosen as the worst of the 50, not a typical one).
+Same pattern as with 2-4 drones: the policies finish every mission and have fewer violations than the reference, but not none; the filter removes them in these runs. The T2-nominal policy's closest approach unshielded (0.80 m) is lower than the T1 policy's (2.80 m) even though it has fewer violation pair-steps, so the two are not ranked here. Files: `docs/results/training/*.six-drones.*`. The 3D viewer screenshot of the worst unshielded episode is `figures/viewer-3d-six-drones-unshielded.jpg` (`heldout:18000044:6`, the episode with the most unshielded violation pair-steps of the 50, not the lowest minimum separation and not a typical one).
 
 ### Mirrored head-on: two drones swap places (6 drones), seeds 24,000,000+
 
-Suite `swap` (`--suite swap`): d0 starts where d1 is going and vice versa, 25 m apart, same altitude, at rest; four more drones fly random routes. 50 episodes, 300 drones per variant, T1-trained policy `…it300-08e745b853`. Seeds 24,000,000+ were not used before this table; a separate set of 20 probe seeds (24,900,000+) was used to try the scenario at gaps of 20, 25 and 30 m (not reported as results) and to pick the showcase seed.
+Suite `swap` (`--suite swap`): d0 starts where d1 is going and vice versa, 25 m apart, same altitude, at rest; four more drones fly random routes. 50 episodes, 300 drones per variant, T1-trained policy `…it300-08e745b853`. The table uses seeds 24,000,000 to 24,000,049, which had not been used before. Separately, 20 probe seeds (24,900,000 to 24,900,019) were used to try the scenario at gaps of 20, 25 and 30 m (not reported as results) and to pick the showcase seed.
 
 | Variant | Arrived | Min sep (m) | Viol. pair-steps | Episodes with viol. | Interventions |
 |---|---|---|---|---|---|
@@ -160,7 +169,7 @@ The policy was trained on point-mass dynamics. Flown unchanged in the PyBullet C
 - Everything is on the project's point-mass simulator with perfect dynamics (T1) or the T2 profiles, whose parameters are placeholders (`simulation/env.py`). No real telemetry, no hardware, no PyBullet or other dynamics were used.
 - Zero violations in a finite set of seeds does not establish zero risk. In these runs the filter is the component that changes the outcome; its limits are in `docs/formulation/P2-SA-02-lateral-escape.md` and `docs/DECISIONS.md` (open items BL-03 to BL-12 apply unchanged).
 - The unshielded learned policy still violates separation in 3/50 held-out and 11/50 dense16 episodes. It is not a safe controller.
-- Unshielded, the learned policy has fewer violation pair-steps than the reference (10 vs 64 held-out, 52 vs 110 dense16) and completes as often on these suites. Shielded, its minimum separation is within 0.35 m of the shielded reference in either direction across the four comparisons above (+0.22, +0.26, −0.12, −0.31 m), so no separation advantage is claimed. It needs fewer filter interventions (324 vs 1602 held-out), which is a count, not a safety measure.
+- Unshielded, the learned policy has fewer violation pair-steps than the reference (10 vs 64 held-out, 52 vs 110 dense16) and completes as often on these suites. Shielded, its minimum separation is within 0.43 m of the shielded reference in either direction across the five comparisons above (+0.22, +0.26, −0.12, −0.31 and, for the T2-nominal policy under ideal dynamics, +0.43 m), so no separation advantage is claimed. It needs fewer filter interventions (324 vs 1602 held-out), which is a count, not a safety measure.
 - The T2-trained policy was evaluated on a profile milder than any real flight and on a profile harsher than it was trained on, both simulated. It says nothing about other disturbance types, larger teams in training, obstacles, or geofences (the observation has no geofence field).
 - Model selection used 60 validation episodes at one conflict level; a tie went to the later checkpoint. Selection noise is not quantified. One training seed per configuration; run-to-run variation across training seeds is not measured.
 - Step latency figures in the summaries include the filter and the Python loop on a laptop, not an edge device (P4).
@@ -175,4 +184,7 @@ The policy was trained on point-mass dynamics. Flown unchanged in the PyBullet C
 - Training details that were reviewed and left as they are: behaviour cloning labels come from the stateless PD law (`compute_reference_action`), while the evaluated "reference" is the PID `ReferencePolicy`; the behaviour-cloning rollouts always use ideal dynamics, so the T2 run is warm-started from T1 conditions; under T2 profiles a sampled action is stored as executed even when the environment drops that command, which makes policy-gradient credit noisier on those steps; the checkpoint loader uses `weights_only=False` and must only be given our own checkpoints.
 - The artifact checks (weight hash, normalisation fingerprint, bounds) detect corruption and mixed-up directories. Both values live in the metadata file next to the weights, so they do not stop someone who replaces both files.
 - Reproducibility was checked by retraining the T1 policy (identical hash, repeated by an independent reviewer). The T2 policy was not retrained to check.
+- Older manifests under `docs/results/training` record the artifact's training commit (`git`), not the commit that ran the evaluation; manifests written from now on also carry `code_git` and the resolved seed base.
+- The PyBullet scene class (`pybullet_scene.py`) re-implements the base backend's `step` drawing and collision check so that queries can be retried; if the base class changes its collision accounting, the two must be kept in step. Building contacts there are sampled once per 100 ms control step, not per physics substep.
+- Viewer: positions are the state before each step (see QUICKSTART), and the viewer is checked by a scripted headless-Chrome run and screenshots, not by automated tests.
 - No tests accompany the new code. Checks were scripted runs: the fast training path and `run_episode` agree on integer outcomes (and to 1e-13 m on minimum separation), and the loader refuses a missing `metadata.json`, altered weights, a missing normalisation fingerprint, an unexpected `weights_file` and mismatched world bounds.

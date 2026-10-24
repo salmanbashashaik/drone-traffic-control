@@ -10,9 +10,11 @@ controller. What keeps a drone away from them is the layout itself:
 * ``clearance_report`` then measures how close the flown tracks actually came, because a
   filter manoeuvre can deflect a drone off its straight route.
 
-So a clearance figure here is a measurement of one simulated run, not a guarantee, and a
-layout with large clearance says nothing about how the system would behave if a building
-were in the way. Obstacle-aware control would be a separate change to the filter.
+The margin is a layout choice, not a bound on the flown track: the safety filter can swing a
+drone tens of metres off its straight route (up to about 55 m in the shipped head-on), so a
+track can pass close to, or through, a building even though the straight route was clear. A
+clearance figure here is a measurement of one simulated run, not a guarantee, and says nothing
+about how the system would behave if a building were in the way. Obstacle-aware control would be a separate change to the filter.
 """
 
 from __future__ import annotations
@@ -54,7 +56,7 @@ def _segment_samples(a: np.ndarray, b: np.ndarray, step_m: float = 2.0) -> np.nd
     return a + (b - a) * np.linspace(0.0, 1.0, n)[:, None]
 
 
-def generate_city(config: ScenarioConfig, n_buildings: int = 26, margin_m: float = 35.0,
+def generate_city(config: ScenarioConfig, n_buildings: int = 26, margin_m: float = 60.0,
                   seed: int | None = None) -> list[Building]:
     """Seeded layout around the scenario; deterministic in (config, n_buildings, margin_m, seed).
 
@@ -63,8 +65,8 @@ def generate_city(config: ScenarioConfig, n_buildings: int = 26, margin_m: float
     rng = np.random.default_rng(config.seed if seed is None else seed)
     segs = [_segment_samples(np.array(d.initial_position_m), np.array(d.goal_m)) for d in config.drones]
     pts = np.concatenate(segs)
-    lo = np.maximum(pts.min(axis=0)[:2] - 130.0, 20.0)
-    hi = np.minimum(pts.max(axis=0)[:2] + 130.0, 980.0)
+    lo = np.maximum(pts.min(axis=0)[:2] - 190.0, 20.0)
+    hi = np.minimum(pts.max(axis=0)[:2] + 190.0, 980.0)
     buildings: list[Building] = []
     for _ in range(40_000):
         if len(buildings) == n_buildings:

@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--suite", choices=SUITES, action="append", help="repeatable; default: heldout and shipped")
     p.add_argument("--episodes", type=int, default=30, help="scenarios per procedural suite (heldout, dense16)")
     p.add_argument("--seed-base", type=int, default=None,
-                   help="first seed of the procedural suites (heldout default 9000000, dense16 default 0)")
+                   help="first seed of the procedural suites heldout, dense16, six and swap; defaults: heldout 9000000, dense16 0, six 18000000, swap 24000000")
     p.add_argument("--swap-gap", type=float, default=25.0, help="distance (m) between the two swapping drones in the swap suite")
     p.add_argument("--profile", choices=PROFILES, default="ideal")
     p.add_argument("--out", type=Path, required=True)
@@ -163,8 +163,12 @@ def main(argv: list[str] | None = None) -> int:
     (a.out / "episodes.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
     agg = aggregate(rows)
     table = markdown_table(agg)
+    defaults = {"heldout": TEST_SEED_BASE, "dense16": 0, "six": 18_000_000, "swap": 24_000_000}
+    from utm_services.training.provenance import git_state as _git_state
+
     manifest = {"artifact_id": policy.artifact_id, "weights_sha256": policy.metadata["weights_sha256"],
-                "suites": suites, "episodes": a.episodes, "swap_gap_m": a.swap_gap, "seed_base": a.seed_base, "profile": a.profile,
+                "suites": suites, "episodes": a.episodes, "code_git": _git_state(),
+                "seed_base_resolved": {s: (a.seed_base if a.seed_base is not None else defaults.get(s)) for s in suites}, "swap_gap_m": a.swap_gap, "seed_base": a.seed_base, "profile": a.profile,
                 "filter_config": vars(FilterConfig()), "git": policy.metadata.get("git")}
     (a.out / "manifest.json").write_text(json.dumps(manifest, indent=2, default=str))
     (a.out / "summary.md").write_text(
