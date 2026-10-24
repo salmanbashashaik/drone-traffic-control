@@ -35,7 +35,22 @@ def jobs() -> list[dict]:
             for f in BEYOND_FAMILIES for s in SEEDS]
     out += [dict(family=f, cond=c.name, seed=s, mode="adaptive") for c in sim.TAKEOFF
             for f in sim.FAMILIES for s in SEEDS]
-    return out
+    return sorted(out, key=_priority)
+
+
+# Founder's run order (2026-10-24): the decision cases first, then the other
+# beyond-limit cases, then the in-limit matrix. Calm-air baseline runs with
+# lag_s = 0 follow the lag_s = 0.25 s ones, as their comparison.
+PRIORITY = ("B6_lag_2x_rtk", "B6_lag_2x", "baseline_lag/calm", "baseline/calm",
+            "B8_bias_5sigma_rtk", "B8_bias_5sigma")
+
+
+def _priority(j: dict) -> int:
+    calm_baseline = j["mode"] != "adaptive" and j["cond"].endswith("/calm")
+    tag = f"{j['mode']}/calm" if calm_baseline else j["cond"]
+    if tag in PRIORITY:
+        return PRIORITY.index(tag)
+    return len(PRIORITY) + (0 if j["cond"].startswith("B") else 1)
 
 
 def _git() -> dict:

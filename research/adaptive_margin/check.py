@@ -150,8 +150,21 @@ def check_absorbable() -> None:
     assert M.absorbable([sim._state("a", np.full(3, 500.0), np.zeros(3), 0)], {}, cfg) == math.inf
 
 
+def check_job_order() -> None:
+    """The priority order keeps every job once and puts the decision cases first."""
+    from research.adaptive_margin import run
+    js = run.jobs()
+    keys = [run._key(j) for j in js]
+    assert len(js) == 1168 and len(set(keys)) == len(keys), len(js)
+    ranks = [run._priority(j) for j in js]
+    assert ranks == sorted(ranks) and js[0]["cond"] == "B6_lag_2x_rtk", js[0]
+    first = {j["cond"] for j in js if run._priority(j) < len(run.PRIORITY)}
+    assert first == {"B6_lag_2x_rtk", "B6_lag_2x", "B8_bias_5sigma_rtk", "B8_bias_5sigma",
+                     "rtk_f9p/calm", "sbas_gagan/calm", "gps_sps/calm"}, first
+
+
 if __name__ == "__main__":
     for f in (check_constants, check_transition, check_lag_bound, check_drag, check_command_log, check_nis,
-              check_lag_id, check_margin_monotone, check_absorbable):
+              check_lag_id, check_margin_monotone, check_absorbable, check_job_order):
         f()
         print("ok", f.__name__)
