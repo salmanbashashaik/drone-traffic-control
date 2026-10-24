@@ -16,5 +16,5 @@ Every safety PR gets an automatic adversarial review by a fresh subagent before 
 
 ## Verification
 Verification is change-scoped: run the quick tier and targeted probes while iterating; run the full tier once per PR before merge; reviewers never rerun a tier that already ran on the same commit.
-- quick tier: `python scripts/verify/tier.py quick`; full tier: `python scripts/verify/tier.py full` (see `scripts/verify/README.md`)
+- quick tier: `python scripts/verify/tier.py quick`; full tier: `python scripts/verify/tier.py full`; `invariance.py` only on demand: `python scripts/verify/tier.py ondemand` (see `scripts/verify/README.md`)
 - `pytest` runs the fast suite in parallel; `pytest -m slow` runs the slow suite (CI runs it on PRs to main)

@@ -2,10 +2,12 @@
 
     python scripts/verify/tier.py quick [--out DIR] [--procs N]
     python scripts/verify/tier.py full  [--out DIR] [--procs N]
+    python scripts/verify/tier.py ondemand [--out DIR] [--procs N]
 
 quick: fuzz.py --tier quick, checked bit for bit against the reference with compare_results.py.
 full:  fuzz.py --tier full, checked the same way, then every script of the README table at the
        README command, up to --procs at a time (det.py twice, in separate processes, outputs compared).
+ondemand: the scripts kept out of full (ON_DEMAND), run only when asked.
 
 Each step writes its output to DIR/<step>.log (default: ./verify_<tier>, gitignored). A rerun with the
 same DIR resumes the fuzz run (fuzz.py skips seeds already in its JSONL). Exits 1 if any step fails.
@@ -22,12 +24,15 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 # The README table, longest first (assumed) so the pool ends together.
 SCRIPTS = [
-    ("inv2", ["inv2.py", "3000"]), ("invariance", ["invariance.py"]), ("horizon", ["horizon.py"]),
+    ("inv2", ["inv2.py", "3000"]), ("horizon", ["horizon.py"]),
     ("optbound", ["optbound.py", "sandwich", "40"]), ("probe", ["probe.py"]), ("squeeze2", ["squeeze2.py"]),
     ("vnoise", ["vnoise.py"]), ("hnoise", ["hnoise.py"]), ("vsweep", ["vsweep.py"]), ("vertical", ["vertical.py"]),
     ("floor", ["floor.py"]), ("targeted", ["targeted.py"]), ("headon", ["headon.py"]),
     ("recov", ["recov.py", "2704", "252"]), ("det_a", ["det.py"]), ("det_b", ["det.py"]),
 ]
+# invariance.py: serial (165 min alone), measures with the pre-latch escape model (P2-SA-02 §5.4);
+# inv2.py covers the check in parallel in full.
+ON_DEMAND = [("invariance", ["invariance.py"])]
 
 
 def step(name, args, out, env):
@@ -41,7 +46,7 @@ def step(name, args, out, env):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("tier", choices=("quick", "full"))
+    ap.add_argument("tier", choices=("quick", "full", "ondemand"))
     ap.add_argument("--out", help="log directory (default ./verify_<tier>)")
     ap.add_argument("--procs", type=int, default=os.cpu_count())
     a = ap.parse_args(argv)
@@ -51,14 +56,18 @@ def main(argv=None):
            "PYTHONIOENCODING": "utf-8"}
     env.pop("HARD", None)  # the tiers set the mode per run
     t0 = time.perf_counter()
-    results = os.path.join(out, "fuzz.jsonl")
-    failed = step("fuzz", [os.path.join(HERE, "fuzz.py"), "--tier", a.tier, "--out", results,
-                           "5000", "backup", "100", str(a.procs)], out, env) != 0
-    failed |= step("compare", [os.path.join(HERE, "compare_results.py"), results], out, env) != 0
-    if a.tier == "full":
+    failed = False
+    if a.tier != "ondemand":
+        results = os.path.join(out, "fuzz.jsonl")
+        failed |= step("fuzz", [os.path.join(HERE, "fuzz.py"), "--tier", a.tier, "--out", results,
+                                "5000", "backup", "100", str(a.procs)], out, env) != 0
+        failed |= step("compare", [os.path.join(HERE, "compare_results.py"), results], out, env) != 0
+    if a.tier != "quick":
         with ThreadPoolExecutor(a.procs) as pool:
-            codes = list(pool.map(lambda s: step(s[0], [os.path.join(HERE, s[1][0]), *s[1][1:]], out, env), SCRIPTS))
+            codes = list(pool.map(lambda s: step(s[0], [os.path.join(HERE, s[1][0]), *s[1][1:]], out, env),
+                                  SCRIPTS if a.tier == "full" else ON_DEMAND))
         failed |= any(codes)
+    if a.tier == "full":
         with open(os.path.join(out, "det_a.log")) as fa, open(os.path.join(out, "det_b.log")) as fb:
             same = fa.read() == fb.read()
         print(f"det: {'identical' if same else 'DIFFERENT'} across two processes")
