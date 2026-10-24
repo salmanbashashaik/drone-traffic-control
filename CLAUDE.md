@@ -8,13 +8,13 @@
 ## Current state (2026-10-24; details in docs/STATUS.md)
 - **Built (on main):** shared contracts (`shared/contracts.py`, `INTERFACES.md`, contract v1.4); mock airspace API; point-mass simulator `DroneEnv` with T1 (ideal) and T2 (wind, noise, delay, command dropout) disturbances; reference controller; the safety filter (backup-set barrier QP solved per conflict cluster to KKT accuracy with DAQP/OSQP, latch, escape stage, world-box limits, evasive fallback on solver error); `utm-run` CLI and three scenarios; MAPPO training (`utm-train`), two trained policy artifacts, 3D replay viewer; verification scripts and tiers in `scripts/verify/`; optional PyBullet quadrotor backend (Linux/WSL only).
 - **Simulation only (all of it):** every safety result is a simulation measurement under stated assumptions, not a proof or a flight claim. The trained MARL policy only proposes actions; the filter decides. Geofences are counted, not enforced. Zero observed failures in finite runs is not zero risk.
-- **Not built:** drone link, telemetry or command protocol, any autopilot integration (PX4 is the likely first); onboard safety layer; disturbance margin in the filter (BL-06, BL-07); consistent per-drone backup (BL-03); flight plans or strategic deconfliction; persistence and results UI; ONNX edge benchmark (P4); a defined first customer and service (P5). The filter meets the 100 ms step budget at 64 drones on a 4-core machine (p95 49-78 ms, `docs/results/scale-step3-2026-10-24.md`), not on one thread (101-124 ms), at 128 drones (182-234 ms), or for a single converging cluster of 64 (seconds; out of scope, strategic layer).
-- Known limits accepted by the founder are listed in `TASKS.md` (backlog BL-01 to BL-12) and `docs/DECISIONS.md`. BL-02 to BL-08 must close before any real-drone test.
+- **Not built:** production drone link, telemetry or command protocol (a PX4 SITL demo bridge exists: `src/utm_services/integration/`, `docs/integration/PX4_SETUP.md`); onboard safety layer; disturbance margin in the filter (BL-06, BL-07); consistent per-drone backup (BL-03); flight plans or strategic deconfliction; persistence and results UI; ONNX edge benchmark (P4); a defined first customer and service (P5). The filter meets the 100 ms step budget at 64 drones on a 4-core machine (p95 49-78 ms, `docs/results/scale-step3-2026-10-24.md`), not on one thread (101-124 ms), at 128 drones (182-234 ms), or for a single converging cluster of 64 (seconds; out of scope, strategic layer).
+- Known limits accepted by the founder are listed in `TASKS.md` (backlog BL-01 to BL-16) and `docs/DECISIONS.md`. BL-02 to BL-08 must close before any real-drone test.
 
 ## Architecture today and likely direction
 - **Today:** one Python process. `DroneEnv` (truth) -> observations -> policy proposes acceleration -> `apply_filter` (all true states, one joint QP) -> `SafeAction` -> `DroneEnv.step`, every 100 ms. The server is the only collision avoider, and the output is the drone's command.
 - **Likely direction (not final, needs an ADR before any build):** the server does planning and guidance (routes, deconfliction, advice to each drone's autopilot over a link) and each drone runs an onboard safety layer that still works when the link or the server is lost. Open questions: autopilot and link (PX4/MAVLink first), advice or command, link-loss behaviour, fleet size. See `docs/HANDOVER.md` section 9.
-- Packages in `src/utm_services/`: `api`, `application`, `simulation`, `policy`, `safety`, `training`, `evaluation`.
+- Packages in `src/utm_services/`: `api`, `application`, `simulation`, `policy`, `safety`, `training`, `evaluation`, `integration` (PX4 SITL demo bridge).
 
 ## Decision authority
 Decide yourself, log it in docs/DECISIONS.md, and continue:
@@ -49,7 +49,7 @@ python -m pip install -e ".[dev,plot,train]"            # extras: physics (Linux
 - `utm-eval-policy artifacts/policies/<name> --out runs/eval1`: evaluate a policy artifact on the held-out suites.
 - `utm-replay heldout:18000044:6 --artifact artifacts/policies/<name> --variant shielded_marl --html --out runs/viz`: 2D plot and 3D viewer (`replay3d.html`). Full walkthrough: `docs/training/QUICKSTART.md`.
 - `utm-mock-api`: mock airspace API on 127.0.0.1:8000.
-- Tests: `pytest` = fast suite (parallel, `-m 'not slow'`, 191 tests, 20-40 s). `pytest -m slow` = slow suite (fuzz, sweeps, long closed loops; CI runs it on PRs to main). `pytest -m ""` = everything. `-n0` = one process for debugging.
+- Tests: `pytest` = fast suite (parallel, `-m 'not slow'`, 203 tests, 20-40 s). `pytest -m slow` = slow suite (fuzz, sweeps, long closed loops; CI runs it on PRs to main). `pytest -m ""` = everything. `-n0` = one process for debugging.
 - Quick tier / full tier / on-demand: see Verification above. Quick is about 30 s, full about 20 min.
 - Timing runs need an idle machine. Other Claude sessions share it.
 
@@ -61,7 +61,7 @@ python -m pip install -e ".[dev,plot,train]"            # extras: physics (Linux
 - **CBK (consistent backup):** research design with one backup per drone chosen jointly with neighbours (answers BL-03). Prototype result: adapt, do not adopt. Lives on `research/consistent-backup`.
 - **Adaptive margin:** research design that sets the margin every step from measured GNSS error, delay, wind and lag, plus an envelope monitor (P3-SA-03). Lives on `research/adaptive-margin`.
 - **Tiers T1-T5:** disturbance levels of the simulator. T1 ideal (default); T2 mild wind and noise (implemented); T3 degraded comms; T4 stress; T5 real-world proxies (T3-T5 not built). `docs/simulation/SIMULATOR_NOTE.md`.
-- **BL items:** backlog entries BL-01 to BL-12 in `TASKS.md`, issues to close before any real-drone test.
+- **BL items:** backlog entries BL-01 to BL-15 in `TASKS.md`, issues to close before any real-drone test.
 - **SafeAction:** the filter's return type. The name does not mean proven safe. **Fallback:** evasive action used only on a solver error, unverified.
 - **P-codes:** task ids in `TASKS.md` (P0 formulation ... P5 first real service).
 

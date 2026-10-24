@@ -12,7 +12,7 @@ Built and merged on `main`:
 - Simulator `DroneEnv` with ideal (T1) and mild disturbance (T2) profiles; optional PyBullet quadrotor backend (Linux/WSL).
 - The safety filter (`src/utm_services/safety/filter.py`): joint QP, backup-set barrier, latch, escape stage, world-box limits, evasive fallback on solver error, Numba rollout kernel (bit-exact with the old one).
 - `utm-run` with three scenarios, MAPPO training and evaluation, two trained policy artifacts, 2D and 3D replay.
-- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 191 tests plus 91 slow tests, CI on every push and PR.
+- Verification: `scripts/verify/` tiers (quick about 30 s, full about 20 min), fast suite 203 tests plus 91 slow tests, CI on every push and PR.
 
 Evidence for the filter (simulation, `docs/results/pr12-final-report.md`): random 2-6 drone fuzz, 5000 runs: 0 runs inside `d_eff`, 0 fallbacks. Hard fuzz, 5000 runs: 13 inside `d_eff` (bar 14). These are measurements of the model under its assumptions. They are not a proof and not a flight claim.
 
@@ -27,7 +27,7 @@ Known weak points (all in the backlog below): no disturbance margin (under T2 th
 | Adaptive-margin research (P3-SA-03) | `research/adaptive-margin`, `../dtc-margin` | A run is active. Do not touch the worktree. | Margin computed each step from GNSS error, delay, wind and lag, plus an envelope monitor. In-model result: no separation loss in 282 recoverable in-limit runs. The monitor missed a doubled actuator lag. Open founder decisions in P3-SA-03 section 8. Nothing in `src/` changes yet. |
 | Consistent backup (CBK) research (P3-SA-02) | `research/consistent-backup`, `../dtc-research` | Finished, recommendation "adapt, do not adopt". | Fails 3 of 4 acceptance bar items (worse than main in 15 cases, 2 of 20 noisy vertical runs enter `d_eff`, full CBK takes 273 ms at N = 16). Next: fix the hysteresis rule, then rerun. Feeds BL-03. |
 | Scale | `perf/solver-exact` (cloud session) | PR open, waiting for the founder's Fable review and a Windows run against the new reference. | #24 (bit-exact speed-ups A, B, D) is merged. This branch solves the filter QP to KKT accuracy (DAQP / OSQP eps 1e-9, certificate), adds the new per-seed reference `docs/results/solver-exact-2026-10-24.jsonl` (founder-accepted), per-cluster QPs and the derived 596 m range gate. N = 64 p95 49 ms (city) and 78 ms (dense, groups of 8) on 4 cores, against 288 and 449 ms on main; one thread 101-124 ms; N = 128 182-234 ms. A single converging cluster of 64 is out of scope and takes seconds. |
-| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Active (laptop: WSL2, PX4 SITL, Gazebo Harmonic). | Demo bridge only: 2-3 PX4 SITL drones guided by the filter (head-on, crossing). The production link design (command or advice, ACK, link-loss behaviour, onboard layer) still needs an ADR; the lane writes protocol notes, not the protocol. Do not touch the worktree. |
+| PX4 drone link | `integration/px4-bridge`, `../dtc-px4` | Demo done, PR open to main (not merged). | PX4 v1.17.0 SITL in Gazebo Harmonic: headon2 and cross3 flown live through the filter with 0 violation pair-steps (min separation 8.53 m and 7.14 m; loop p95 7.5 and 10.3 ms; idle machine). Link loss: PX4 flies RTL 1.12 s after the bridge exits, 1.27 s after the last fresh step, because MAVSDK re-sends the last setpoint until exit. Findings filed as BL-13 to BL-15. `docs/integration/PX4_SETUP.md`, design notes in `PROTOCOL_NOTES.md`. The production link still needs an ADR. |
 
 ## Open backlog
 
@@ -46,6 +46,9 @@ Source of truth: `TASKS.md`. BL-02 to BL-08 must close before any real-drone tes
 | BL-10 | TBD | Latch colouring order in a bent sandwich | Open; closes with BL-03 |
 | BL-11 | TBD | Continuous escape-axis normalisation | Open |
 | BL-12 | TBD | Small findings (text, ignored seed count, coincident positions) | Open |
+| BL-13 | TBD | PX4 realises only part of a_safe (measured lag, SITL) | Open; with BL-05 and adaptive-margin research |
+| BL-14 | TBD | Stale setpoint re-sent after link loss | Open; design in `PROTOCOL_NOTES.md` |
+| BL-15 | TBD | Uncoordinated RTL after link loss | Open; design in `PROTOCOL_NOTES.md` §4 |
 
 BL-01 is done (PR #12). Items marked TBD have no owner: assign them when the lane picks them up.
 
