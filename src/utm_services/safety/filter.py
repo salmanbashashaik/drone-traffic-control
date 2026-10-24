@@ -51,6 +51,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+import daqp
 import numpy as np
 import osqp
 import scipy.sparse as sp
@@ -108,7 +109,9 @@ class FilterConfig:
         If set, pairs further apart than this distance are excluded
         from the QP constraint set. None = include all pairs.
     solver_eps:
-        Absolute and relative tolerance for the OSQP solver.
+        Absolute and relative tolerance for OSQP, which solves QPs above
+        _EXACT_MAX_VARS variables (and any QP DAQP fails on). Tight enough
+        that its solution passes the KKT certificate (``_kkt_certified``).
     solver_max_iter:
         Maximum iterations allowed for OSQP.
     slack_weight:
@@ -138,8 +141,8 @@ class FilterConfig:
     tie_break_mps2: float = 1.0
     lag_s: float = 0.0
     range_gate_m: float | None = _DEFAULT_RANGE_GATE_M
-    solver_eps: float = 1e-5
-    solver_max_iter: int = 4000
+    solver_eps: float = 1e-9
+    solver_max_iter: int = 200000
     slack_weight: float = 1e4
     barrier_offset_mps: float = 1.0
     barrier: str = "backup"
@@ -1235,54 +1238,171 @@ def _solve_hocbf_qp(
         P, q, A, l, u, agent_ids = build_hocbf_qp_matrices(
             states, actions, pairs_in_qp, config, escape_signs, backup, frames
         )
-        # On non-convergence retry once without over-relaxation (alpha 1.0
-        # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
-        # rho alone (up to 10) and 20000 iterations did not (PR #12 review).
-        for alpha in (1.6, 1.0):
-            prob = osqp.OSQP()
-            prob.setup(
-                P, q, A, l, u,
-                verbose=False,
-                eps_abs=config.solver_eps,
-                eps_rel=config.solver_eps,
-                max_iter=config.solver_max_iter,
-                # OSQP's default (0) times the setup to pick this interval, which
-                # makes same-seed runs differ. A fixed interval keeps them identical.
-                adaptive_rho_interval=25,
-                # The 1e4 slack penalty slows ADMM convergence; without polishing,
-                # pass-through steps return accelerations ~0.05 m/s² off nominal.
-                polish=True,
-                # The escape QP saturates the box with a degenerate active set;
-                # at the default rho (0.1) ADMM needs > 4000 iterations there.
-                rho=10.0 if escape_signs else 0.1,
-                alpha=alpha,
-            )
-            res = prob.solve()
-            if res.info.status == "solved":
-                break
-            logger.warning("filter: OSQP status %s at alpha=%.1f", res.info.status, alpha)
-
-        if res.info.status == "solved":
-            u_max = MAX_ACCEL_COMPONENT_MPS2
-            safe_accels = {}
-            for idx, aid in enumerate(agent_ids):
-                ax = float(np.clip(res.x[3 * idx], -u_max, u_max))
-                ay = float(np.clip(res.x[3 * idx + 1], -u_max, u_max))
-                az = float(np.clip(res.x[3 * idx + 2], -u_max, u_max))
-                safe_accels[aid] = (ax, ay, az)
-            slacks = res.x[3 * len(agent_ids):]
-            pair_slack = {
-                pair: float(s)
-                for pair, s in zip(pairs_in_qp, slacks, strict=True)
-                if s > SHIELD_INTERVENTION_TOLERANCE_MPS2
-            }
-            return safe_accels, pair_slack, True
-        else:
-            logger.warning("filter: OSQP non-optimal status: %s", res.info.status)
+        x = _solve_exact(P, q, A, l, u, config, bool(escape_signs))
+        if x is None:
+            logger.warning("filter: no solver returned a KKT-certified solution")
             return {}, {}, False
+        u_max = MAX_ACCEL_COMPONENT_MPS2
+        safe_accels = {}
+        for idx, aid in enumerate(agent_ids):
+            ax = float(np.clip(x[3 * idx], -u_max, u_max))
+            ay = float(np.clip(x[3 * idx + 1], -u_max, u_max))
+            az = float(np.clip(x[3 * idx + 2], -u_max, u_max))
+            safe_accels[aid] = (ax, ay, az)
+        slacks = x[3 * len(agent_ids):]
+        pair_slack = {
+            pair: float(s)
+            for pair, s in zip(pairs_in_qp, slacks, strict=True)
+            if s > SHIELD_INTERVENTION_TOLERANCE_MPS2
+        }
+        return safe_accels, pair_slack, True
     except Exception as exc:  # noqa: BLE001
-        logger.error("filter: OSQP solve exception: %s", exc)
+        logger.error("filter: QP solve exception: %s", exc)
         return {}, {}, False
+
+
+# The QP is solved to KKT accuracy (founder decision 2026-10-24,
+# docs/architecture/PROPOSAL-scale-qp.md option 1), so its solution is the
+# optimum (unique: the objective is strictly convex in the accelerations, and
+# each slack is then fixed) and not an artefact of the solver or of which
+# drones share the QP. Measured on 21 258 fuzz QPs and joint QPs at N = 8-64
+# (docs/results/solver-exact-2026-10-24.md): DAQP (dual active set, dense) and
+# OSQP at eps 1e-9 agree to 3e-13 m/s² and reach KKT residuals <= 2e-11; DAQP
+# is faster up to about 170 variables (2.9 against 12.5 ms at 168), OSQP above
+# (44 against 106 ms at 592). OSQP at the old eps 1e-5 with polish was off by
+# up to 0.05 m/s² on 0.7 % of the fuzz QPs.
+_EXACT_MAX_VARS = 256
+# Certificate tolerances, in the form of OSQP's own test: primal feasibility
+# per row relative to its bound (backup rows reach |rhs| ~ 1e3), stationarity
+# per component against |Px| + |q| + |A|'|y| (multipliers reach the slack
+# weight, 1e4), each with an absolute floor. Set from measured residuals:
+# DAQP leaves up to 3e-8 of row violation and round-off stationarity; OSQP at
+# eps 1e-9 up to 1.4e-8, but up to 7e-7 on some escape QPs, which therefore
+# fail and go to DAQP (their accelerations are within 2e-8 m/s² of DAQP's).
+# A multiplier counts as nonzero above _KKT_TOL.
+_KKT_TOL = 1e-7
+_KKT_STATIONARITY_RTOL = 1e-10
+_DAQP_INF = 1e30
+
+
+def _kkt_certified(
+    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, x: np.ndarray, y: np.ndarray
+) -> bool:
+    """Whether (x, y) satisfies the KKT conditions of min 0.5 x'Px + q'x s.t. l <= Ax <= u.
+
+    OSQP's sign convention: y_i < 0 on an active lower bound, y_i > 0 on an
+    active upper bound. Checks primal feasibility, stationarity Px + q + A'y = 0,
+    the sign of y (none towards an infinite bound) and complementarity.
+    """
+    if not (np.all(np.isfinite(x)) and np.all(np.isfinite(y))):
+        return False
+    Ax = A @ x
+    finite_l, finite_u = np.isfinite(l), np.isfinite(u)
+    tol_l = _KKT_TOL * (1.0 + np.abs(np.where(finite_l, l, 0.0)))
+    tol_u = _KKT_TOL * (1.0 + np.abs(np.where(finite_u, u, 0.0)))
+    if np.any((l - Ax)[finite_l] > tol_l[finite_l]) or np.any((Ax - u)[finite_u] > tol_u[finite_u]):
+        return False
+    size = np.abs(P) @ np.abs(x) + np.abs(q) + np.abs(A).T @ np.abs(y)
+    if np.any(np.abs(P @ x + q + A.T @ y) > _KKT_TOL + _KKT_STATIONARITY_RTOL * size):
+        return False
+    lower, upper = np.maximum(-y, 0.0), np.maximum(y, 0.0)
+    if np.any(lower[~finite_l] > _KKT_TOL) or np.any(upper[~finite_u] > _KKT_TOL):
+        return False
+    # Complementarity: a multiplier on a row the solution does not touch (gap
+    # beyond the primal tolerance) must vanish.
+    gap_l = (Ax - l)[finite_l] > tol_l[finite_l]
+    gap_u = (u - Ax)[finite_u] > tol_u[finite_u]
+    return bool(not np.any(lower[finite_l][gap_l] > _KKT_TOL) and not np.any(upper[finite_u][gap_u] > _KKT_TOL))
+
+
+def _solve_daqp(
+    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """DAQP on the QP of ``build_hocbf_qp_matrices``: (x, y in OSQP's convention), None on failure.
+
+    Rows with a single unit entry (the acceleration box and slack >= 0) become
+    DAQP's simple bounds, the others its general rows. P is singular in the
+    linearly penalised slacks; DAQP's automatic proximal regularisation
+    (eps_prox < 0) solves such QPs to the exact optimum.
+    """
+    n = P.shape[0]
+    rows = A.tocsr()
+    single = np.flatnonzero(np.diff(rows.indptr) == 1)
+    single = single[rows.data[rows.indptr[single]] == 1.0]
+    cols = rows.indices[rows.indptr[single]]
+    low, high = np.full(n, -_DAQP_INF), np.full(n, _DAQP_INF)
+    np.maximum.at(low, cols, np.where(np.isfinite(l[single]), l[single], -_DAQP_INF))
+    np.minimum.at(high, cols, np.where(np.isfinite(u[single]), u[single], _DAQP_INF))
+    general = np.setdiff1d(np.arange(A.shape[0]), single)
+    lower = np.concatenate([low, np.where(np.isfinite(l[general]), l[general], -_DAQP_INF)])
+    upper = np.concatenate([high, np.where(np.isfinite(u[general]), u[general], _DAQP_INF)])
+    x, _, flag, info = daqp.solve(
+        P.toarray(), np.ascontiguousarray(q, dtype=np.float64), rows[general].toarray(), upper, lower,
+        np.zeros(len(upper), dtype=np.int32), primal_tol=1e-10,
+    )
+    if flag != 1:
+        return None
+    lam = np.asarray(info["lam"], dtype=np.float64)
+    y = np.zeros(A.shape[0])
+    first = np.unique(cols, return_index=True)[1]  # one bound row per variable carries its multiplier
+    y[single[first]] = lam[cols[first]]
+    y[general] = lam[n:]
+    return np.asarray(x, dtype=np.float64), y
+
+
+def _solve_osqp(
+    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, config: FilterConfig,
+    escape: bool,
+) -> tuple[np.ndarray, np.ndarray] | None:
+    """OSQP at config.solver_eps: (x, y), None when it does not converge."""
+    # On non-convergence retry once without over-relaxation (alpha 1.0
+    # instead of OSQP's 1.6): fixes HARD fuzz seeds 864 and 977, where
+    # rho alone (up to 10) and 20000 iterations did not (PR #12 review).
+    for alpha in (1.6, 1.0):
+        prob = osqp.OSQP()
+        prob.setup(
+            P, q, A, l, u,
+            verbose=False,
+            eps_abs=config.solver_eps,
+            eps_rel=config.solver_eps,
+            max_iter=config.solver_max_iter,
+            # OSQP's default (0) times the setup to pick this interval, which
+            # makes same-seed runs differ. A fixed interval keeps them identical.
+            adaptive_rho_interval=25,
+            polish=True,
+            # The escape QP saturates the box with a degenerate active set;
+            # at the default rho (0.1) ADMM needs many more iterations there.
+            rho=10.0 if escape else 0.1,
+            alpha=alpha,
+        )
+        res = prob.solve()
+        if res.info.status == "solved":
+            return res.x, res.y
+        logger.warning("filter: OSQP status %s at alpha=%.1f", res.info.status, alpha)
+    return None
+
+
+def _solve_exact(
+    P: sp.csc_matrix, q: np.ndarray, A: sp.csc_matrix, l: np.ndarray, u: np.ndarray, config: FilterConfig,
+    escape: bool,
+) -> np.ndarray | None:
+    """KKT-certified solution x of the QP, None when no solver returns one.
+
+    DAQP first up to _EXACT_MAX_VARS variables, OSQP first above; the other
+    one when the first fails or its solution fails ``_kkt_certified``.
+    """
+    small = P.shape[0] <= _EXACT_MAX_VARS
+    order = (_solve_daqp, _solve_osqp) if small else (_solve_osqp, _solve_daqp)
+    for solver in order:
+        try:
+            solution = solver(P, q, A, l, u) if solver is _solve_daqp else solver(P, q, A, l, u, config, escape)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("filter: %s raised %s", solver.__name__, exc)
+            continue
+        if solution is not None and _kkt_certified(P, q, A, l, u, *solution):
+            return solution[0]
+        logger.warning("filter: %s returned no KKT-certified solution", solver.__name__)
+    return None
 
 
 def _evasive_accel(

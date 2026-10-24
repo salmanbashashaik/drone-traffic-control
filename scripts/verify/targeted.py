@@ -62,6 +62,13 @@ class Broken:
 
 print("== D. forced solver error every step: fallback only (BL-01/BL-02)")
 F.osqp.OSQP = Broken
+
+
+def broken_daqp(*a, **k):  # small QPs go to DAQP first
+    raise RuntimeError("forced")
+
+
+F.daqp.solve = broken_daqp
 run("fallback head-on-40", [drone("a", (480, 500, 100), (900, 500, 100), (15, 0, 0)),
                             drone("b", (520, 500, 100), (100, 500, 100), (-15, 0, 0))])
 run("fallback sandwich", [drone("d1", (490, 500, 100), (900, 500, 100), (10, 0, 0)), drone("d2", (500, 500, 100), (500, 900, 100)),

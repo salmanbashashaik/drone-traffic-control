@@ -140,6 +140,10 @@ class _BrokenOSQP:
         raise RuntimeError("simulated solver crash")
 
 
+def _broken_daqp(*args, **kwargs):
+    raise RuntimeError("simulated solver crash")
+
+
 def _head_on_plus_bystander():
     states = [
         _state("d1", (480.0, 500.0, 100.0), (15.0, 0.0, 0.0)),
@@ -152,6 +156,7 @@ def _head_on_plus_bystander():
 
 def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
+    monkeypatch.setattr(filter_module.daqp, "solve", _broken_daqp)
     states, actions = _head_on_plus_bystander()
     safe, diag = apply_filter(states, actions, latch={})
     by_id = {a.agent_id: a for a in safe}
@@ -173,6 +178,7 @@ def test_solver_error_fallback_is_evasive_and_bounded(monkeypatch) -> None:
 
 def test_solver_error_fallback_is_per_cluster(monkeypatch) -> None:
     monkeypatch.setattr(filter_module.osqp, "OSQP", _BrokenOSQP)
+    monkeypatch.setattr(filter_module.daqp, "solve", _broken_daqp)
     states, actions = _head_on_plus_bystander()
     safe, _ = apply_filter(states, actions, latch={})
     bystander = {a.agent_id: a for a in safe}["d3"]
