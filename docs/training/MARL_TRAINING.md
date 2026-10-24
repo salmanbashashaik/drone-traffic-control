@@ -1,6 +1,6 @@
 # MARL training loop (P2-SA-01)
 
-What this is: a MAPPO training loop for the **nominal** policy, a numpy runtime that loads the resulting artifact, a matched evaluator, and a replay renderer. It is simulation-only. The learned policy proposes accelerations; it is not a safety controller, and nothing here shows that it or the filter is safe outside the simulated conditions listed below.
+What this is: a MAPPO training loop for the **nominal** policy, a numpy runtime that loads the resulting artifact, a matched evaluator, and a replay renderer. It is simulation-only. The learned policy proposes accelerations; it is not a safety controller. Every number below is a measured separation or completion count from seeded simulation; none of it is a guarantee, and none of it says the policy or the filter is safe.
 
 Method choices and their deviations from the draft: `docs/formulation/P1-SA-01-method.md` §9. Reward: `P1-SA-01-reward.md` (`P1-SA-01-reward-v1`, implemented in `simulation/env.py`). Training reward is not a safety metric; every number below is a measured separation or completion quantity.
 
@@ -50,7 +50,9 @@ Both: network 18-256-256-3 tanh, training seed 42, 2–4 agents per episode, beh
 
 Variants on identical scenarios: `reference` (PD controller, no filter), `unshielded_marl` (learned policy, no filter), `shielded_marl` (learned policy + HOCBF filter, default `FilterConfig`), `shielded_reference` (reference + filter, a baseline for context). "Viol." is separation-violation pair-steps below 5 m (`INTERFACES.md`). All runs completed 0 aborts, 0 infeasible steps and 0 fallbacks unless a column says otherwise.
 
-### Fresh seeds, evaluated once after the design was frozen (seeds 12,000,000+)
+### Fresh seeds (12,000,000+)
+
+These seeds were not used for training, checkpoint selection, or any preprocessing change. They were consulted more than once after the design was frozen: for the T1 policy, for the T2-nominal policy under two profiles, and for deciding not to ship the first shield-in-loop run. Treat them as a repeatedly used test set, not a single untouched look.
 
 Policy `…it300-08e745b853`, ideal (T1) dynamics, 50 episodes per suite. Held-out = 2–4 drones, conflict 0.8, trained team size. Dense16 = 16 drones with random starts and goals, outside the trained team size.
 
@@ -76,24 +78,39 @@ Policy `…it220-f93dca3638` (trained on T2-nominal), 50 episodes:
 | realistic (not trained on) | dense16 | unshielded learned | 100% | 1.36 | 71 | 14 |
 | realistic (not trained on) | dense16 | shielded learned | 100% | 5.14 | 0 | 1 |
 
+One shielded dense16 episode (T2-realistic) ended up inside d_eff (5.5 m) although no pair went below 5 m; the shielded reference did the same on that suite. Zero violation pair-steps there does not mean the filter held d_eff throughout.
+
+Same 50 fresh seeds, **T1-trained** policy (`…it300-08e745b853`) under the T2 profiles it was not trained on, against the T2-nominal-trained policy above (held-out suite, 50 episodes each):
+
+| Profile | Policy | Variant | Completion | Aborted | Min sep (m) | Viol. |
+|---|---|---|---|---|---|---|
+| nominal | T1-trained | unshielded | 75.2% | 1 | 2.59 | 8 |
+| nominal | T1-trained | shielded | 77.2% | 0 | 7.79 | 0 |
+| realistic | T1-trained | unshielded | 83.2% | 1 | 2.53 | 5 |
+| realistic | T1-trained | shielded | 83.9% | 0 | 6.97 | 0 |
+| realistic | T2-nominal-trained | unshielded | 100% | 0 | 3.75 | 4 |
+| realistic | T2-nominal-trained | shielded | 100% | 0 | 8.08 | 0 |
+
+In the same runs the reference controller completes 100% (it has an integral term). Rows: `…fresh-seeds.T2-*.episodes.jsonl`, `…fresh-ideal`/`…fresh-realistic` for the T2-trained policy.
+
 Full tables including the reference variants: `docs/results/training/*.summary.md`.
 
 ### Development seeds (not clean held-out)
 
-Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures, and two preprocessing changes came from them. They are reported as development evidence only. The fresh-seed results above agree with them (held-out, shielded learned: 0 violations in both).
+Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures, and two preprocessing changes came from them. They are reported as development evidence only. The fresh-seed results above show the same pattern (held-out, shielded learned: 0 violations in both).
 
-- Shipped scenarios (3 episodes): the shielded learned policy is the same as the shielded reference on `sandwich-3` (13 violation pair-steps; that scenario is documented as physically unrecoverable and the filter does not fully hold it).
-- **T1-trained policy under T2 disturbances (wind, noise, delay, dropout), which it was not trained on:** completion fell to 78% (nominal) and 84% (realistic) on 30 held-out episodes while the reference stayed at 100%. Shielded separation still held (0 violations). Training under T2-nominal removed the completion gap (table above). Cause not isolated; a stateless policy cannot cancel a steady wind, which the reference's integral term does. This is a hypothesis.
-- **Shield in the training loop (150 iterations, `…it150-8627b01823`):** no benefit. On fresh seeds the unshielded policy had 14 violation pair-steps (5 episodes) against 10 (3 episodes) for the T1 run, and the shielded variant used more interventions (498 against 324). Its artifact is not shipped.
+- Shipped scenarios (3 episodes; rows in `…dev-seeds.ideal.episodes.jsonl`): the shielded learned policy is the same as the shielded reference on `sandwich-3` (13 violation pair-steps; that scenario is documented as physically unrecoverable and the filter does not fully hold it).
+- **T1-trained policy under T2 disturbances:** the table above, on the same fresh seeds, is the comparison. Earlier development-seed runs (30 episodes) gave the same picture (78% / 84%, rows in `…dev-seeds.T2-*.episodes.jsonl`). Training under T2-nominal removed the completion gap in these runs. Why is not isolated; a stateless policy cannot cancel a steady wind, which the reference's integral term does. That explanation is a hypothesis, and each configuration has one training seed.
+- **Shield in the training loop: inconclusive.** A first 150-iteration run was evaluated on the fresh seeds (14 unshielded violation pair-steps in 5 episodes against 10 in 3 for the T1 run; 498 interventions against 324). It is not a fair comparison: 150 vs 300 iterations changes the curriculum and learning-rate schedule, it is one seed, and the evidence files of that run were not kept, so it is not shipped and not cited as a result. A full-length 300-iteration shield-in-loop run is the proper test.
 
 ### What the plots show
 
-`docs/training/figures/` has the same fresh-seed scenario (`heldout:12000008:4`) flown three ways. The reference (1.64 m) and the unshielded learned policy (1.63 m) both lose separation; the unshielded plot shows two drones crossing at about 2.7 s. With the filter the minimum is 8.08 m. The learned policy alone does not solve this conflict; the filter does.
+`docs/training/figures/` has one fresh-seed scenario (`heldout:12000008:4`) flown three ways. I picked it as the worst unshielded case of the 50 (1.63 m, the suite minimum; 4 of the 10 unshielded violation pair-steps), to show the filter working, so it is not typical. In that scenario the shielded reference reaches a larger minimum separation (8.68 m) than the shielded learned policy (8.08 m). The reference (1.64 m) and the unshielded learned policy (1.63 m) both lose separation; the unshielded plot shows two drones crossing at about 2.7 s. With the filter the minimum is 8.08 m. The learned policy alone does not solve this conflict; the filter does.
 
 ## What these results do not show
 
 - Everything is on the project's point-mass simulator with perfect dynamics (T1) or the T2 profiles, whose parameters are placeholders (`simulation/env.py`). No real telemetry, no hardware, no PyBullet or other dynamics were used.
-- Zero violations in a finite set of seeds does not establish zero risk. Safety in these runs comes from the filter, whose limits are in `docs/formulation/P2-SA-02-lateral-escape.md` and `docs/DECISIONS.md` (open items BL-03 to BL-12 apply unchanged).
+- Zero violations in a finite set of seeds does not establish zero risk. In these runs the filter is the component that changes the outcome; its limits are in `docs/formulation/P2-SA-02-lateral-escape.md` and `docs/DECISIONS.md` (open items BL-03 to BL-12 apply unchanged).
 - The unshielded learned policy still violates separation in 3/50 held-out and 11/50 dense16 episodes. It is not a safe controller.
 - Unshielded, the learned policy has fewer violation pair-steps than the reference (10 vs 64 held-out, 52 vs 110 dense16) and completes as often on these suites. Shielded, its minimum separation is within 0.35 m of the shielded reference in either direction across the four comparisons above (+0.22, +0.26, −0.12, −0.31 m), so no separation advantage is claimed. It needs fewer filter interventions (324 vs 1602 held-out), which is a count, not a safety measure.
 - The T2-trained policy was evaluated on a profile milder than any real flight and on a profile harsher than it was trained on, both simulated. It says nothing about other disturbance types, larger teams in training, obstacles, or geofences (the observation has no geofence field).
@@ -102,8 +119,12 @@ Seeds 9,000,000+ and the three shipped scenarios were used to diagnose failures,
 
 ## Known gaps
 
-- R3 (abort penalty) is not implemented; no aborts occurred in any evaluation run.
+- R3 (abort penalty) is not implemented. One abort occurred, in the T1-trained policy under T2 profiles (unshielded, fresh seeds); none in the shipped T2-trained policy's runs.
 - Only one training seed per configuration; a multi-seed study is needed before comparing configurations.
 - `dense16` generator in `evaluate.py` copies the one in `tests/test_random_traffic.py`; keep them in sync.
 - The `shipped` suite has 3 episodes; treat it as a smoke check.
 - A PyBullet backend run of the trained policy was not done.
+- Training details that were reviewed and left as they are: behaviour cloning labels come from the stateless PD law (`compute_reference_action`), while the evaluated "reference" is the PID `ReferencePolicy`; the behaviour-cloning rollouts always use ideal dynamics, so the T2 run is warm-started from T1 conditions; under T2 profiles a sampled action is stored as executed even when the environment drops that command, which makes policy-gradient credit noisier on those steps; the checkpoint loader uses `weights_only=False` and must only be given our own checkpoints.
+- The artifact checks (weight hash, normalisation fingerprint, bounds) detect corruption and mixed-up directories. Both values live in the metadata file next to the weights, so they do not stop someone who replaces both files.
+- Reproducibility was checked by retraining the T1 policy (identical hash, repeated by an independent reviewer). The T2 policy was not retrained to check.
+- No tests accompany the new code. Checks were scripted runs: the fast training path and `run_episode` agree on integer outcomes (and to 1e-13 m on minimum separation), and the loader refuses a missing `metadata.json`, altered weights, a missing normalisation fingerprint, an unexpected `weights_file` and mismatched world bounds.

@@ -11,7 +11,8 @@ Seed ranges are disjoint so training never sees evaluation scenarios:
     validation VAL_SEED_BASE + i      (model selection during training)
     test       TEST_SEED_BASE + i     (development evaluation; its failures guided the observation
                                        preprocessing, so it is NOT clean held-out for the final design)
-    final      FINAL_SEED_BASE + i    (frozen-design evaluation, run once)
+    final      FINAL_SEED_BASE + i    (evaluation of the frozen designs; consulted more than once,
+                                       so a repeatedly used test set, not a single look)
 """
 
 from __future__ import annotations
@@ -23,7 +24,7 @@ FAMILY_VERSION = "scenario-family-v2"
 TRAIN_SEED_BASE = 100_000_000
 VAL_SEED_BASE = 5_000_000
 TEST_SEED_BASE = 9_000_000
-FINAL_SEED_BASE = 12_000_000   # untouched until the design is frozen; the final report uses it once
+FINAL_SEED_BASE = 12_000_000   # not used for training, selection or preprocessing; reused across evaluations
 
 _MIN_POINT_SEPARATION_M = 30.0   # between any two starts
 _MIN_GOAL_SEPARATION_M = 12.0    # between any two goals (two goals < 5 m apart cannot both be completed)
